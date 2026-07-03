@@ -20,30 +20,32 @@ We study two LRMs (DeepSeek-R1-0528 and DeepSeek-R1-0528-Qwen3-8B) across four c
 
 ```text
 ├── rq1_macro_patterns/                         # RQ1: macro reasoning-pattern analysis
-│   ├── generation_cot.py                       # Collect CoT traces for code generation
-│   ├── execution_cot.py                        # Collect CoT traces for execution reasoning
-│   ├── debug_cot.py                            # Collect CoT traces for program debugging
-│   ├── translation_cot.py                      # Collect CoT traces for code translation
-│   ├── segment_cot.py                          # Segment reasoning traces into action traces
+│   ├── generation_cot.py                       # Collect reasoning traces for code generation
+│   ├── execution_cot.py                        # Collect reasoning traces for code execution reasoning
+│   ├── debug_cot.py                            # Collect reasoning traces for program debugging
+│   ├── translation_cot.py                      # Collect reasoning traces for code translation
+│   ├── segment_cot.py                          # Segment reasoning traces into action sequences
+│   ├── segmentation_prompt.txt                 # Action taxonomy prompt for segmentation
 │   └── analysis/                               # Topology, Markov, and discriminative-pattern analysis
 │
 ├── rq2_micro_patterns/                         # RQ2: valid/invalid micro-pattern mining
 │   ├── judge_cot.py                            # LLM-as-a-judge trace-validity assessment
+│   ├── judge_prompt.txt                        # Judge prompt template
 │   ├── aggregate_judge_results.py              # Confidence-weighted vote aggregation
 │   ├── analyze_cot_vs_test.py                  # Compare trace validity with task correctness
 │   └── mine_segmented_cot_patterns.py          # Mine positive patterns and anti-patterns
 │
 ├── rq3_applications/                           # RQ3: applications of discovered patterns
-│   ├── rq3_1_task_classification/              # Task identification from action-trace features
+│   ├── rq3_1_task_classification/              # Task identification from action-sequence features
 │   ├── rq3_2_pattern_guided_prompting/         # Pattern-guided prompting experiments
 │   └── rq3_3_pattern_aware_early_stopping/     # Pattern-aware online/offline early stopping
 │
 ├── data/                                       # Benchmarks and derived artifacts
-│   ├── LCB/                                    # LiveCodeBench v4-v6
-│   ├── CodeSense/                              # Input-output prediction for execution reasoning
-│   ├── DebugBench/                             # Debugging benchmark
-│   ├── ClassEval_T/                            # Cross-language translation benchmark
-│   └── derived_cot/                            # Generated traces, segmented traces, and RQ outputs
+│   ├── LCB/                                    # LiveCodeBench v4-v6 (code generation)
+│   ├── CodeSense/                              # CodeSense (code execution reasoning)
+│   ├── DebugBench/                             # DebugBench (program debugging)
+│   ├── ClassEval_T/                            # ClassEval-T (code translation)
+│   └── derived_cot/                            # Generated traces, segmented results, and RQ outputs
 │
 ├── utils/                                      # Shared API, runtime config, and JSONL helpers
 ├── visualization/                              # Paper-ready figures and tables
