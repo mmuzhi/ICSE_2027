@@ -1,0 +1,831 @@
+=== SOURCE CODE (cpp) ===
+
+#include <fstream>
+#include <iostream>
+#include <sys/stat.h>
+
+#include <string>
+#include <nlohmann/json.hpp>
+
+class JSONProcessor {
+public:
+    
+    int read_json(const std::string& file_path, nlohmann::json& output);
+
+    
+    int write_json(const nlohmann::json& data, const std::string& file_path);
+
+    
+    int process_json(const std::string& file_path, const std::string& remove_key);
+};
+
+
+int JSONProcessor::read_json(const std::string& file_path, nlohmann::json& output) {
+    std::ifstream file(file_path);
+    if (!file.is_open()) {
+        return 0;  
+    }
+
+    try {
+        file >> output;
+        if (output.is_null()) {
+            return -1;  
+        }
+    }
+    catch (...) {
+        return -1;  
+    }
+
+    return 1;  
+}
+
+
+int JSONProcessor::write_json(const nlohmann::json& data, const std::string& file_path) {
+    std::ofstream file(file_path);
+    if (!file.is_open()) {
+        return -1;  
+    }
+
+    try {
+        file << data.dump(4);  
+    }
+    catch (...) {
+        return -1;  
+    }
+
+    return 1;
+}
+
+
+int JSONProcessor::process_json(const std::string& file_path, const std::string& remove_key) {
+    nlohmann::json data;
+    int result = read_json(file_path, data);
+
+    if (result != 1) {
+        return 0;  
+    }
+
+    if (data.contains(remove_key)) {
+        data.erase(remove_key);
+        return write_json(data, file_path);  
+    }
+    else {
+        return 0;  
+    }
+}
+
+
+=== REASONING ===
+<think>
+
+We are translating C++ code that uses nlohmann::json to Python.
+ We'll use the built-in `json` module in Python for handling JSON.
+ We'll create a class `JSONProcessor` with the same methods.
+
+ Important: The original C++ code returns different integer status codes.
+ We must replicate the behavior exactly.
+
+ Steps:
+ 1. `read_json`: 
+    - Input: file_path (string), and an output parameter for the JSON (by reference in C++).
+    - In Python, we can return a tuple (status, json_data) or we can have the method set an attribute? 
+      But note: the original function returns an int status and modifies the output parameter.
+    - We'll change the signature to return (status, json_obj) in Python.
+
+ 2. `write_json`:
+    - Input: a JSON object and a file_path.
+    - Returns an int status.
+
+ 3. `process_json`:
+    - Input: file_path and a key to remove.
+    - Returns an int status.
+
+ Original return codes:
+   read_json:
+        returns 1 on success.
+        returns 0 if file cannot be opened.
+        returns -1 if parsing fails or the JSON is null.
+
+   write_json:
+        returns 1 on success.
+        returns -1 if file cannot be opened or writing fails.
+
+   process_json:
+        returns 0 in several cases: 
+            - read_json didn't return 1 (so read failed)
+            - if the key to remove is not present
+        returns whatever write_json returns if the key was present and erased (which is either 1 or -1)
+
+ However, note that in the original code, `process_json` returns 0 for two distinct cases: 
+   (a) read failure, (b) key not present.
+
+ We'll replicate the same return codes.
+
+ Implementation in Python:
+
+ We'll use:
+   import json
+   import os
+
+ We don't have the exact same `is_null` in Python's json, but we can check for None.
+
+ However, note: in the C++ code, `nlohmann::json` can be null (which is a valid type). In Python, 
+ when we load a JSON file, if the entire file is "null", then `json.load` returns None.
+
+ Steps for read_json in Python:
+
+   try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+   except FileNotFoundError:
+        return 0, None   # but note: the original returns 0 and leaves output unchanged? 
+        However, our method in Python returns a tuple. We'll return (0, None) for file open failure.
+
+   But note: the original also catches any exception during parsing and returns -1.
+
+   Also, if the JSON is null (i.e., data is None) then return -1.
+
+   So:
+
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            return 0, None
+        except Exception:
+            return -1, None
+
+        if data is None:
+            return -1, None
+
+        return 1, data
+
+ However, note that the original function returns the status and sets the output parameter. 
+ Since we are returning a tuple, we'll change the function to return (status, data).
+
+ But wait: the `process_json` method in the original uses the `read_json` method that sets the passed json object by reference. 
+ We are changing the signature. Therefore, we must adjust `process_json`.
+
+ Alternatively, we can mimic the behavior by having the `read_json` method set an attribute and return the status? 
+ But the problem says: "Keep behavior identical".
+
+ However, the problem also says: "Use idiomatic Python only when it doesn't change behavior".
+
+ Since we cannot pass an output parameter by reference in Python, we have two options:
+
+ Option 1: 
+    Change the class design so that we store the read JSON as an instance variable? 
+    But the original class does not store the JSON as an instance variable.
+
+ Option 2: 
+    Return a tuple (status, json_data) and then in `process_json` we can do:
+
+        result, data = self.read_json(file_path)
+        if result != 1:
+            return 0
+
+    This matches the original behavior: the original would leave `data` unmodified? Actually, in the original, 
+    the `data` variable is passed by reference and is modified only on successful read. In our Python version, 
+    we are returning the data only on success? Actually, we return the data only when we read successfully? 
+
+    But note: in the original, the `read_json` function does not modify the output parameter if it fails? 
+    Actually, the function writes to `output` only if it succeeds? Otherwise, it returns without setting.
+
+    However, in our Python version, we are returning None for the data in case of failure. 
+
+    But in the original, the `data` variable in `process_json` is defined locally and then passed to `read_json`. 
+    If `read_json` returns 0 or -1, then the `data` remains uninitialized? Actually, no: in C++ we pass a reference, 
+    so the function can modify it. But in the function, if the file is not open, it returns without setting. 
+    Then the `data` remains as it was? But it was default constructed (to null) before the call? 
+
+    Actually, the `data` in `process_json` is defined as `nlohmann::json data;` which is a default constructed json (null). 
+    Then if `read_json` fails, the `data` remains null. 
+
+    So in Python, we can do:
+
+        data = None
+        status = self.read_json(file_path, data)   # This won't work because we can't pass by reference.
+
+    Therefore, we change the method: we'll have `read_json` return a tuple (status, data). 
+
+    We adjust the `process_json` accordingly.
+
+ So we redefine:
+
+    def read_json(self, file_path):
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            return 0, None
+        except Exception as e:
+            # Catch any other exception (like JSON decoding error)
+            return -1, None
+
+        # Check if data is None? In Python, if the JSON file contains "null", then json.load returns None.
+        if data is None:
+            return -1, None
+
+        return 1, data
+
+ But note: the original also returns -1 if the JSON is null. So we do the same.
+
+ Now, write_json:
+
+    def write_json(self, data, file_path):
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            # The original returns -1 for any failure (including file open failure and write failure)
+            return -1
+        return 1
+
+ However, note: the original uses `data.dump(4)` which pretty prints with 4 spaces. We use `indent=4`.
+
+ Now, process_json:
+
+    def process_json(self, file_path, remove_key):
+        result, data = self.read_json(file_path)
+        if result != 1:
+            return 0
+
+        # Check if the key is in the JSON object.
+        # Note: the original uses `data.contains(remove_key)` -> in Python we use `in` for dictionaries.
+        if remove_key in data:
+            # Remove the key
+            del data[remove_key]
+            return self.write_json(data, file_path)
+        else:
+            return 0
+
+ But note: what if the JSON is a list? Then `in` would check for the key in the list? Actually, no: 
+ the key is a string, and if the top-level object is a list, then `remove_key in data` would be an error? 
+
+ However, in the original C++ code, `nlohmann::json::contains` is defined for objects (dictionaries) and for arrays? 
+ Actually, for arrays, `contains` checks for the existence of an element with a numeric key? But note: 
+ the key we are removing is a string. So if the JSON is an array, then `data.contains(remove_key)` would be false? 
+
+ Let me check: in nlohmann/json, the `contains` method for an array checks for an index? Actually, it expects a key that is a string? 
+ But the array is indexed by numbers. So if we call `contains` with a string on an array, it returns false.
+
+ In Python, if `data` is a list and `remove_key` is a string, then `remove_key in data` would check for an element that is that string? 
+ That is different.
+
+ Therefore, we must replicate: the original `contains` method for JSON objects only checks the keys of a dictionary. 
+ If the JSON is an array, then the string key will not be found.
+
+ However, note: in the C++ code, the `erase` method for an array with a string key would do nothing? Because the array doesn't have string keys? 
+ Actually, the `erase` method for an array expects a numeric index. If we pass a string, it will do nothing? 
+
+ But the C++ code does: 
+        if (data.contains(remove_key)) {
+            data.erase(remove_key);
+        }
+
+ So if the JSON is an array and we pass a string, the `contains` returns false -> so we skip.
+
+ Therefore, in Python, we must check only if `data` is a dictionary? Actually, no: we must check the same way.
+
+ How does the nlohmann::json library handle `contains`?
+   - For an object (dictionary): checks if the key exists.
+   - For an array: the key must be an array index (integer or string that can be converted to integer). 
+     But note: the function signature of `contains` is `bool contains(const typename object_t::key_type& key) const;` 
+     which is for object keys (so string). And for arrays, the `contains` method is not defined for string? 
+
+ Actually, looking at the documentation: 
+   - For objects: `contains` returns true if the key exists.
+   - For arrays: `contains` is not available with a string key? Actually, the method is defined for a `const char*` key? 
+     But then it would try to convert to an integer? 
+
+ However, in the code we are translating, the `remove_key` is a `std::string`. So if we have an array and we pass a string, 
+ the `contains` method would try to convert the string to a size_t? 
+
+ But wait: the `contains` method in nlohmann::json has an overload for `const char*` and one for `std::string`? 
+ And for arrays, the `contains` method doesn't take a string? 
+
+ Actually, I think the `contains` method is only defined for objects. For arrays, there is a different method? 
+
+ Let me check: 
+   - The documentation says: `contains` returns whether an object element with key `key` exists.
+
+ So for arrays, we cannot use `contains` with a string? 
+
+ Correction: the nlohmann::json library has a `contains` method that is defined for both objects and arrays? 
+   - For objects: checks for the presence of a key (string).
+   - For arrays: the `contains` method is not defined for a string? Actually, the method for arrays requires an index (which is a number). 
+
+ But wait: the method `contains` for arrays is not available? 
+
+ Actually, the `contains` method is defined only for objects. If we call it on an array, it will throw an exception? 
+
+ Let me test with nlohmann::json:
+
+   json array = json::array();
+   array.contains("key");   // This would throw because arrays are not indexed by strings? 
+
+ However, the code we are translating does not check the type. It just calls `contains` with a string. 
+
+ In fact, the `contains` method of nlohmann::json for a string argument is defined only for objects. 
+ If the JSON value is an array, then calling `contains` with a string will throw an exception? 
+
+ But note: the original code catches exceptions only in `read_json` and `write_json`. 
+ The `process_json` method does not catch exceptions from `contains` or `erase`.
+
+ Therefore, if the JSON is an array and we call `contains` with a string, it will throw an exception? 
+ Then the entire `process_json` will throw? 
+
+ This means our Python code should also throw in that case? 
+
+ However, in Python, if `data` is a list and we do `remove_key in data`, it will work? Because `in` for a list checks the elements. 
+ But that is not the same behavior.
+
+ We must replicate: the original code only removes a top-level key if the JSON is an object (dictionary). 
+ For an array, the `contains` method with a string would throw an exception? 
+
+ Actually, after checking the nlohmann::json code: 
+   - The method `contains` for a string key is defined only for objects. For arrays, there is an alternative: 
+        `contains` for an array index (which is an integer) is defined? 
+
+   But note: the function signature: 
+        bool contains(const typename object_t::key_type& key) const;
+
+   This function is only defined for objects? 
+
+   Actually, the implementation: 
+        if (is_object()) {
+            // ... 
+        } else {
+            // For other types, return false? 
+            // Or throw?
+        }
+
+   According to the documentation: 
+        This function always returns `false` when executed on a JSON type that is not an object.
+
+   Reference: https://json.nlohmann.me/api/basic_json/contains/
+
+   So: 
+        The method `contains` for a string key returns false for non-object types.
+
+   Therefore, in the original code, if `data` is an array (or any non-object) then `data.contains(remove_key)` returns false.
+
+   So in Python, we must also return false if `data` is not a dictionary? 
+
+   But note: the original code then calls `erase` only if `contains` returns true. And `erase` for a non-object would do nothing? 
+   Actually, the `erase` method for a string key is defined only for objects? For arrays, we have to pass an index? 
+
+   And the documentation for `erase` says: 
+        When called on a type other than JSON object, the `erase` function does nothing.
+
+   So the original code is safe.
+
+   Therefore, in Python, we can do:
+
+        if isinstance(data, dict) and remove_key in data:
+            del data[remove_key]
+            return self.write_json(data, file_path)
+        else:
+            return 0
+
+   However, note: what if the JSON is an object and the key is not present? Then we return 0.
+
+   But what if the JSON is not a dictionary? Then we also return 0.
+
+   This matches the original behavior: the original returns 0 in both cases (key not present OR the JSON is not an object).
+
+   So we can do:
+
+        if not isinstance(data, dict):
+            return 0
+
+        if remove_key in data:
+            del data[remove_key]
+            return self.write_json(data, file_path)
+        else:
+            return 0
+
+   But wait: the original `contains` method returns false for non-objects, so we skip the erasure and return 0. 
+   So the above is equivalent.
+
+ However, note: the original does not check the type explicitly. It relies on `contains` returning false for non-objects.
+
+   We could also do:
+
+        if remove_key in data:   # but if data is a list, then this checks for the string as an element? 
+
+   That would be different.
+
+   Therefore, we must check the type: we only want to remove a key if the JSON is an object (dictionary). 
+   Otherwise, we return 0.
+
+   So we change the condition to:
+
+        if isinstance(data, dict) and remove_key in data:
+            ... 
+
+   But note: what if the JSON is a dictionary but the key is not present? Then we return 0.
+
+   This matches the original: the original `contains` returns false -> so returns 0.
+
+   So the condition is safe.
+
+ Let's code accordingly.
+
+ However, note: what if the JSON is a dictionary and the key is present? Then we remove it and call write_json.
+
+ Summary:
+
+   We'll create a class `JSONProcessor` with three methods:
+
+        read_json(file_path) -> (int, object)
+        write_json(data, file_path) -> int
+        process_json(file_path, remove_key) -> int
+
+   And we'll handle the edge cases as described.
+
+ But note: the original `read_json` returns -1 also when the JSON is null? In Python, if the file contains the string "null", 
+   then `json.load` returns None. We treat that as -1.
+
+   What if the file is empty? In C++, an empty file would throw an exception? Because parsing fails? 
+   In Python, `json.load` on an empty file will throw a JSONDecodeError. We catch that and return -1.
+
+   Also, what if the file has a JSON that is not a dictionary? For example, a list? Then in `process_json` we return 0? 
+   As discussed.
+
+ Let's write the code accordingly.
+
+ However, note: the original `write_json` writes the JSON with an indent of 4. We do the same.
+
+ We'll import json and os (though we don't need os for file open errors? The open function will throw FileNotFoundError).
+
+ Code:
+
+   import json
+
+   class JSONProcessor:
+        def read_json(self, file_path):
+            try:
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+            except FileNotFoundError:
+                return 0, None
+            except Exception as e:
+                return -1, None
+
+            # Check if the loaded data is None (which corresponds to JSON null)
+            if data is None:
+                return -1, None
+
+            return 1, data
+
+        def write_json(self, data, file_path):
+            try:
+                with open(file_path, 'w') as f:
+                    json.dump(data, f, indent=4)
+            except Exception as e:
+                return -1
+            return 1
+
+        def process_json(self, file_path, remove_key):
+            result, data = self.read_json(file_path)
+            if result != 1:
+                return 0
+
+            # If the JSON is a dictionary and the key is present, remove it and write back.
+            if isinstance(data, dict) and remove_key in data:
+                del data[remove_key]
+                return self.write_json(data, file_path)
+            else:
+                return 0
+
+ But note: the original `process_json` returns the value from `write_json` (which is either 1 or -1) if the key was removed. 
+ And returns 0 if the key was not present or if the JSON was not a dictionary.
+
+ This matches.
+
+ However, note: what if the `write_json` returns -1? Then `process_json` returns -1? 
+
+ That matches the original.
+
+ Let's test with a few cases.
+
+ Edge case: file not found in read_json -> returns (0, None) -> process_json returns 0.
+
+ Edge case: JSON parsing error -> returns (-1, None) -> process_json returns 0.
+
+ Edge case: JSON is null -> returns (-1, None) -> process_json returns 0.
+
+ Edge case: JSON is an array -> process_json returns 0.
+
+ Edge case: JSON is a dictionary without the key -> returns 0.
+
+ Edge case: JSON is a dictionary with the key -> remove and then write_json returns 1 -> returns 1.
+
+ Edge case: write fails (e.g., no permission) -> write_json returns -1 -> process_json returns -1.
+
+ Therefore, we have replicated the behavior.
+
+ However, note: the original `read_json` function returns 0 only for file open failure? 
+ But what about other file open errors? For example, permission denied? 
+
+ In the original, `std::ifstream` might fail for permission denied. Then `file.is_open()` returns false -> returns 0.
+
+ In Python, if we try to open a file without permission, it throws an IOError (which is an Exception) -> caught by the `except Exception`? 
+ Then we return -1? 
+
+ That is different.
+
+ We must distinguish:
+
+   - File not found: return 0 (like the original when file.is_open() fails because the file doesn't exist)
+   - Other errors (like permission): the original returns 0? 
+
+ Actually, the original returns 0 only if the file is not open. The reasons for not opening could be:
+        - file doesn't exist
+        - permission denied
+        - etc.
+
+ So the original returns 0 for any reason that `ifstream` fails to open.
+
+ In Python, we catch `FileNotFoundError` separately? But there are other errors: PermissionError, IsADirectoryError, etc.
+
+ We want to return 0 for any open failure? 
+
+ The original code:
+
+        std::ifstream file(file_path);
+        if (!file.is_open()) {
+            return 0;
+        }
+
+ So any reason the file is not open returns 0.
+
+ In Python, we can catch `FileNotFoundError` and `PermissionError`? But there are many. 
+
+ Alternatively, we can catch `OSError` which is the base class for these. 
+
+ But note: the original returns 0 for any open failure. So we should return 0 for any error that is due to opening? 
+
+ However, the original does not distinguish between file not found and permission denied: both return 0.
+
+ So in Python, we can do:
+
+        try:
+            f = open(file_path, 'r')
+        except OSError:
+            return 0, None
+        except Exception as e:
+            # Other exceptions? We want to catch only the ones related to file open?
+            # But note: the original only checks `is_open` which happens in the constructor.
+            # So we'll catch OSError for file open issues.
+            return 0, None
+
+   But wait: what about the other exceptions during reading? We have a separate `except Exception` below.
+
+   We are currently doing:
+
+        except FileNotFoundError: -> then return 0
+        except Exception: -> return -1
+
+   We should change to:
+
+        except OSError:  # covers FileNotFoundError, PermissionError, etc.
+            return 0, None
+        except Exception:   # covers JSONDecodeError, etc.
+            return -1, None
+
+   And then we check for None.
+
+   So:
+
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        except OSError:
+            return 0, None
+        except Exception as e:
+            return -1, None
+
+   This way, any file open error (like permission) returns 0, and any other error (like JSON decode) returns -1.
+
+   But note: what if the file exists but we have a read error during the actual read (like disk error)? 
+   That would throw an OSError? Then we return 0? 
+
+   However, the original: 
+        It opens the file and then does `file >> output`. If the file exists but we cannot read (permission) then open fails -> returns 0.
+        If the file is opened but then there's a read error during `file >> output`, that would be caught by the `catch (...)` -> returns -1.
+
+   In Python, the `with open` might throw OSError at the time of opening? But what about during reading? 
+
+   The `json.load(f)` might throw an OSError during reading? For example, if the file is unreadable? 
+
+   Actually, the `f.read()` inside `json.load` might throw an IOError (which is an OSError). 
+
+   So we should catch OSError separately? 
+
+   We want:
+        - If the open fails: return 0 (like the original).
+        - If the open succeeds but then reading fails (like an I/O error during read): that should be caught and return -1? 
+          Because in the original, that would be caught by the `catch (...)`.
+
+   But in Python, the `with` block does the opening and then the reading. The open is at the `with` line, and the reading is in `json.load`.
+
+   How can we distinguish?
+
+   Actually, the `with` statement might throw an OSError at the `open` call. Then we catch and return 0.
+
+   If the `json.load` throws an OSError (for example, during reading), then that would be caught by the `except OSError`? 
+   But we don't want that: we want to return -1 for any exception during the reading (after the file is open).
+
+   Therefore, we should restructure:
+
+        try:
+            f = open(file_path, 'r')
+        except OSError:
+            return 0, None
+
+        try:
+            data = json.load(f)
+        except Exception as e:
+            f.close()
+            return -1, None
+        else:
+            f.close()
+
+        # Then check if data is None?
+
+   Alternatively, we can do:
+
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        except OSError:
+            return 0, None
+        except Exception as e:
+            return -1, None
+
+   But note: the `with` statement might throw an OSError at the time of opening? Yes. 
+   And if the `json.load` throws an exception (any exception) then it will be caught by the second except? 
+
+   However, an OSError during reading? For example, if we lose network during reading? Then that would be an OSError? 
+
+   But wait: the `with` block catches exceptions and re-raises? Actually, the `with` block handles the context manager, 
+   but if an exception occurs inside the block, it is propagated. 
+
+   So:
+
+        If the open fails: we get an OSError -> caught by first except -> return 0.
+
+        If the open succeeds but then `json.load` fails (for any reason: OSError during read, or JSONDecodeError) -> caught by the second except -> return -1.
+
+   This matches the original:
+
+        - Open fails: 0.
+        - Open succeeds and then fails: -1.
+
+   So we keep the current structure.
+
+   Therefore, the final code:
+
+        import json
+
+        class JSONProcessor:
+            def read_json(self, file_path):
+                try:
+                    with open(file_path, 'r') as f:
+                        data = json.load(f)
+                except OSError:
+                    return 0, None
+                except Exception as e:
+                    return -1, None
+
+                if data is None:
+                    return -1, None
+
+                return 1, data
+
+            def write_json(self, data, file_path):
+                try:
+                    with open(file_path, 'w') as f:
+                        json.dump(data, f, indent=4)
+                except Exception as e:
+                    return -1
+                return 1
+
+            def process_json(self, file_path, remove_key):
+                result, data = self.read_json(file_path)
+                if result != 1:
+                    return 0
+
+                if isinstance(data, dict) and remove_key in data:
+                    del data[remove_key]
+                    return self.write_json(data, file_path)
+                else:
+                    return 0
+
+ We are done.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ class that processes JSON files into an equivalent Python class. The Python implementation must maintain identical behavior in terms of input/output handling, error conditions, and edge cases. The key functionalities include reading JSON files, writing JSON files, and processing JSON files by removing a specified key if present.
+
+### Approach
+1. **Reading JSON Files**: The `read_json` method attempts to open and read a JSON file. If the file cannot be opened (e.g., due to non-existence or permission issues), it returns `0`. If parsing fails or the JSON content is `null`, it returns `-1`. On successful reading, it returns `1` along with the parsed JSON data.
+2. **Writing JSON Files**: The `write_json` method writes JSON data to a specified file with an indentation of 4 spaces. If the file cannot be opened or writing fails, it returns `-1`. On success, it returns `1`.
+3. **Processing JSON Files**: The `process_json` method reads a JSON file. If reading fails, it returns `0`. If the specified key exists in the JSON object (and the JSON is a dictionary), the key is removed, and the modified JSON is written back to the file. The return value is the result of the write operation (`1` or `-1`) if the key was present and removed; otherwise, it returns `0`.
+
+### Solution Code
+```python
+import json
+
+class JSONProcessor:
+    def read_json(self, file_path):
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        except OSError:
+            return 0, None
+        except Exception:
+            return -1, None
+        
+        if data is None:
+            return -1, None
+            
+        return 1, data
+
+    def write_json(self, data, file_path):
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception:
+            return -1
+        return 1
+
+    def process_json(self, file_path, remove_key):
+        result, data = self.read_json(file_path)
+        if result != 1:
+            return 0
+            
+        if isinstance(data, dict) and remove_key in data:
+            del data[remove_key]
+            return self.write_json(data, file_path)
+        else:
+            return 0
+```
+
+### Explanation
+1. **Reading JSON (`read_json`)**:
+   - **File Handling**: Uses a context manager (`with open`) to safely handle file operations. Catches `OSError` for file access issues (returning `0`) and other exceptions for parsing errors (returning `-1`).
+   - **Null Check**: If the parsed JSON data is `None` (indicating a `null` JSON), it returns `-1`.
+   - **Success**: Returns `1` and the parsed JSON data on successful reading.
+
+2. **Writing JSON (`write_json`)**:
+   - **File Handling**: Uses a context manager to write JSON data to a file with an indent of 4 spaces. Catches any exceptions during writing and returns `-1` on failure.
+   - **Success**: Returns `1` on successful writing.
+
+3. **Processing JSON (`process_json`)**:
+   - **Reading**: Calls `read_json` to read the JSON file. If the result is not `1`, returns `0`.
+   - **Key Removal**: Checks if the JSON is a dictionary and the specified key exists. If so, the key is removed, and `write_json` is called to save the changes. The result of `write_json` is returned.
+   - **Key Absence**: Returns `0` if the key is not present or the JSON is not a dictionary.
+
+This implementation ensures that the Python version behaves identically to the original C++ code, handling all edge cases and error conditions as specified.
+
+=== TRANSLATED CODE (py) ===
+import json
+
+class JSONProcessor:
+    def read_json(self, file_path):
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        except OSError:
+            return 0, None
+        except Exception:
+            return -1, None
+        
+        if data is None:
+            return -1, None
+            
+        return 1, data
+
+    def write_json(self, data, file_path):
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception:
+            return -1
+        return 1
+
+    def process_json(self, file_path, remove_key):
+        result, data = self.read_json(file_path)
+        if result != 1:
+            return 0
+            
+        if isinstance(data, dict) and remove_key in data:
+            del data[remove_key]
+            return self.write_json(data, file_path)
+        else:
+            return 0

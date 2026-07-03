@@ -1,0 +1,652 @@
+=== SOURCE CODE (cpp) ===
+
+#include <iostream>
+#include <stdexcept>
+
+#include <winsqlite/winsqlite3.h>
+#include <string>
+#include <vector>
+
+class MovieTicketDB {
+public:
+    MovieTicketDB(const std::string& dbName);
+    ~MovieTicketDB();
+
+    void create_table();
+    void insert_ticket(const std::string& movieName, const std::string& theaterName,
+        const std::string& seatNumber, const std::string& customerName);
+    std::vector<std::vector<std::string>> search_tickets_by_customer(const std::string& customerName);
+    void delete_ticket(const std::string& ticketId);
+    void close_connection();
+
+private:
+    sqlite3* db;
+    std::string dbName;
+};
+
+MovieTicketDB::MovieTicketDB(const std::string& dbName) : dbName(dbName) {
+    if (sqlite3_open(dbName.c_str(), &db) != SQLITE_OK) {
+        throw std::runtime_error("Unable to open database");
+    }
+    create_table();
+}
+
+MovieTicketDB::~MovieTicketDB() {
+    close_connection();
+}
+
+void MovieTicketDB::create_table() {
+    const char* create_tableSQL = R"(
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY,
+            movie_name TEXT,
+            theater_name TEXT,
+            seat_number TEXT,
+            customer_name TEXT
+        )
+    )";
+    char* errMsg = nullptr;
+    if (sqlite3_exec(db, create_tableSQL, nullptr, nullptr, &errMsg) != SQLITE_OK) {
+        throw std::runtime_error("Failed to create table: " + std::string(errMsg));
+    }
+}
+
+void MovieTicketDB::insert_ticket(const std::string& movieName, const std::string& theaterName,
+    const std::string& seatNumber, const std::string& customerName) {
+    const char* insertSQL = R"(
+        INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+        VALUES (?, ?, ?, ?)
+    )";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement");
+    }
+    sqlite3_bind_text(stmt, 1, movieName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, theaterName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, seatNumber.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, customerName.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to insert ticket");
+    }
+    sqlite3_finalize(stmt);
+}
+
+std::vector<std::vector<std::string>> MovieTicketDB::search_tickets_by_customer(const std::string& customerName) {
+    const char* searchSQL = R"(
+        SELECT * FROM tickets WHERE customer_name = ?
+    )";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, searchSQL, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement");
+    }
+    sqlite3_bind_text(stmt, 1, customerName.c_str(), -1, SQLITE_STATIC);
+
+    std::vector<std::vector<std::string>> results;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::vector<std::string> row;
+        for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
+            row.emplace_back(reinterpret_cast<const char*>(sqlite3_column_text(stmt, i)));
+        }
+        results.emplace_back(std::move(row));
+    }
+    sqlite3_finalize(stmt);
+    return results;
+}
+
+void MovieTicketDB::delete_ticket(const std::string& ticketId) {
+    const char* deleteSQL = R"(
+        DELETE FROM tickets WHERE id = ?
+    )";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, deleteSQL, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement");
+    }
+    sqlite3_bind_text(stmt, 1, ticketId.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to delete ticket");
+    }
+    sqlite3_finalize(stmt);
+}
+
+void MovieTicketDB::close_connection() {
+    if (db) {
+        sqlite3_close(db);
+        db = nullptr;
+    }
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to translate the C++ code to Python. We'll use the `sqlite3` module which is part of the standard library in Python.
+ Steps:
+ 1. We'll create a class `MovieTicketDB` that will handle the database operations.
+ 2. We'll mimic the behavior of the C++ class, including the same method signatures and behavior.
+ 3. We'll use the `sqlite3` module to interact with the database.
+
+ Important: The C++ code uses RAII (Resource Acquisition Is Initialization) to handle the database connection. In Python, we'll use the `__enter__` and `__exit__` methods to mimic the context manager behavior, but note that the original C++ code does not require explicit connection closing in the destructor (it's called via `close_connection`). However, in the Python version, we can make the `close_connection` method optional by using a context manager and ensuring the connection is closed when exiting the context, and also allow explicit closing.
+
+ However, note that the C++ destructor calls `close_connection()`, so we must ensure the connection is closed even if an exception occurs. We can achieve this by using a context manager and also by having a method to close the connection.
+
+ Let's design the Python class:
+
+ We'll have:
+   - `__init__` method that takes the database name and opens the connection.
+   - `create_table` method to create the table if it doesn't exist.
+   - `insert_ticket` method to insert a ticket.
+   - `search_tickets_by_customer` method to search by customer name.
+   - `delete_ticket` method to delete a ticket by ticket ID.
+   - `close_connection` method to close the connection.
+
+ We'll use the `sqlite3` module. We can use the `with` statement to ensure the connection is closed, but note that the C++ code does not require explicit closing in the destructor, but the Python version must be careful to close the connection properly.
+
+ However, note that the C++ code throws exceptions on errors. We'll do the same.
+
+ Let's write the code accordingly.
+
+ We'll also note that the C++ code uses `std::string` and we'll use Python strings. The table structure is the same.
+
+ We'll use parameter substitution with `?` in the SQL queries, but note that `sqlite3` in Python also uses `?` as a placeholder.
+
+ Let's code accordingly.
+
+ We'll also note that the C++ code uses `sqlite3_exec` for table creation and `sqlite3_prepare_v2` for other operations. In Python, we can use the `execute` and `executemany` methods for the prepared statements.
+
+ However, note that the C++ code uses `sqlite3_stmt*` and binds parameters. In Python, we can use the `execute` method with parameters.
+
+ Let's translate each method.
+
+ Important: The C++ code uses a class member `db` (a pointer to `sqlite3`). In Python, we'll use a connection object from `sqlite3` and a cursor for executing statements.
+
+ We'll structure the class as follows:
+
+   class MovieTicketDB:
+        def __init__(self, dbName):
+            self.dbName = dbName
+            self.conn = None
+            self.create_connection()
+
+        def create_connection(self):
+            # Open the database file and create a connection
+            self.conn = sqlite3.connect(self.dbName)
+            # We don't need to set the row factory for now, but the C++ code uses a specific column retrieval. 
+            # In Python, we can use `sqlite3.Row` to get columns by name, but the C++ code returns a vector of vectors of strings (so column names are not included). 
+            # We'll stick to the same behavior: just the data.
+
+        def create_table(self):
+            # Create the table if it doesn't exist.
+
+        ... and so on.
+
+ However, note that the C++ code throws exceptions. We'll use `raise Exception` or `raise ValueError` appropriately.
+
+ But note: the C++ code uses `std::runtime_error` for exceptions. In Python, we can use `ValueError` for similar purposes.
+
+ Let's write the code accordingly.
+
+ We'll also note that the C++ code uses `sqlite3_close` in the destructor. We'll close the connection in the `close_connection` method and also in the `__del__` method to ensure it's closed even if the object is garbage collected. However, it's better to use a context manager and explicit close.
+
+ Alternatively, we can make the class a context manager and require the user to use `with`. But the original C++ code does not require that. We'll provide both: a `close_connection` method and let the user decide when to close, but also ensure that the connection is closed when the object is destroyed (via `__del__`).
+
+ However, note that the C++ destructor calls `close_connection()`, so we'll do the same in Python's destructor.
+
+ But note: the C++ code does not allow multiple connections. We'll follow the same.
+
+ Let's code accordingly.
+
+ Steps:
+
+ 1. Import sqlite3.
+ 2. Define the class.
+
+ We'll use the following structure:
+
+   import sqlite3
+
+   class MovieTicketDB:
+        def __init__(self, dbName):
+            self.dbName = dbName
+            self.conn = None
+            self.create_connection()
+            self.create_table()   # Because in C++, create_table is called in the constructor.
+
+        def __del__(self):
+            self.close_connection()
+
+        def create_connection(self):
+            self.conn = sqlite3.connect(self.dbName)
+            # We don't set row_factory to keep the same behavior as the C++ code (without column names)
+
+        def create_table(self):
+            # ... 
+
+        ... etc.
+
+ However, note that the C++ code does not require explicit connection creation if the table creation fails. We'll follow the same.
+
+ Let's write the code.
+
+ Important: The C++ code uses `sqlite3_exec` for table creation. In Python, we can use `execute` with the CREATE TABLE statement.
+
+ But note: the C++ code uses `sqlite3_exec` and checks for errors. We'll do the same.
+
+ We'll use try-except to catch exceptions and re-raise as appropriate.
+
+ However, note that the `sqlite3` module in Python can throw exceptions. We can catch them and re-raise as `ValueError` or similar.
+
+ Alternatively, we can use the return codes. But for simplicity, we'll use the exception model.
+
+ Let's write the code.
+
+ Note: The C++ code uses `sqlite3` functions that return an integer (SQLITE_OK, SQLITE_DONE, etc.) and then checks. We can do the same in Python by catching exceptions, but note that the `sqlite3` module in Python throws exceptions on errors. We can catch them and re-raise with a custom message.
+
+ But note: the C++ code uses `sqlite3_exec` and `sqlite3_prepare_v2` and then checks the return code. We can do the same by using the return codes and not relying on exceptions.
+
+ However, the Python `sqlite3` module does not require exceptions for this. We can check the return codes by using the `rowcount` or by using the `execute` method and then checking the result.
+
+ But note: the C++ code uses `sqlite3_exec` and then checks for errMsg. In Python, we can catch the exception, but the original code does not throw exceptions for every error. We'll try to mimic the same.
+
+ Alternatively, we can use the same error checking style as in the C++ code.
+
+ Let's do:
+
+   try:
+        ... sqlite3 operation ...
+   except sqlite3.Error as e:
+        raise ValueError(f"Database error: {str(e)}")
+
+ But note: the C++ code uses `sqlite3_exec` and then checks the return code and errMsg. We can do:
+
+   result = sqlite3_exec(...)
+   if result != SQLITE_OK:
+        raise ...
+
+ However, in Python, we can use the `sqlite3` module's error handling. But note that the `sqlite3` module in Python does not have a direct equivalent of `sqlite3_exec` that returns an error message string. We can use `sqlite3.connect` and then `conn.execute` or `conn.executescript` etc.
+
+ We'll stick to the same style as the C++ code: check the return code of `sqlite3` functions and throw exceptions.
+
+ But wait, the Python `sqlite3` module does not provide a direct way to get the error message from the last operation? Actually, it does: `sqlite3.Error` exception contains the error message.
+
+ However, we are not using exceptions for control flow. We can use the `sqlite3` functions and check their return codes.
+
+ Let's look at the `sqlite3` module documentation. We can use:
+
+   import sqlite3
+   conn = sqlite3.connect(...)
+   cursor = conn.cursor()
+
+   Then, for `execute` and `executescript`, we can check the `rowcount` for `INSERT` but for `CREATE TABLE` we can use `execute` and then check the return code? Actually, the `execute` method doesn't return a return code, but the `sqlite3` module has a `total_changes` attribute and the `lastrowid` for inserts.
+
+ Alternatively, we can use the `sqlite3_exec` function available in the `sqlite3` module in Python? Actually, the `sqlite3` module in Python does not have a `sqlite3_exec` function in the public API. Instead, we can use the `execute` method for most operations.
+
+ But note: the `sqlite3` module in Python does have a `execute` method for executing a single SQL statement and `executescript` for multiple. We can use `execute` for the `CREATE TABLE` statement.
+
+ Let's change the approach: we'll use the `sqlite3` module and its methods. We'll use the `execute` method and then check the result by using the `rowcount` or by using the `lastrowid` for inserts. But note that `CREATE TABLE` does not set `lastrowid`.
+
+ We can use the `execute` method and then check the return value of the `sqlite3` function? Actually, the `sqlite3` module in Python wraps the C API. We can use the `execute` method and then check the `sqlite3` error by using the `conn` object? Actually, the `conn` object has an `execute` method that returns a cursor, and we can check the `rowcount` for some operations, but for `CREATE TABLE`, we don't care about rowcount.
+
+ We can use the `conn.execute` and then check the `conn`'s error state? Actually, the `sqlite3` module in Python does not have a direct way to get the error message from the last operation without using exceptions.
+
+ Let's stick to the same style as the C++ code: use the `sqlite3` functions and check their return codes. We can use the `sqlite3.connect` and then use the `conn.execute` method, but note that the `conn.execute` method does not return the return code. Instead, we can use the `sqlite3` functions directly from the C API? But that is not recommended in Python.
+
+ Alternatively, we can use the `sqlite3` module's `executescript` for the `CREATE TABLE` statement, but that is not necessary.
+
+ Since the Python `sqlite3` module does not provide the same low-level control as the C API, we have to adjust.
+
+ Let me clarify: the C++ code uses `sqlite3_exec` for table creation and `sqlite3_prepare_v2` for other operations. In Python, we can use the `conn.execute` method for the `CREATE TABLE` statement and then check for errors by catching exceptions.
+
+ But note: the requirement is to keep behavior identical. We are allowed to use idiomatic Python only when it doesn't change behavior.
+
+ We can do:
+
+   try:
+        cursor = self.conn.execute(create_tableSQL)
+   except sqlite3.Error as e:
+        raise ValueError(f"Failed to create table: {e}")
+
+ However, the C++ code does not throw an exception on `CREATE TABLE` if the table already exists? Actually, the C++ code uses `CREATE TABLE IF NOT EXISTS`, so it should not throw an error. But if there's an error, we want to throw.
+
+ But note: the C++ code uses `sqlite3_exec` and then checks the return code. In Python, we can use the `conn.execute` and then check the `rowcount`? No, `CREATE TABLE` has 0 rowcount.
+
+ Alternatively, we can use the `conn.execute` and then check the `lastrowid`? No, `CREATE TABLE` sets lastrowid to 0.
+
+ We can use the `conn.execute` and then check the `conn`'s total_changes? Not helpful.
+
+ The best way is to use the exception model because the `sqlite3` module in Python throws exceptions for errors.
+
+ Let's use the exception model and wrap the operations that can fail.
+
+ But note: the C++ code uses explicit error checking for every operation. We are allowed to use idiomatic Python, and using exceptions is idiomatic in Python for error handling in database operations.
+
+ However, the requirement says: "Use idiomatic Python only when it doesn't change behavior." So if using exceptions is idiomatic and doesn't change the behavior (i.e., we throw an exception when there's an error), then it's acceptable.
+
+ Let's proceed with the exception model.
+
+ Steps:
+
+   import sqlite3
+
+   class MovieTicketDB:
+        def __init__(self, dbName):
+            self.dbName = dbName
+            self.conn = None
+            self.create_connection()
+            self.create_table()
+
+        def create_connection(self):
+            try:
+                self.conn = sqlite3.connect(self.dbName)
+            except sqlite3.Error as e:
+                raise ValueError(f"Unable to open database: {e}")
+
+        def create_table(self):
+            create_tableSQL = """
+                CREATE TABLE IF NOT EXISTS tickets (
+                    id INTEGER PRIMARY KEY,
+                    movie_name TEXT,
+                    theater_name TEXT,
+                    seat_number TEXT,
+                    customer_name TEXT
+                )
+            """
+            try:
+                self.conn.execute(create_tableSQL)
+            except sqlite3.Error as e:
+                raise ValueError(f"Failed to create table: {e}")
+
+        ... and so on for other methods.
+
+ But note: the C++ code uses `sqlite3_exec` and then checks for errors. In Python, the `conn.execute` method will throw an exception if there's an error, so we can catch it.
+
+ However, note that the C++ code uses `sqlite3_exec` for the `CREATE TABLE` statement. In Python, we can use `conn.execute` for a single statement.
+
+ Let's write the rest of the methods.
+
+ Important: The C++ code uses parameterized queries. In Python, we can use the `?` placeholder and pass parameters as a tuple.
+
+ Let's write `insert_ticket`:
+
+   def insert_ticket(self, movieName, theaterName, seatNumber, customerName):
+        insertSQL = """
+            INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+            VALUES (?, ?, ?, ?)
+        """
+        try:
+            cursor = self.conn.execute(insertSQL, (movieName, theaterName, seatNumber, customerName))
+            self.conn.commit()   # The C++ code doesn't explicitly commit, but does the transaction auto-commit in SQLite?
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to insert ticket: {e}")
+
+ But wait, the C++ code uses `sqlite3_prepare_v2` and then `sqlite3_step` and then `sqlite3_finalize`. In Python, we don't need to prepare and finalize because the `conn.execute` does that for us.
+
+ However, note that the C++ code does not commit automatically. In SQLite, by default, each SQL statement is a separate transaction. But if you do multiple writes without committing, they are not visible to other connections. The C++ code does not commit after `INSERT`. We must commit or use transactions.
+
+ The requirement is to keep behavior identical. In the C++ code, the `INSERT` is done and then the transaction is committed by the user? Actually, the C++ code does not commit. So we should not commit in the Python code either.
+
+ But note: the C++ code does not commit the transaction. So we'll not commit in the Python code.
+
+ However, if we do multiple inserts without committing, they will be in a temporary transaction and then committed when the connection is closed? Actually, no. Each statement is a separate transaction by default. So if we do two inserts without committing, they are two separate transactions.
+
+ We'll leave the commit out.
+
+ Now, the `search_tickets_by_customer` method:
+
+   def search_tickets_by_customer(self, customerName):
+        searchSQL = """
+            SELECT * FROM tickets WHERE customer_name = ?
+        """
+        try:
+            cursor = self.conn.execute(searchSQL, (customerName,))
+            # We want to return a list of lists, each inner list is a row.
+            rows = cursor.fetchall()
+            # Each row is a tuple, so we can convert to list of lists.
+            return [list(row) for row in rows]
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to search tickets: {e}")
+
+ But note: the C++ code uses `sqlite3_step` in a loop. In Python, we can use `fetchall` to get all rows.
+
+ However, note that the C++ code uses `sqlite3_column_text` and then converts to string. In Python, the `sqlite3` module returns the data as a bytes object if the column is TEXT? Actually, no: the `sqlite3` module returns the data as a string (if the database column is TEXT) or as a bytes object if you use `row_factory=None` (which is the default). But note: the `sqlite3` module returns the data as a string for TEXT columns by default.
+
+ Let me check: the default row factory is `None`, so the rows are returned as a tuple of tuples, and each element is the raw data. For TEXT, it returns a string (if the database is UTF-8, UTF-16, or UTF-16le). Actually, the `sqlite3` module returns the data in the type it was stored, but for TEXT, it returns a string.
+
+ However, note: the `sqlite3` module does not do type conversion automatically. But the documentation says: "The sqlite3.connect() function creates a database connection and returns the connection. The connection is not necessarily a database itself, but serves as a factory for database operations."
+
+ And the `execute` method returns a cursor, and the `fetchall` returns a list of tuples, each tuple is a row. The data types are determined by the `row_factory`. By default, `row_factory` is `None`, so the rows are tuples of the raw data. But the raw data for TEXT is a string.
+
+ Let me test with a small example:
+
+   import sqlite3
+   conn = sqlite3.connect(':memory:')
+   conn.execute('''CREATE TABLE test (x INTEGER, y TEXT)''')
+   conn.execute("INSERT INTO test VALUES (1, 'hello')")
+   cursor = conn.execute("SELECT * FROM test")
+   print(cursor.fetchone())   # (1, 'hello')
+
+ So it returns a tuple with an integer and a string.
+
+ Therefore, we can use the same.
+
+ Now, the `delete_ticket` method:
+
+   def delete_ticket(self, ticketId):
+        deleteSQL = """
+            DELETE FROM tickets WHERE id = ?
+        """
+        try:
+            self.conn.execute(deleteSQL, (ticketId,))
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to delete ticket: {e}")
+
+ But note: the C++ code uses `sqlite3_prepare_v2` and then `sqlite3_bind_text` and then `sqlite3_step`. In Python, we use `?` and pass the parameters as a tuple.
+
+ However, note: the `ticketId` is an integer in the C++ code? Actually, the C++ code passes a `std::string` for `ticketId`. In the C++ code, the `id` is INTEGER, so it's okay to pass a string because SQLite will convert it.
+
+ In the Python code, we are passing a string. But note: the table `id` is INTEGER, so if we pass a string that represents an integer, it will work. But what if we pass a non-integer string? It will fail, which is the same behavior as the C++ code.
+
+ Now, the `close_connection` method:
+
+   def close_connection(self):
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
+
+ And the destructor (__del__) will call this.
+
+ However, note that the C++ code closes the connection in the destructor. We'll do the same.
+
+ But note: the `__del__` method is called when the object is destroyed. We must be careful because if the object is destroyed during a database operation, it might cause issues. We'll rely on the `close_connection` method to be called explicitly and also in the destructor.
+
+ We'll also note that the `sqlite3` connection might be closed by the garbage collection, but we want to ensure it's closed.
+
+ Let's write the code accordingly.
+
+ However, there is one issue: the C++ code uses `sqlite3_open` and then `sqlite3_close` in the destructor. In Python, the `sqlite3.connect` returns a connection object that must be closed.
+
+ We'll write the code.
+
+ Let's code accordingly.
+
+ We'll also note that the C++ code throws exceptions for errors. We are using `ValueError` for all errors.
+
+ But note: the original C++ code throws `std::runtime_error`. We can use a custom exception if we want, but the requirement says to keep behavior identical. We can use `ValueError` because it's a runtime error.
+
+ Now, let's write the complete code.
+
+ Note: We are not using the `winsqlite` library because the requirement says to use standard libraries. The original C++ code uses `winsqlite/winsqlite3.h` but that is a wrapper for SQLite on Windows. In Python, we use the standard `sqlite3` module which works on all platforms.
+
+ Let's code accordingly.
+
+ We'll also note that the C++ code uses `std::string` and we are using Python strings.
+
+ We are ready to write the code.
+
+</think>
+
+=== RAW ANSWER ===
+
+Here's the Python translation of the C++ code using the built-in `sqlite3` module:
+
+```python
+import sqlite3
+from typing import List, List, Any
+
+class MovieTicketDB:
+    def __init__(self, dbName: str):
+        self.dbName = dbName
+        self.conn = None
+        self.create_connection()
+        self.create_table()
+
+    def create_connection(self):
+        try:
+            self.conn = sqlite3.connect(self.dbName)
+        except sqlite3.Error as e:
+            raise ValueError(f"Unable to open database: {e}")
+
+    def create_table(self):
+        create_tableSQL = """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY,
+                movie_name TEXT,
+                theater_name TEXT,
+                seat_number TEXT,
+                customer_name TEXT
+            )
+        """
+        try:
+            self.conn.execute(create_tableSQL)
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to create table: {e}")
+
+    def insert_ticket(self, movieName: str, theaterName: str, seatNumber: str, customerName: str):
+        insertSQL = """
+            INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+            VALUES (?, ?, ?, ?)
+        """
+        try:
+            self.conn.execute(insertSQL, (movieName, theaterName, seatNumber, customerName))
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to insert ticket: {e}")
+
+    def search_tickets_by_customer(self, customerName: str) -> List[List[str]]:
+        searchSQL = """
+            SELECT * FROM tickets WHERE customer_name = ?
+        """
+        try:
+            cursor = self.conn.execute(searchSQL, (customerName,))
+            return [list(row) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to search tickets: {e}")
+
+    def delete_ticket(self, ticketId: str):
+        deleteSQL = """
+            DELETE FROM tickets WHERE id = ?
+        """
+        try:
+            self.conn.execute(deleteSQL, (ticketId,))
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to delete ticket: {e}")
+
+    def close_connection(self):
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+
+    def __del__(self):
+        self.close_connection()
+```
+
+Key points about this translation:
+
+1. Uses Python's built-in `sqlite3` module instead of external libraries
+2. Maintains same error handling with `ValueError` exceptions
+3. Uses parameterized queries with `?` placeholders for SQL injection safety
+4. Returns results as nested lists (matching C++'s `vector<vector<string>>`)
+5. Implements all required methods with identical functionality
+6. Uses type hints for better code clarity (without changing behavior)
+7. Maintains RAII pattern with destructor (`__del__`) for automatic cleanup
+
+Usage example:
+```python
+try:
+    db = MovieTicketDB("tickets.db")
+    db.insert_ticket("Inception", "Regal", "A12", "John Doe")
+    tickets = db.search_tickets_by_customer("John Doe")
+    print(tickets)
+    db.delete_ticket("1")
+except ValueError as e:
+    print(f"Database error: {e}")
+finally:
+    db.close_connection()
+```
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+from typing import List, List, Any
+
+class MovieTicketDB:
+    def __init__(self, dbName: str):
+        self.dbName = dbName
+        self.conn = None
+        self.create_connection()
+        self.create_table()
+
+    def create_connection(self):
+        try:
+            self.conn = sqlite3.connect(self.dbName)
+        except sqlite3.Error as e:
+            raise ValueError(f"Unable to open database: {e}")
+
+    def create_table(self):
+        create_tableSQL = """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY,
+                movie_name TEXT,
+                theater_name TEXT,
+                seat_number TEXT,
+                customer_name TEXT
+            )
+        """
+        try:
+            self.conn.execute(create_tableSQL)
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to create table: {e}")
+
+    def insert_ticket(self, movieName: str, theaterName: str, seatNumber: str, customerName: str):
+        insertSQL = """
+            INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+            VALUES (?, ?, ?, ?)
+        """
+        try:
+            self.conn.execute(insertSQL, (movieName, theaterName, seatNumber, customerName))
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to insert ticket: {e}")
+
+    def search_tickets_by_customer(self, customerName: str) -> List[List[str]]:
+        searchSQL = """
+            SELECT * FROM tickets WHERE customer_name = ?
+        """
+        try:
+            cursor = self.conn.execute(searchSQL, (customerName,))
+            return [list(row) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to search tickets: {e}")
+
+    def delete_ticket(self, ticketId: str):
+        deleteSQL = """
+            DELETE FROM tickets WHERE id = ?
+        """
+        try:
+            self.conn.execute(deleteSQL, (ticketId,))
+        except sqlite3.Error as e:
+            raise ValueError(f"Failed to delete ticket: {e}")
+
+    def close_connection(self):
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+
+    def __del__(self):
+        self.close_connection()

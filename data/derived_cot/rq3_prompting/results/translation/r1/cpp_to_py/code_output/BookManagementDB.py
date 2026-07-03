@@ -1,0 +1,73 @@
+import sqlite3
+
+
+class BookManagementDB:
+    def __init__(self, db_name: str):
+        try:
+            self.connection = sqlite3.connect(db_name)
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to open database: {e}")
+
+    def __del__(self):
+        if hasattr(self, 'connection') and self.connection:
+            self.connection.close()
+
+    def create_table(self):
+        sql = """
+        CREATE TABLE IF NOT EXISTS books (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            author TEXT NOT NULL,
+            available INTEGER NOT NULL
+        )
+        """
+        try:
+            self.connection.execute(sql)
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e))
+
+    def add_book(self, title: str, author: str):
+        sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)"
+        try:
+            self.connection.execute(sql, (title, author))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e))
+
+    def remove_book(self, id: int):
+        sql = "DELETE FROM books WHERE id = ?"
+        try:
+            self.connection.execute(sql, (id,))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e))
+
+    def borrow_book(self, id: int):
+        sql = "UPDATE books SET available = 0 WHERE id = ?"
+        try:
+            self.connection.execute(sql, (id,))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e))
+
+    def return_book(self, id: int):
+        sql = "UPDATE books SET available = 1 WHERE id = ?"
+        try:
+            self.connection.execute(sql, (id,))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e))
+
+    def search_books(self):
+        sql = "SELECT * FROM books"
+        try:
+            cursor = self.connection.execute(sql)
+            rows = cursor.fetchall()
+            # Each row is a tuple (id, title, author, available)
+            return [(row[0], row[1], row[2], row[3]) for row in rows]
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e))
+
+    def get_connection(self):
+        return self.connection

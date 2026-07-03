@@ -1,0 +1,800 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import org.apache.commons.math3.util.Pair;
+
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
+import java.util.stream.Collectors;
+
+class Event {
+    LocalDateTime date;
+    LocalDateTime start_time;
+    LocalDateTime end_time;
+    String description;
+
+    public Event(LocalDateTime date, LocalDateTime start_time, LocalDateTime end_time, String description) {
+        this.date = date;
+        this.start_time = start_time;
+        this.end_time = end_time;
+        this.description = description;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        Event event = (Event) obj;
+        return date.equals(event.date) &&
+                start_time.equals(event.start_time) &&
+                end_time.equals(event.end_time) &&
+                description.equals(event.description);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(date, start_time, end_time, description);
+    }
+}
+
+class CalendarUtil {
+    List<Event> events = new ArrayList<>();
+
+    public void addEvent(Event event) {
+        events.add(event);
+    }
+
+    public void removeEvent(Event event) {
+        events.remove(event);
+    }
+
+    public List<Event> getEvents(LocalDateTime date) {
+        return events.stream()
+                .filter(event -> event.date.toLocalDate().equals(date.toLocalDate()))
+                .collect(Collectors.toList());
+    }
+
+    public boolean isAvailable(LocalDateTime start_time, LocalDateTime end_time) {
+        return events.stream()
+                .noneMatch(event -> start_time.isBefore(event.end_time) && end_time.isAfter(event.start_time));
+    }
+
+    public List<Pair<LocalDateTime, LocalDateTime>> getAvailableSlots(LocalDateTime date) {
+        List<Pair<LocalDateTime, LocalDateTime>> availableSlots = new ArrayList<>();
+        LocalDateTime start_time = date.withHour(0).withMinute(0);
+        LocalDateTime end_time = date.withHour(23).withMinute(59);
+
+        while (start_time.isBefore(end_time)) {
+            LocalDateTime slot_end_time = start_time.plus(1, ChronoUnit.HOURS);
+            if (isAvailable(start_time, slot_end_time)) {
+                availableSlots.add(new Pair<>(start_time, slot_end_time));
+            }
+            start_time = slot_end_time;
+        }
+
+        return availableSlots;
+    }
+
+    public List<Event> getUpcomingEvents(int num_events) {
+        LocalDateTime now = LocalDateTime.now();
+        return events.stream()
+                .filter(event -> event.start_time.isAfter(now))
+                .limit(num_events)
+                .collect(Collectors.toList());
+    }
+}
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++. The Java code uses:
+
+- `java.time.LocalDateTime`
+- `java.time.temporal.ChronoUnit`
+- `java.util.*` (ArrayList, List, Objects, etc.)
+- `java.util.stream.Collectors`
+- `org.apache.commons.math3.util.Pair` (for Pair)
+
+In C++, we need equivalent functionality. For dates and times, we can use `<chrono>` library (C++20 for calendar types, or use Howard Hinnant's date library if C++20 not available). Since the problem says "Keep behavior identical" and "Use idiomatic C++ only when it doesn't change behavior", we should pick a date/time library that works. The code uses `LocalDateTime` which is like a date+time without timezone. In C++20, we have `std::chrono::year_month_day` and `std::chrono::hh_mm_ss` for time of day, but no combined local datetime class. We could use `std::chrono::local_time` (C++20). Or we can use `std::chrono::system_clock::time_point` and then treat it as local? That would be timezone-dependent. Better to define a custom `LocalDateTime` class that mimics the Java one, or use `std::chrono::time_point` with `std::chrono::local_t` (C++20). Since the code is not timezone-sensitive (just local date/time), we can use `std::chrono::sys_days` for date and `std::chrono::time_of_day` for time. Or simpler: use `struct tm` from C time library, but that's not idiomatic C++. 
+
+Another approach: since the code is relatively simple, we can use `std::chrono::system_clock::time_point` and truncate to days/hours. But note: `LocalDateTime` in Java is without timezone; using system_clock::time_point would incorporate timezone offset, which might cause off-by-hour issues when converting to local date. However, the code only compares within the same machine, so using system_clock::time_point and assuming it represents local time might be acceptable but not identical behavior if the system timezone changes. Better to use a custom class that stores year, month, day, hour, minute, second, nanosecond. That's straightforward.
+
+For `Pair` from Apache Commons, we can use `std::pair` or write a simple struct. The Java code uses `Pair<LocalDateTime, LocalDateTime>` with generics. C++ template pair works.
+
+For stream operations: filter, map, collect. We can use `std::copy_if`, `std::remove_if`, etc. But the code uses `stream().filter().collect(Collectors.toList())`. In C++, we can use `std::vector` and algorithms, or use range-based for loops with `std::copy_if` or `std::remove_copy_if`. To keep behavior identical, we should avoid unnecessary copying and ensure the same side effects. For `getEvents`, it returns a new list filtered by date. We can use `std::copy_if` with back_inserter. For `isAvailable`, we have `noneMatch` which is equivalent to `std::none_of`. For `getAvailableSlots`, it loops and calls `isAvailable`. For `getUpcomingEvents`, it filters events where start_time is after now and limits to num_events. In C++, we can use `std::copy_if` but limit is tricky with standard algorithms; we can use a loop with a counter or use range views (C++20). However, we should use idiomatic C++ but not change behavior. We can use a manual loop to limit.
+
+Also note: Java's `ArrayList` is ordered. `events` field is a List of Event, we can use `std::vector<Event>`. `addEvent` appends, `removeEvent` removes first occurrence based on equals. In C++, we can use `std::find` and `vector::erase`. But we need to define equality for Event. We'll overload `operator==` for Event. Also `hashCode` is not needed in C++ unless we use unordered containers.
+
+`Objects.hash` is not needed; we can skip.
+
+`ChronoUnit.HOURS` – we need to add 1 hour. In C++20, `std::chrono::hours(1)`.
+
+Now, we need to handle the `LocalDateTime` class. I'll define a class `LocalDateTime` with members: year, month, day, hour, minute, second (and possibly nanosecond, but the Java code doesn't use nanoseconds; it uses `withHour(0).withMinute(0)` and `plus(1, ChronoUnit.HOURS)`, so seconds and nanos are zero). We'll support comparison operators (`<`, `>`, `==`, `<=`, `>=`, `!=`), arithmetic (plus hours), `toLocalDate()` that returns a date-only representation. We'll also need `withHour`, `withMinute`, `isBefore`, `isAfter`. We'll implement them as member functions.
+
+Simplify: Since the code only uses hours and minutes for start/end time and date for filtering, we can store time in minutes since midnight or something. But to be generic, let's implement full date/time.
+
+We'll need a `LocalDate` class for date-only (year, month, day) to compare equality in `getEvents`. Actually, Java's `LocalDateTime.toLocalDate()` returns a `LocalDate`. In C++, we can have a simple struct/class for date with comparison.
+
+Also, `LocalDateTime.now()` returns current date and time according to system clock. In C++ we can use `std::chrono::system_clock::now()` and convert to local time using `std::chrono::current_zone` (C++20) or use `localtime`. Since the code assumes local time, we'll use `std::chrono::system_clock::to_time_t` then convert to `struct tm` (local time) then construct our `LocalDateTime`. That's acceptable.
+
+Alternatively, we could use `<ctime>` functions to get local time and fill fields. I'll create a static `LocalDateTime::now()` function.
+
+Now, about exceptions: Java code doesn't throw any custom exceptions; the arithmetic is safe. We'll avoid exceptions except maybe for invalid inputs (but none expected). We'll match behavior.
+
+Also note: `events.stream().filter(...).collect(Collectors.toList())` returns a new list. In C++, we'll create a new vector each time.
+
+Let's write the translation.
+
+We'll include headers: `<vector>`, `<algorithm>`, `<chrono>`, `<ctime>`, `<iomanip>`, `<sstream>`, `<optional>` (maybe not), `<memory>` (not needed).
+
+We'll define `LocalDateTime` as a class with private fields: int year, month, day, hour, minute, second (int). We'll provide constructors, comparison operators, `isBefore`, `isAfter`, `plusHours`, `withHour`, `withMinute`, `toLocalDate`, and static `now()`. Also `operator==` for equality used in Event equals.
+
+For `Event`, we'll define `operator==` (const reference) and maybe `operator<` for sorting? Not needed. Also we'll need a way to hash? Not used. We'll store as `std::vector<Event>`.
+
+`CalendarUtil` class with methods: `addEvent`, `removeEvent`, `getEvents` (by date), `isAvailable`, `getAvailableSlots`, `getUpcomingEvents`.
+
+Need to include `std::pair` for slots.
+
+Now, let's write the code.
+
+One important detail: `removeEvent` uses `events.remove(event)` which removes the first occurrence based on `equals`. In C++, we can use `std::find` to get iterator and then `erase`. But we need to check if found (though if not found, `erase` would be wrong; Java's `remove` returns boolean but here it's void? Actually Java's `ArrayList.remove(Object)` returns boolean but the method `removeEvent` is void, so it ignores the return. In C++ we should only erase if found, but to mimic exactly, if the event is not present, we should do nothing (no error). So we'll use `auto it = std::find(events.begin(), events.end(), event); if (it != events.end()) events.erase(it);`.
+
+Now, `getEvents`: filter by date. We'll create a new vector and `std::copy_if`.
+
+`isAvailable`: `std::none_of` with lambda checking overlap: `start_time.isBefore(event.end_time) && end_time.isAfter(event.start_time)`. That's correct.
+
+`getAvailableSlots`: loop from 00:00 to 23:59 with 1-hour slots. We'll use `LocalDateTime start_time = date.withHour(0).withMinute(0);` and `LocalDateTime end_time = date.withHour(23).withMinute(59);` (assuming 23:59 inclusive? Actually the loop uses `start_time.isBefore(end_time)` then sets `slot_end_time = start_time.plus(1, ChronoUnit.HOURS);`, so the last slot might be from 23:00 to 00:00 next day? No, `end_time` is 23:59, so `start_time` starts at 00:00, goes 01:00, ..., up to 23:00 (since `start_time.isBefore(end_time)` is true at 23:00? 23:00 < 23:59 true, so slot from 23:00 to 00:00 next day? But `slot_end_time` is `start_time.plus(1, ChronoUnit.HOURS)` which for 23:00 gives 00:00 next day, which is not before `end_time` (23:59), but `isAvailable` is called with start_time and slot_end_time, so it checks slot 23:00 to 00:00 next day. That might be intended? Java's behavior: `getAvailableSlots` returns 1-hour slots on that date, but the last slot might be 23:00-00:00 next day. However, `end_time` is 23:59, so the slot that starts at 23:00 ends at 00:00 next day, which is after 23:59. But `isAvailable` will check if any event overlaps with that slot; events are on same date? Events have a date field but `isAvailable` only compares times, not dates. So an event on the same date with start_time 23:30 and end_time 23:59 would overlap? Actually, end_time is 00:00 next day, which is after 23:59, so the event's end_time (23:59) is before slot end (00:00 next day) -> overlap? Overlap condition: start_time.isBefore(event.end_time) && end_time.isAfter(event.start_time). Here start_time=23:00, event.end_time=23:59, 23:00<23:59 true; end_time=00:00 next day, event.start_time=23:30, 00:00 > 23:30 true -> overlap. So it works. But the slot end is next day, so its date changes. This is a nuance. To mimic Java's behavior exactly, we'll implement `plus_hours` that returns a new LocalDateTime with hours added and possibly date rollover. We'll do that.
+
+We'll also need `toLocalDate` that returns a date (year, month, day). For comparison, we'll just compare the date components.
+
+`getUpcomingEvents`: filter events where `event.start_time.isAfter(now)` and limit to num_events. In Java, it returns first N events in encounter order (insertion order). Since events is a List, it's the order of addition. In C++, we'll keep the order. We'll loop through events and add to result until we have num_events.
+
+Now, let's produce the final C++ code. We'll write it in a single file (since Java had one file? It's package org.example; but we ignore package). We'll include necessary headers.
+
+One more thing: `LocalDateTime.now()`: We'll get system time, convert to time_t, then localtime, then fill fields.
+
+Edge cases: `plus_hours` may cause date change; we'll handle by adding hours to total minutes or using a helper that adjusts date.
+
+Simpler: Represent as `std::chrono::system_clock::time_point` but then we have timezone issues. Since the code assumes local time, using system_clock::time_point might be fine if we interpret it as local time (but system_clock is UTC). That would be incorrect. So we'll implement custom arithmetic.
+
+To add hours: convert to total minutes since some epoch? But we have date. Easiest: get the current `struct tm`, add hours, and normalize with `mktime`. But that's C-style. We can implement a function to add hours: add to hour field, then while hour >= 24: hour -= 24, day++; then adjust day for month length, etc. This is tedious but doable. Alternatively, we can use a library like Howard Hinnant's date library (C++20 compatible). But to keep it self-contained, I'll implement a manual add_hours. Since only 1-hour increments are used, we could just handle hour overflow and day overflow. For simplicity, we can assume no need to handle multiple days at once, but `plus(1, ChronoUnit.HOURS)` could be from 23:00 to 00:00 next day. So we need to handle that.
+
+I'll implement a method `LocalDateTime plusHours(int hours)` that adds hours and adjusts the date accordingly. We'll also need to handle month/year overflow. Since we only add 1 to 24 hours max, it's simple.
+
+Similarly, `withHour` and `withMinute` just set the fields.
+
+`isBefore` and `isAfter` compare lexicographically (year, month, day, hour, minute, second). We'll also implement `operator<`.
+
+`toLocalDate` returns a `LocalDate` struct.
+
+We'll also need `operator==` for LocalDateTime and LocalDate.
+
+Now, code:
+
+```cpp
+#include <vector>
+#include <algorithm>
+#include <chrono>
+#include <ctime>
+#include <utility> // for pair
+#include <stdexcept> // maybe not needed
+
+class LocalDate {
+public:
+    int year;
+    int month;
+    int day;
+    LocalDate(int y, int m, int d) : year(y), month(m), day(d) {}
+    bool operator==(const LocalDate& other) const {
+        return year == other.year && month == other.month && day == other.day;
+    }
+};
+
+class LocalDateTime {
+public:
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+    int second;
+
+    LocalDateTime(int y, int m, int d, int h, int min, int sec = 0)
+        : year(y), month(m), day(d), hour(h), minute(min), second(sec) {}
+
+    LocalDateTime() : year(0), month(0), day(0), hour(0), minute(0), second(0) {}
+
+    static LocalDateTime now() {
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::tm* local = std::localtime(&t);
+        return LocalDateTime(local->tm_year + 1900, local->tm_mon + 1, local->tm_mday,
+                             local->tm_hour, local->tm_min, local->tm_sec);
+    }
+
+    LocalDate toLocalDate() const {
+        return LocalDate(year, month, day);
+    }
+
+    LocalDateTime withHour(int h) const {
+        return LocalDateTime(year, month, day, h, minute, second);
+    }
+
+    LocalDateTime withMinute(int m) const {
+        return LocalDateTime(year, month, day, hour, m, second);
+    }
+
+    LocalDateTime plusHours(int h) const {
+        int total_hours = hour + h;
+        int new_day = day;
+        int new_month = month;
+        int new_year = year;
+        while (total_hours >= 24) {
+            total_hours -= 24;
+            new_day++;
+        }
+        while (total_hours < 0) {
+            total_hours += 24;
+            new_day--;
+        }
+        // adjust new_day for month length (simplified: assume 31 days per month, but we need accurate)
+        // For simplicity, and since h is small, we can just increment day and let it overflow, but Java's LocalDateTime handles it correctly.
+        // To be correct, we need a month length function. We'll implement a simple daysInMonth.
+        auto daysInMonth = [](int y, int m) -> int {
+            static const int days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)))
+                return 29;
+            return days[m-1];
+        };
+        while (new_day > daysInMonth(new_year, new_month)) {
+            new_day -= daysInMonth(new_year, new_month);
+            new_month++;
+            if (new_month > 12) {
+                new_month = 1;
+                new_year++;
+            }
+        }
+        while (new_day < 1) {
+            new_month--;
+            if (new_month < 1) {
+                new_month = 12;
+                new_year--;
+            }
+            new_day += daysInMonth(new_year, new_month);
+        }
+        return LocalDateTime(new_year, new_month, new_day, total_hours, minute, second);
+    }
+
+    bool isBefore(const LocalDateTime& other) const {
+        if (year != other.year) return year < other.year;
+        if (month != other.month) return month < other.month;
+        if (day != other.day) return day < other.day;
+        if (hour != other.hour) return hour < other.hour;
+        if (minute != other.minute) return minute < other.minute;
+        return second < other.second;
+    }
+
+    bool isAfter(const LocalDateTime& other) const {
+        return other.isBefore(*this);
+    }
+
+    bool operator==(const LocalDateTime& other) const {
+        return year == other.year && month == other.month && day == other.day &&
+               hour == other.hour && minute == other.minute && second == other.second;
+    }
+
+    bool operator!=(const LocalDateTime& other) const {
+        return !(*this == other);
+    }
+
+    bool operator<(const LocalDateTime& other) const {
+        return isBefore(other);
+    }
+
+    bool operator>(const LocalDateTime& other) const {
+        return other.isBefore(*this);
+    }
+
+    bool operator<=(const LocalDateTime& other) const {
+        return !(other.isBefore(*this));
+    }
+
+    bool operator>=(const LocalDateTime& other) const {
+        return !isBefore(other);
+    }
+};
+
+class Event {
+public:
+    LocalDateTime date;
+    LocalDateTime start_time;
+    LocalDateTime end_time;
+    std::string description;
+
+    Event(const LocalDateTime& date, const LocalDateTime& start_time, const LocalDateTime& end_time, const std::string& description)
+        : date(date), start_time(start_time), end_time(end_time), description(description) {}
+
+    bool operator==(const Event& other) const {
+        return date == other.date &&
+               start_time == other.start_time &&
+               end_time == other.end_time &&
+               description == other.description;
+    }
+};
+
+class CalendarUtil {
+public:
+    std::vector<Event> events;
+
+    void addEvent(const Event& event) {
+        events.push_back(event);
+    }
+
+    void removeEvent(const Event& event) {
+        auto it = std::find(events.begin(), events.end(), event);
+        if (it != events.end()) {
+            events.erase(it);
+        }
+    }
+
+    std::vector<Event> getEvents(const LocalDateTime& date) {
+        std::vector<Event> result;
+        std::copy_if(events.begin(), events.end(), std::back_inserter(result),
+                     [&date](const Event& e) { return e.date.toLocalDate() == date.toLocalDate(); });
+        return result;
+    }
+
+    bool isAvailable(const LocalDateTime& start_time, const LocalDateTime& end_time) {
+        return std::none_of(events.begin(), events.end(),
+                            [&start_time, &end_time](const Event& e) {
+                                return start_time.isBefore(e.end_time) && end_time.isAfter(e.start_time);
+                            });
+    }
+
+    std::vector<std::pair<LocalDateTime, LocalDateTime>> getAvailableSlots(const LocalDateTime& date) {
+        std::vector<std::pair<LocalDateTime, LocalDateTime>> availableSlots;
+        LocalDateTime start_time = date.withHour(0).withMinute(0);
+        LocalDateTime end_time = date.withHour(23).withMinute(59);
+
+        while (start_time.isBefore(end_time)) {
+            LocalDateTime slot_end_time = start_time.plusHours(1);
+            if (isAvailable(start_time, slot_end_time)) {
+                availableSlots.push_back({start_time, slot_end_time});
+            }
+            start_time = slot_end_time;
+        }
+
+        return availableSlots;
+    }
+
+    std::vector<Event> getUpcomingEvents(int num_events) {
+        LocalDateTime now = LocalDateTime::now();
+        std::vector<Event> result;
+        for (const Event& e : events) {
+            if (e.start_time.isAfter(now)) {
+                result.push_back(e);
+                if (result.size() == num_events) break;
+            }
+        }
+        return result;
+    }
+};
+```
+
+Check: 
+
+- `plusHours` used a lambda inside method; can be moved to a private static function, but inside is okay.
+- `getUpcomingEvents` limits properly; note: if there are fewer events, it returns all.
+- `getEvents` filter by date equality: uses `toLocalDate()` which returns `LocalDate` with year,month,day.
+- `isAvailable` uses `isBefore` and `isAfter` correctly.
+- `removeEvent` uses `std::find` which requires `operator==` for Event, defined.
+- Include headers: `<vector>`, `<algorithm>`, `<chrono>`, `<ctime>`, `<utility>`, `<string>`. Also `<iterator>` for `std::back_inserter`. We'll add `#include <iterator>`.
+
+Also note: `LocalDateTime::now()` uses `std::localtime` which is not thread-safe; but Java's `LocalDateTime.now()` is thread-safe? Actually, it uses system clock, which is also not thread-safe in the same sense, but for this translation it's acceptable. We can use `localtime_r` on POSIX, but for cross-platform we stick with `localtime`. We'll note that.
+
+Also `plusHours` assumes positive hours, but could be negative? Not used; `isAvailable` passes 1. So fine.
+
+Now, we need to output only the code, as per instructions. We'll provide the final answer with the C++ code.
+
+Make sure to include necessary `#include` statements at top.
+
+
+</think>
+
+=== RAW ANSWER ===
+```
+#include <vector>
+#include <algorithm>
+#include <chrono>
+#include <ctime>
+#include <utility>
+#include <string>
+#include <iterator>
+
+class LocalDate {
+public:
+    int year;
+    int month;
+    int day;
+    LocalDate(int y, int m, int d) : year(y), month(m), day(d) {}
+    bool operator==(const LocalDate& other) const {
+        return year == other.year && month == other.month && day == other.day;
+    }
+};
+
+class LocalDateTime {
+public:
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+    int second;
+
+    LocalDateTime(int y, int m, int d, int h, int min, int sec = 0)
+        : year(y), month(m), day(d), hour(h), minute(min), second(sec) {}
+
+    LocalDateTime() : year(0), month(0), day(0), hour(0), minute(0), second(0) {}
+
+    static LocalDateTime now() {
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::tm* local = std::localtime(&t);
+        return LocalDateTime(local->tm_year + 1900, local->tm_mon + 1, local->tm_mday,
+                             local->tm_hour, local->tm_min, local->tm_sec);
+    }
+
+    LocalDate toLocalDate() const {
+        return LocalDate(year, month, day);
+    }
+
+    LocalDateTime withHour(int h) const {
+        return LocalDateTime(year, month, day, h, minute, second);
+    }
+
+    LocalDateTime withMinute(int m) const {
+        return LocalDateTime(year, month, day, hour, m, second);
+    }
+
+    LocalDateTime plusHours(int h) const {
+        int total_hours = hour + h;
+        int new_day = day;
+        int new_month = month;
+        int new_year = year;
+        while (total_hours >= 24) {
+            total_hours -= 24;
+            new_day++;
+        }
+        while (total_hours < 0) {
+            total_hours += 24;
+            new_day--;
+        }
+        auto daysInMonth = [](int y, int m) -> int {
+            static const int days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)))
+                return 29;
+            return days[m-1];
+        };
+        while (new_day > daysInMonth(new_year, new_month)) {
+            new_day -= daysInMonth(new_year, new_month);
+            new_month++;
+            if (new_month > 12) {
+                new_month = 1;
+                new_year++;
+            }
+        }
+        while (new_day < 1) {
+            new_month--;
+            if (new_month < 1) {
+                new_month = 12;
+                new_year--;
+            }
+            new_day += daysInMonth(new_year, new_month);
+        }
+        return LocalDateTime(new_year, new_month, new_day, total_hours, minute, second);
+    }
+
+    bool isBefore(const LocalDateTime& other) const {
+        if (year != other.year) return year < other.year;
+        if (month != other.month) return month < other.month;
+        if (day != other.day) return day < other.day;
+        if (hour != other.hour) return hour < other.hour;
+        if (minute != other.minute) return minute < other.minute;
+        return second < other.second;
+    }
+
+    bool isAfter(const LocalDateTime& other) const {
+        return other.isBefore(*this);
+    }
+
+    bool operator==(const LocalDateTime& other) const {
+        return year == other.year && month == other.month && day == other.day &&
+               hour == other.hour && minute == other.minute && second == other.second;
+    }
+
+    bool operator!=(const LocalDateTime& other) const {
+        return !(*this == other);
+    }
+
+    bool operator<(const LocalDateTime& other) const {
+        return isBefore(other);
+    }
+
+    bool operator>(const LocalDateTime& other) const {
+        return other.isBefore(*this);
+    }
+
+    bool operator<=(const LocalDateTime& other) const {
+        return !(other.isBefore(*this));
+    }
+
+    bool operator>=(const LocalDateTime& other) const {
+        return !isBefore(other);
+    }
+};
+
+class Event {
+public:
+    LocalDateTime date;
+    LocalDateTime start_time;
+    LocalDateTime end_time;
+    std::string description;
+
+    Event(const LocalDateTime& date, const LocalDateTime& start_time, const LocalDateTime& end_time, const std::string& description)
+        : date(date), start_time(start_time), end_time(end_time), description(description) {}
+
+    bool operator==(const Event& other) const {
+        return date == other.date &&
+               start_time == other.start_time &&
+               end_time == other.end_time &&
+               description == other.description;
+    }
+};
+
+class CalendarUtil {
+public:
+    std::vector<Event> events;
+
+    void addEvent(const Event& event) {
+        events.push_back(event);
+    }
+
+    void removeEvent(const Event& event) {
+        auto it = std::find(events.begin(), events.end(), event);
+        if (it != events.end()) {
+            events.erase(it);
+        }
+    }
+
+    std::vector<Event> getEvents(const LocalDateTime& date) {
+        std::vector<Event> result;
+        std::copy_if(events.begin(), events.end(), std::back_inserter(result),
+                     [&date](const Event& e) { return e.date.toLocalDate() == date.toLocalDate(); });
+        return result;
+    }
+
+    bool isAvailable(const LocalDateTime& start_time, const LocalDateTime& end_time) {
+        return std::none_of(events.begin(), events.end(),
+                            [&start_time, &end_time](const Event& e) {
+                                return start_time.isBefore(e.end_time) && end_time.isAfter(e.start_time);
+                            });
+    }
+
+    std::vector<std::pair<LocalDateTime, LocalDateTime>> getAvailableSlots(const LocalDateTime& date) {
+        std::vector<std::pair<LocalDateTime, LocalDateTime>> availableSlots;
+        LocalDateTime start_time = date.withHour(0).withMinute(0);
+        LocalDateTime end_time = date.withHour(23).withMinute(59);
+
+        while (start_time.isBefore(end_time)) {
+            LocalDateTime slot_end_time = start_time.plusHours(1);
+            if (isAvailable(start_time, slot_end_time)) {
+                availableSlots.push_back({start_time, slot_end_time});
+            }
+            start_time = slot_end_time;
+        }
+
+        return availableSlots;
+    }
+
+    std::vector<Event> getUpcomingEvents(int num_events) {
+        LocalDateTime now = LocalDateTime::now();
+        std::vector<Event> result;
+       
+
+=== TRANSLATED CODE (cpp) ===
+#include <vector>
+#include <algorithm>
+#include <chrono>
+#include <ctime>
+#include <utility>
+#include <string>
+#include <iterator>
+
+class LocalDate {
+public:
+    int year;
+    int month;
+    int day;
+    LocalDate(int y, int m, int d) : year(y), month(m), day(d) {}
+    bool operator==(const LocalDate& other) const {
+        return year == other.year && month == other.month && day == other.day;
+    }
+};
+
+class LocalDateTime {
+public:
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+    int second;
+
+    LocalDateTime(int y, int m, int d, int h, int min, int sec = 0)
+        : year(y), month(m), day(d), hour(h), minute(min), second(sec) {}
+
+    LocalDateTime() : year(0), month(0), day(0), hour(0), minute(0), second(0) {}
+
+    static LocalDateTime now() {
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::tm* local = std::localtime(&t);
+        return LocalDateTime(local->tm_year + 1900, local->tm_mon + 1, local->tm_mday,
+                             local->tm_hour, local->tm_min, local->tm_sec);
+    }
+
+    LocalDate toLocalDate() const {
+        return LocalDate(year, month, day);
+    }
+
+    LocalDateTime withHour(int h) const {
+        return LocalDateTime(year, month, day, h, minute, second);
+    }
+
+    LocalDateTime withMinute(int m) const {
+        return LocalDateTime(year, month, day, hour, m, second);
+    }
+
+    LocalDateTime plusHours(int h) const {
+        int total_hours = hour + h;
+        int new_day = day;
+        int new_month = month;
+        int new_year = year;
+        while (total_hours >= 24) {
+            total_hours -= 24;
+            new_day++;
+        }
+        while (total_hours < 0) {
+            total_hours += 24;
+            new_day--;
+        }
+        auto daysInMonth = [](int y, int m) -> int {
+            static const int days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)))
+                return 29;
+            return days[m-1];
+        };
+        while (new_day > daysInMonth(new_year, new_month)) {
+            new_day -= daysInMonth(new_year, new_month);
+            new_month++;
+            if (new_month > 12) {
+                new_month = 1;
+                new_year++;
+            }
+        }
+        while (new_day < 1) {
+            new_month--;
+            if (new_month < 1) {
+                new_month = 12;
+                new_year--;
+            }
+            new_day += daysInMonth(new_year, new_month);
+        }
+        return LocalDateTime(new_year, new_month, new_day, total_hours, minute, second);
+    }
+
+    bool isBefore(const LocalDateTime& other) const {
+        if (year != other.year) return year < other.year;
+        if (month != other.month) return month < other.month;
+        if (day != other.day) return day < other.day;
+        if (hour != other.hour) return hour < other.hour;
+        if (minute != other.minute) return minute < other.minute;
+        return second < other.second;
+    }
+
+    bool isAfter(const LocalDateTime& other) const {
+        return other.isBefore(*this);
+    }
+
+    bool operator==(const LocalDateTime& other) const {
+        return year == other.year && month == other.month && day == other.day &&
+               hour == other.hour && minute == other.minute && second == other.second;
+    }
+
+    bool operator!=(const LocalDateTime& other) const {
+        return !(*this == other);
+    }
+
+    bool operator<(const LocalDateTime& other) const {
+        return isBefore(other);
+    }
+
+    bool operator>(const LocalDateTime& other) const {
+        return other.isBefore(*this);
+    }
+
+    bool operator<=(const LocalDateTime& other) const {
+        return !(other.isBefore(*this));
+    }
+
+    bool operator>=(const LocalDateTime& other) const {
+        return !isBefore(other);
+    }
+};
+
+class Event {
+public:
+    LocalDateTime date;
+    LocalDateTime start_time;
+    LocalDateTime end_time;
+    std::string description;
+
+    Event(const LocalDateTime& date, const LocalDateTime& start_time, const LocalDateTime& end_time, const std::string& description)
+        : date(date), start_time(start_time), end_time(end_time), description(description) {}
+
+    bool operator==(const Event& other) const {
+        return date == other.date &&
+               start_time == other.start_time &&
+               end_time == other.end_time &&
+               description == other.description;
+    }
+};
+
+class CalendarUtil {
+public:
+    std::vector<Event> events;
+
+    void addEvent(const Event& event) {
+        events.push_back(event);
+    }
+
+    void removeEvent(const Event& event) {
+        auto it = std::find(events.begin(), events.end(), event);
+        if (it != events.end()) {
+            events.erase(it);
+        }
+    }
+
+    std::vector<Event> getEvents(const LocalDateTime& date) {
+        std::vector<Event> result;
+        std::copy_if(events.begin(), events.end(), std::back_inserter(result),
+                     [&date](const Event& e) { return e.date.toLocalDate() == date.toLocalDate(); });
+        return result;
+    }
+
+    bool isAvailable(const LocalDateTime& start_time, const LocalDateTime& end_time) {
+        return std::none_of(events.begin(), events.end(),
+                            [&start_time, &end_time](const Event& e) {
+                                return start_time.isBefore(e.end_time) && end_time.isAfter(e.start_time);
+                            });
+    }
+
+    std::vector<std::pair<LocalDateTime, LocalDateTime>> getAvailableSlots(const LocalDateTime& date) {
+        std::vector<std::pair<LocalDateTime, LocalDateTime>> availableSlots;
+        LocalDateTime start_time = date.withHour(0).withMinute(0);
+        LocalDateTime end_time = date.withHour(23).withMinute(59);
+
+        while (start_time.isBefore(end_time)) {
+            LocalDateTime slot_end_time = start_time.plusHours(1);
+            if (isAvailable(start_time, slot_end_time)) {
+                availableSlots.push_back({start_time, slot_end_time});
+            }
+            start_time = slot_end_time;
+        }
+
+        return availableSlots;
+    }
+
+    std::vector<Event> getUpcomingEvents(int num_events) {
+        LocalDateTime now = LocalDateTime::now();
+        std::vector<Event> result;

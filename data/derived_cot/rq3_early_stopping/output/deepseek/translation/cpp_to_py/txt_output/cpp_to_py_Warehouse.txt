@@ -1,0 +1,260 @@
+=== SOURCE CODE (cpp) ===
+#include <map>
+#include <string>
+
+class Warehouse {
+public:
+    Warehouse();
+
+    void add_product(int product_id, const std::string& name, int quantity);
+    void update_product_quantity(int product_id, int quantity);
+    int get_product_quantity(int product_id) const;
+    bool create_order(int order_id, int product_id, int quantity);
+    bool change_order_status(int order_id, const std::string& status);
+    std::string track_order(int order_id) const;
+
+    
+    const std::map<int, std::map<std::string, std::string>>& orders() const;
+    const std::map<int, std::map<std::string, std::string>>& inventory() const;
+
+private:
+    std::map<int, std::map<std::string, std::string>> inventory_;
+    std::map<int, std::map<std::string, std::string>> orders_;
+};
+Warehouse::Warehouse() {}
+
+void Warehouse::add_product(int product_id, const std::string& name, int quantity) {
+    auto& product = inventory_[product_id];
+    if (product.empty()) {
+        product["name"] = name;
+        product["quantity"] = std::to_string(quantity);
+    }
+    else {
+        int current_quantity = std::stoi(product["quantity"]);
+        product["quantity"] = std::to_string(current_quantity + quantity);
+    }
+}
+
+void Warehouse::update_product_quantity(int product_id, int quantity) {
+    auto it = inventory_.find(product_id);
+    if (it != inventory_.end()) {
+        int current_quantity = std::stoi(it->second["quantity"]);
+        it->second["quantity"] = std::to_string(current_quantity + quantity);
+    }
+}
+
+int Warehouse::get_product_quantity(int product_id) const {
+    auto it = inventory_.find(product_id);
+    if (it != inventory_.end()) {
+        return std::stoi(it->second.at("quantity"));
+    }
+    return false;  
+}
+
+bool Warehouse::create_order(int order_id, int product_id, int quantity) {
+    int available_quantity = get_product_quantity(product_id);
+    if (available_quantity >= quantity) {
+        update_product_quantity(product_id, -quantity);
+        orders_[order_id] = {
+            {"product_id", std::to_string(product_id)},
+            {"quantity", std::to_string(quantity)},
+            {"status", "Shipped"}
+        };
+        return true;
+    }
+    return false;
+}
+
+bool Warehouse::change_order_status(int order_id, const std::string& status) {
+    auto it = orders_.find(order_id);
+    if (it != orders_.end()) {
+        it->second["status"] = status;
+        return true;
+    }
+    return false;
+}
+
+std::string Warehouse::track_order(int order_id) const {
+    auto it = orders_.find(order_id);
+    if (it != orders_.end()) {
+        return it->second.at("status");
+    }
+    return "";  
+}
+
+const std::map<int, std::map<std::string, std::string>>& Warehouse::orders() const {
+    return orders_;
+}
+
+const std::map<int, std::map<std::string, std::string>>& Warehouse::inventory() const {
+    return inventory_;
+}
+
+
+=== REASONING ===
+<think>
+We need to translate C++ code to Python, preserving behavior. The class Warehouse has maps of maps, using strings for values. In Python, we'll use dictionaries. Need to handle integer keys and string values, convert int to string for storage. Edge cases: add_product: if product doesn't exist, set name and quantity; else add quantity to existing. update_product_quantity: if exists, add quantity (can be negative). get_product_quantity: return int, but if not found return False? Actually C++ returns false (0) if not found? The code says `return false;` but false is bool convertible to int? In C++ false is 0, but it's a bool. In Python, returning False might be ambiguous; but we'll return 0 or False? The instructions say keep behavior identical: C++ returns false which is an int 0 when converted? Actually the function returns int, and `return false;` will implicitly convert false to 0. So it returns 0 for not found. But is that correct? The original code: `return false;` in get_product_quantity returns bool false (0). So we can return 0. But we need to be careful: in Python, if we return False, it's False but might be used as int? Better to return 0 to match.
+
+create_order: check available_quantity >= quantity, then update_product_quantity (negative) and create order dict with status "Shipped". Returns bool. change_order_status: find order, set status, return true/false. track_order: find order, return status or empty string.
+
+Need to also implement orders() and inventory() methods returning const references. In Python, we can just return the internal dict, but we need to ensure they are not modified? Python doesn't have const, but we can return a copy? However, the C++ returns const reference, but it's still mutable through internal? Actually const reference prevents modification via that reference, but internal can still modify. In Python, we can return the actual dict; caller could modify it. To be safe, we could return a shallow copy? But the spec says keep behavior identical. In C++, returning const reference allows read-only access but the underlying data is still mutable via non-const methods. So in Python, returning the dict itself would allow modification via the returned reference, which is not identical (since C++ prevents). However, typical Python translation for such methods is to return a dict view or a copy. But the problem says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)." The C++ method is const, so it should not allow modification through that reference. To mimic that, we can return a dict that is read-only? There's no built-in read-only dict; we could return a MappingProxyType from types module. That's a read-only view. That's idiomatic. But we need to import MappingProxyType. Alternatively, we could return a deep copy? That would be expensive and change behavior if the caller expects to see live updates? In C++, the const reference is still linked to the original; modifications via non-const methods will be visible through the const reference. So returning a copy would break that. So we need a read-only view that reflects updates. MappingProxyType does that. It's a wrapper. That's good. The Python version: `from types import MappingProxyType` and return `MappingProxyType(self.inventory_)` and `MappingProxyType(self.orders_)`. This will prevent modification but allow reading and reflect changes. So we'll do that.
+
+Also note: in C++, the map keys are ints, values are map<string,string>. In Python, we keep as dict with int keys, dict values.
+
+One more: In add_product, there's a check `if (product.empty())` meaning the map entry for product_id doesn't exist? Actually `inventory_[product_id]` will create an empty map if not present. Then check if product.empty() -> if the value map is empty (meaning it was just created). So we use that logic. In Python, we can use `if product_id not in self.inventory_` or check if the dict is empty. Since we access via `self.inventory_.setdefault(product_id, {})`? But careful: in C++, `inventory_[product_id]` creates an empty map if key not present. Then `if (product.empty())` is true if it was just created. So we can do: `self.inventory_.setdefault(product_id, {})` and then check if the dict is empty? Actually after setdefault, if key didn't exist, it returns the new empty dict. But to replicate exactly, we can do:
+
+```
+if product_id not in self.inventory_:
+    self.inventory_[product_id] = {}
+product = self.inventory_[product_id]
+if not product:  # empty dict
+    product["name"] = name
+    product["quantity"] = str(quantity)
+else:
+    product["quantity"] = str(int(product["quantity"]) + quantity)
+```
+
+But careful: in C++, the first branch sets name and quantity, else it adds to quantity. This is fine.
+
+update_product_quantity: find if exists, then add quantity (maybe negative). In C++, it adds (which could be negative). In Python, if not found, do nothing. Also note: the C++ code uses `std::stoi` which assumes the string is a valid integer. In Python we'll use int().
+
+get_product_quantity: if not found return 0 (false). In Python we'll return 0.
+
+create_order: uses get_product_quantity returns int (or 0 if not found). Then if available >= quantity, update, create order. Note: order dict keys: "product_id", "quantity", "status". All values as strings. "status" is "Shipped". Return True/False.
+
+change_order_status: find order, set status, return True/False.
+
+track_order: return status string or empty string.
+
+Also need to implement __init__ method.
+
+Edge cases: The C++ code uses `return false;` for get_product_quantity returning int 0. In Python return 0. All good.
+
+Now, translate to Python. We'll write a class Warehouse with proper docstring maybe not needed. Use type hints? Not required. Keep as plain Python.
+
+Also note: the order of methods: add_product, update_product_quantity, get_product_quantity, create_order, change_order_status, track_order, orders, inventory. We'll include them.
+
+Potential issues: In C++, `std::map<int, std::map<std::string, std::string>>` keys are sorted; Python dicts maintain insertion order from 3.7 but not sorted. The behavior may differ if iteration order matters. The spec says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". Order might affect output if someone prints or iterates. But the methods don't rely on order.
+</think>
+
+=== RAW ANSWER ===
+```
+from types import MappingProxyType
+
+class Warehouse:
+    def __init__(self):
+        self._inventory = {}
+        self._orders = {}
+
+    def add_product(self, product_id: int, name: str, quantity: int) -> None:
+        if product_id not in self._inventory:
+            self._inventory[product_id] = {}
+        product = self._inventory[product_id]
+        if not product:  # newly created empty dict
+            product["name"] = name
+            product["quantity"] = str(quantity)
+        else:
+            current = int(product["quantity"])
+            product["quantity"] = str(current + quantity)
+
+    def update_product_quantity(self, product_id: int, quantity: int) -> None:
+        if product_id in self._inventory:
+            current = int(self._inventory[product_id]["quantity"])
+            self._inventory[product_id]["quantity"] = str(current + quantity)
+
+    def get_product_quantity(self, product_id: int) -> int:
+        if product_id in self._inventory:
+            return int(self._inventory[product_id]["quantity"])
+        return 0
+
+    def create_order(self, order_id: int, product_id: int, quantity: int) -> bool:
+        available = self.get_product_quantity(product_id)
+        if available >= quantity:
+            self.update_product_quantity(product_id, -quantity)
+            self._orders[order_id] = {
+                "product_id": str(product_id),
+                "quantity": str(quantity),
+                "status": "Shipped"
+            }
+            return True
+        return False
+
+    def change_order_status(self, order_id: int, status: str) -> bool:
+        if order_id in self._orders:
+            self._orders[order_id]["status"] = status
+            return True
+        return False
+
+    def track_order(self, order_id: int) -> str:
+        if order_id in self._orders:
+            return self._orders[order_id]["status"]
+        return ""
+
+    @property
+    def orders(self):
+        return MappingProxyType(self._orders)
+
+    @property
+    def inventory(self):
+        return MappingProxyType(self._inventory)
+```
+
+=== TRANSLATED CODE (py) ===
+from types import MappingProxyType
+
+class Warehouse:
+    def __init__(self):
+        self._inventory = {}
+        self._orders = {}
+
+    def add_product(self, product_id: int, name: str, quantity: int) -> None:
+        if product_id not in self._inventory:
+            self._inventory[product_id] = {}
+        product = self._inventory[product_id]
+        if not product:  # newly created empty dict
+            product["name"] = name
+            product["quantity"] = str(quantity)
+        else:
+            current = int(product["quantity"])
+            product["quantity"] = str(current + quantity)
+
+    def update_product_quantity(self, product_id: int, quantity: int) -> None:
+        if product_id in self._inventory:
+            current = int(self._inventory[product_id]["quantity"])
+            self._inventory[product_id]["quantity"] = str(current + quantity)
+
+    def get_product_quantity(self, product_id: int) -> int:
+        if product_id in self._inventory:
+            return int(self._inventory[product_id]["quantity"])
+        return 0
+
+    def create_order(self, order_id: int, product_id: int, quantity: int) -> bool:
+        available = self.get_product_quantity(product_id)
+        if available >= quantity:
+            self.update_product_quantity(product_id, -quantity)
+            self._orders[order_id] = {
+                "product_id": str(product_id),
+                "quantity": str(quantity),
+                "status": "Shipped"
+            }
+            return True
+        return False
+
+    def change_order_status(self, order_id: int, status: str) -> bool:
+        if order_id in self._orders:
+            self._orders[order_id]["status"] = status
+            return True
+        return False
+
+    def track_order(self, order_id: int) -> str:
+        if order_id in self._orders:
+            return self._orders[order_id]["status"]
+        return ""
+
+    @property
+    def orders(self):
+        return MappingProxyType(self._orders)
+
+    @property
+    def inventory(self):
+        return MappingProxyType(self._inventory)

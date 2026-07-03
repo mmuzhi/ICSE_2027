@@ -1,0 +1,51 @@
+#include <iostream>
+#include <stdexcept>
+#include <initializer_list>
+
+class BitStatusUtil {
+public:
+    static int add(int states, int stat) {
+        check({states, stat});
+        return states | stat;
+    }
+
+    static bool has(int states, int stat) {
+        check({states, stat});
+        return (states & stat) == stat;
+    }
+
+    static int remove(int states, int stat) {
+        check({states, stat});
+        if (has(states, stat)) {
+            return states ^ stat;
+        }
+        return states;
+    }
+
+    static void check(std::initializer_list<int> args) {
+        for (int arg : args) {
+            if (arg < 0) {
+                throw std::invalid_argument(std::to_string(arg) + " must be greater than or equal to 0");
+            }
+            if (arg % 2 != 0) {
+                throw std::invalid_argument(std::to_string(arg) + " not even");
+            }
+        }
+    }
+
+    static void main() {
+        std::cout << add(2, 4) << std::endl;
+        std::cout << std::boolalpha << has(6, 2) << std::endl;
+        std::cout << remove(6, 2) << std::endl;
+        try {
+            check({2, 3, 4});
+        } catch (const std::invalid_argument& e) {
+            std::cout << e.what() << std::endl;
+        }
+    }
+};
+
+int main() {
+    BitStatusUtil::main();
+    return 0;
+}

@@ -1,0 +1,467 @@
+=== SOURCE CODE (cpp) ===
+
+#include <boost/regex.hpp>
+#include <sstream>
+#include <algorithm>
+#include <cctype>
+
+#include <string>
+#include <vector>
+
+class SplitSentence {
+public:
+    std::vector<std::string> split_sentences(const std::string& sentences_string);
+    int count_words(const std::string& sentence);
+    int process_text_file(const std::string& sentences_string);
+};
+
+
+std::vector<std::string> SplitSentence::split_sentences(const std::string& sentences_string) {
+    std::vector<std::string> sentences;
+    boost::regex regex(R"((?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s)");
+    boost::sregex_token_iterator iter(sentences_string.begin(), sentences_string.end(), regex, -1);
+    boost::sregex_token_iterator end;
+
+    for (; iter != end; ++iter) {
+        std::string sentence = iter->str();
+        
+        if (!sentence.empty()) {
+            
+            sentence.erase(std::find_if(sentence.rbegin(), sentence.rend(), [](char ch) {
+                return !std::isspace(ch);
+                }).base(), sentence.end());
+            if (!sentence.empty()) {
+                sentences.push_back(sentence);
+            }
+        }
+    }
+
+    return sentences;
+}
+
+
+int SplitSentence::count_words(const std::string& sentence) {
+    std::string cleaned_sentence;
+    std::remove_copy_if(sentence.begin(), sentence.end(), std::back_inserter(cleaned_sentence),
+        [](char c) { return !std::isalpha(c) && !std::isspace(c); });
+
+    std::istringstream stream(cleaned_sentence);
+    std::string word;
+    int count = 0;
+
+    while (stream >> word) {
+        ++count;
+    }
+
+    return count;
+}
+
+
+int SplitSentence::process_text_file(const std::string& sentences_string) {
+    std::vector<std::string> sentences = split_sentences(sentences_string);
+    int max_count = 0;
+
+    for (const auto& sentence : sentences) {
+        int count = count_words(sentence);
+        if (count > max_count) {
+            max_count = count;
+        }
+    }
+
+    return max_count;
+}
+
+
+=== REASONING ===
+<think>
+Let me carefully translate this C++ code to Python, keeping behavior identical.
+
+The `SplitSentence` class has three methods:
+
+1. `split_sentences` - Splits text into sentences using a regex, then trims trailing whitespace from each sentence.
+
+2. `count_words` - Removes non-alpha, non-space characters, then counts words by splitting on whitespace.
+
+3. `process_text_file` - Finds the maximum word count across all sentences.
+
+Let me analyze each method carefully:
+
+### `split_sentences`
+
+The regex is: `(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s`
+
+This is a split regex (used with -1 token in boost::sregex_token_iterator, which means split on matches):
+- `(?<!\w\.\w.)` - Negative lookbehind: not preceded by word char + dot + word char + any char (prevents splitting on abbreviations like "e.g.")
+- `(?<![A-Z][a-z]\.)` - Negative lookbehind: not preceded by uppercase + lowercase + dot (prevents splitting on abbreviations like "Dr.")
+- `(?<=\.|\?)` - Positive lookbehind: preceded by . or ?
+- `\s` - Whitespace character
+
+So it splits on whitespace that follows a sentence-ending period or question mark, but not after certain abbreviations.
+
+In Python, `re.split` with this regex should work similarly.
+
+Then for each resulting sentence:
+- Trim trailing whitespace (using `rstrip` equivalent - the C++ code erases from the last non-space character to the end)
+- Skip empty sentences
+
+### `count_words`
+
+- Remove all characters that are not alpha and not space
+- Count words by streaming (splitting on whitespace)
+
+In Python: remove non-alpha, non-space chars, then split and count.
+
+Wait, I need to be careful about what `std::isalpha` considers alpha. In C++, `std::isalpha` depends on locale but by default it's the C locale, which considers only ASCII letters. In Python, `str.isalpha()` considers Unicode letters. To match C++ behavior, I should check for ASCII letters only.
+
+Similarly, `std::isspace` in C++ with default locale considers ASCII whitespace (space, tab, newline, etc.), while Python's `str.isspace()` considers Unicode whitespace.
+
+To keep behavior identical, I should use ASCII-only checks.
+
+### `process_text_file`
+
+Straightforward - find max word count.
+
+Let me write the Python code:
+
+```python
+import re
+
+
+class SplitSentence:
+    def split_sentences(self, sentences_string):
+        regex = r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s"
+        parts = re.split(regex, sentences_string)
+        
+        sentences = []
+        for sentence in parts:
+            if sentence:
+                # Trim trailing whitespace (matching C++ behavior)
+                sentence = sentence.rstrip()
+                if sentence:
+                    sentences.append(sentence)
+        
+        return sentences
+    
+    def count_words(self, sentence):
+        # Remove characters that are not ASCII alpha and not ASCII space
+        cleaned_sentence = ''.join(
+            c for c in sentence 
+            if c.isascii() and (c.isalpha() or c.isspace())
+        )
+        
+        # Count words by splitting on whitespace
+        words = cleaned_sentence.split()
+        return len(words)
+    
+    def process_text_file(self, sentences_string):
+        sentences = self.split_sentences(sentences_string)
+        max_count = 0
+        
+        for sentence in sentences:
+            count = self.count_words(sentence)
+            if count > max_count:
+                max_count = count
+        
+        return max_count
+```
+
+Wait, let me reconsider the `isalpha` and `isspace` behavior more carefully.
+
+In C++, `std::isalpha(c)` and `std::isspace(c)` when used without an explicit locale use the C locale by default. However, the behavior is technically undefined if `c` is not `unsigned char` or EOF. In practice, for ASCII characters:
+- `isalpha` returns true for a-z, A-Z
+- `isspace` returns true for space (0x20), form feed (0x0c), newline (0x0a), carriage return (0x0d), horizontal tab (0x09), vertical tab (0x0b)
+
+For non-ASCII characters (values > 127), the behavior depends on the implementation, but typically in the "C" locale, `isalpha` returns false and `isspace` returns false.
+
+In Python, `c.isalpha()` returns True for many Unicode letters, and `c.isspace()` returns True for Unicode whitespace characters.
+
+To match C++ behavior exactly, I should restrict to ASCII:
+
+```python
+cleaned_sentence = ''.join(
+    c for c in sentence 
+    if (ord(c) < 128 and (c.isalpha() or c.isspace()))
+)
+```
+
+Actually, let me think again. The condition in C++ is:
+```cpp
+!std::isalpha(c) && !std::isspace(c)
+```
+
+Characters that satisfy this are removed. So characters are KEPT if `isalpha(c) || isspace(c)`.
+
+For ASCII characters in the C locale:
+- Letters (a-z, A-Z): isalpha = true, so kept
+- Whitespace (space, tab, newline, etc.): isspace = true, so kept
+- Digits, punctuation, etc.: both false, so removed
+
+For non-ASCII characters (byte > 127), in C locale, both isalpha and isspace typically return false, so they'd be removed.
+
+Let me use a more precise check:
+
+```python
+def _is_alpha_or_space(self, c):
+    if ord(c) >= 128:
+        return False
+    return c.isalpha() or c.isspace()
+```
+
+Actually, in Python for ASCII characters, `isalpha()` and `isspace()` behave the same as C locale. So `c.isascii() and (c.isalpha() or c.isspace())` should be equivalent.
+
+Wait, but `str.isascii()` was added in Python 3.7. Let me use `ord(c) < 128` for broader compatibility, or just use `c.isascii()` since it's widely available now.
+
+Actually, let me reconsider. The problem says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)." So I need to match C++ behavior as closely as possible.
+
+For the `count_words` method, the C++ code uses `std::isalpha` and `std::isspace` which in the default C locale only recognize ASCII characters. So non-ASCII characters would be removed (since both return false for them).
+
+Let me also double-check the `isspace` in the `split_sentences` trimming. The C++ code uses `std::isspace` to trim trailing whitespace. In Python, `str.rstrip()` removes trailing whitespace, but Python considers more characters as whitespace than C++ does. However, in practice for typical text, this shouldn't matter much. But to be exact...
+
+Actually, `str.rstrip()` in Python removes all Unicode whitespace characters, while C++ `isspace` only removes ASCII whitespace. But the difference is unlikely to matter in practice since the sentences are split from text that likely only contains ASCII whitespace. I'll use `rstrip()` as it's the idiomatic equivalent.
+
+Hmm, but to be truly identical, I could do:
+```python
+sentence = sentence.rstrip(' \t\n\r\f\v')
+```
+
+That matches the C locale `isspace` characters exactly.
+
+Let me finalize the code:
+
+```python
+import re
+
+
+class SplitSentence:
+    def split_sentences(self, sentences_string):
+        regex = r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s"
+        parts = re.split(regex, sentences_string)
+        
+        sentences = []
+        for sentence in parts:
+            if sentence:
+                # Trim trailing whitespace (matching C++ std::isspace in C locale)
+                sentence = sentence.rstrip(' \t\n\r\f\v')
+                if sentence:
+                    sentences.append(sentence)
+        
+        return sentences
+    
+    def count_words(self, sentence):
+        # Remove characters that are not ASCII alpha and not ASCII space
+        # (matching C++ std::isalpha and std::isspace in C locale)
+        cleaned_sentence = ''.join(
+            c for c in sentence 
+            if c.isascii() and (c.isalpha() or c.isspace())
+        )
+        
+        # Count words by splitting on whitespace
+        words = cleaned_sentence.split()
+        return len(words)
+    
+    def process_text_file(self, sentences_string):
+        sentences = self.split_sentences(sentences_string)
+        max_count = 0
+        
+        for sentence in sentences:
+            count = self.count_words(sentence)
+            if count > max_count:
+                max_count = count
+        
+        return max_count
+```
+
+Wait, I need to double-check the `isspace` behavior in the `split_sentences` trimming. The C++ code:
+
+```cpp
+sentence.erase(std::find_if(sentence.rbegin(), sentence.rend(), [](char ch) {
+    return !std::isspace(ch);
+}).base(), sentence.end());
+```
+
+This finds the last non-space character and erases everything after it. This is equivalent to `rstrip` but only for characters where `isspace` returns true.
+
+In C locale, `isspace` returns true for: ' ' (0x20), '\t' (0x09), '\n' (0x0a), '\v' (0x0b), '\f' (0x0c), '\r' (0x0d).
+
+Python's `str.rstrip()` without arguments strips all Unicode whitespace, which is a superset. To be identical, I should use `rstrip(' \t\n\r\f\v')`.
+
+Actually, wait. Let me also think about `cleaned_sentence.split()`. In Python, `str.split()` without arguments splits on any whitespace and removes empty strings. In C++, `stream >> word` also splits on whitespace (as defined by `operator>>` which skips whitespace). The behavior should be equivalent.
+
+But wait - in the C++ code, `std::isspace` is used in the `count_words` filter. The `stream >> word` operator uses `std::isspace` to determine what's whitespace. So both are using the same definition of whitespace. In Python, `str.split()` and `str.isspace()` are also consistent with each other. So this should be fine.
+
+Let me also reconsider whether `c.isascii()` is the right check. `str.isascii()` returns True if all characters in the string are ASCII (code point < 128). For a single character, it's equivalent to `ord(c) < 128`. This is correct for matching C++ behavior in the C locale.
+
+Actually, I realize there might be an issue. In C++, `char` can be signed, and passing a negative char value to `std::isalpha` or `std::isspace` is undefined behavior. In practice, on most systems with the C locale, characters with values > 127 (which would be negative as signed char) would cause these functions to return false or potentially crash. But since we're dealing with `std::string` which stores chars, and the behavior is implementation-defined for non-ASCII characters, I think using `c.isascii()` as a guard is reasonable.
+
+One more thing: in the `split_sentences` method, the C++ code uses `boost::sregex_token_iterator` with `-1` as the submatch parameter, which means it returns the parts of the string that DON'T match the regex. This is exactly what `re.split` does in Python. Good.
+
+I think my translation is correct. Let me also make sure the regex works the same way in Python's `re` module. The regex uses lookbehinds and lookaheads which are supported in Python's `re` module. The `\w` and `\s` character classes should behave similarly.
+
+Actually, there's a subtle difference: in C++ Boost.Regex, `\w` matches `[a-zA-Z0-9_]` by default (ASCII mode). In Python's `re` module, `\w` matches `[a-zA-Z0-9_]` plus Unicode word characters by default (in Python 3). To match C++ behavior, I should use the `re.ASCII` flag.
+
+Similarly, `\s` in Boost.Regex matches `[ \t\n\r\f\v]` by default, while in Python's `re` module, `\s` matches Unicode whitespace by default. Using `re.ASCII` flag makes `\s` match only `[ \t\n\r\f\v]`.
+
+Let me update the code:
+
+```python
+import re
+
+
+class SplitSentence:
+    def split_sentences(self, sentences_string):
+        regex = r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s"
+        parts = re.split(regex, sentences_string, flags=re.ASCII)
+        
+        sentences = []
+        for sentence in parts:
+            if sentence:
+                # Trim trailing whitespace (matching C++ std::isspace in C locale)
+                sentence = sentence.rstrip(' \t\n\r\f\v')
+                if sentence:
+                    sentences.append(sentence)
+        
+        return sentences
+    
+    def count_words(self, sentence):
+        # Remove characters that are not ASCII alpha and not ASCII space
+        # (matching C++ std::isalpha and std::isspace in C locale)
+        cleaned_sentence = ''.join(
+            c for c in sentence 
+            if c.isascii() and (c.isalpha() or c.isspace())
+        )
+        
+        # Count words by splitting on whitespace
+        words = cleaned_sentence.split()
+        return len(words)
+    
+    def process_text_file(self, sentences_string):
+        sentences = self.split_sentences(sentences_string)
+        max_count = 0
+        
+        for sentence in sentences:
+            count = self.count_words(sentence)
+            if count > max_count:
+                max_count = count
+        
+        return max_count
+```
+
+This looks good. Let me review once more...
+
+Actually, I want to reconsider the `count_words` method. The C++ code uses `std::isalpha` and `std::isspace`. In the C locale:
+- `isalpha` returns true for [a-zA-Z]
+- `isspace` returns true for [ \t\n\v\f\r]
+
+But wait, Python's `str.isalpha()` for ASCII characters returns True for [a-zA-Z], which matches. And `str.isspace()` for ASCII characters returns True for [ \t\n\v\f\r], which also matches. So using `c.isascii() and (c.isalpha() or c.isspace())` is correct.
+
+But there's a subtle issue: Python's `str.isspace()` considers `\x1c` (file separator), `\x1d` (group separator), `\x1e` (record separator), and `\x85` (next line) as whitespace in Unicode. But since I'm guarding with `c.isascii()`, characters like `\x85` (which has ord 133 > 127) would be filtered out. And `\x1c`, `\x1d`, `\x1e` have ord values 28, 29, 30 which are < 128, and `isspace()` returns True for them in Python. But in C locale, `isspace` returns False for them.
+
+Hmm, this is a potential discrepancy. Let me check: in Python, `'\x1c'.isspace()` returns True? Let me think... Actually no, in Python 3, `'\x1c'.isspace()` returns False. The Unicode whitespace characters that Python recognizes beyond ASCII are things like `\u00a0` (non-breaking space), `\u1680`, `\u2000`-`\u200a`, `\u2028`, `\u2029`, `\u202f`, `\u205f`, `\u3000`. All of these have code points >= 128, so `c.isascii()` would filter them out.
+
+Wait, but `\x85` (NEL, Next Line) is `\u0085`, which has ord 133 > 127, so `isascii()` would return False for it. Good.
+
+So for ASCII characters (ord < 128), Python's `isspace()` returns True for exactly: space (0x20), tab (0x09), newline (0x0a), vertical tab (0x0b), form feed (0x0c), carriage return (0x0d). This matches the C locale `isspace`. 
+
+And for ASCII characters, Python's `isalpha()` returns True for exactly [a-zA-Z], which matches the C locale `isalpha`. 
+
+So my translation is correct.
+
+Let me also double-check: in the `split_sentences` method, the regex uses `\w` which in Boost.Regex (without Unicode support) matches `[a-zA-Z0-9_]`. With `re.ASCII` flag in Python, `\w` also matches `[a-zA-Z0-9_]`. Good.
+
+And `\s` in Boost.Regex (without Unicode) matches `[ \t\n\r\f\v]`. With `re.ASCII` flag in Python, `\s` also matches `[ \t\n\r\f\v]`. Good.
+
+I think the translation is correct and complete. Let me finalize it.
+</think>
+
+=== RAW ANSWER ===
+```python
+import re
+
+
+class SplitSentence:
+    def split_sentences(self, sentences_string):
+        regex = r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s"
+        # re.ASCII makes \w and \s match only ASCII, matching Boost.Regex default behavior
+        parts = re.split(regex, sentences_string, flags=re.ASCII)
+
+        sentences = []
+        for sentence in parts:
+            if sentence:
+                # Trim trailing whitespace (matching C++ std::isspace in C locale)
+                sentence = sentence.rstrip(' \t\n\r\f\v')
+                if sentence:
+                    sentences.append(sentence)
+
+        return sentences
+
+    def count_words(self, sentence):
+        # Remove characters that are not ASCII alpha and not ASCII space
+        # (matching C++ std::isalpha and std::isspace in C locale)
+        cleaned_sentence = ''.join(
+            c for c in sentence
+            if c.isascii() and (c.isalpha() or c.isspace())
+        )
+
+        # Count words by splitting on whitespace
+        words = cleaned_sentence.split()
+        return len(words)
+
+    def process_text_file(self, sentences_string):
+        sentences = self.split_sentences(sentences_string)
+        max_count = 0
+
+        for sentence in sentences:
+            count = self.count_words(sentence)
+            if count > max_count:
+                max_count = count
+
+        return max_count
+```
+
+### Key translation decisions:
+
+1. **`split_sentences`**: `boost::sregex_token_iterator` with `-1` submatch is equivalent to `re.split()`. The `re.ASCII` flag ensures `\w` matches only `[a-zA-Z0-9_]` and `\s` matches only `[ \t\n\r\f\v]`, matching Boost.Regex's default (non-Unicode) behavior.
+
+2. **Trailing whitespace trimming**: The C++ code uses `std::isspace` (C locale) to find trailing whitespace. Python's `str.rstrip()` without arguments strips Unicode whitespace (a superset), so I explicitly pass `' \t\n\r\f\v'` to match exactly the C locale `isspace` characters.
+
+3. **`count_words`**: `std::isalpha`/`std::isspace` in the C locale only recognize ASCII characters. I guard with `c.isascii()` to ensure non-ASCII characters (which C++ would also reject) are filtered out. For ASCII code points, Python's `isalpha()` and `isspace()` match the C locale exactly.
+
+4. **Word counting**: `std::istringstream >> word` splits on whitespace identically to Python's `str.split()` (both skip consecutive whitespace and produce non-empty tokens).
+
+=== TRANSLATED CODE (py) ===
+import re
+
+
+class SplitSentence:
+    def split_sentences(self, sentences_string):
+        regex = r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s"
+        parts = re.split(regex, sentences_string, flags=re.ASCII)
+
+        sentences = []
+        for sentence in parts:
+            if sentence:
+                sentence = sentence.rstrip(' \t\n\r\f\v')
+                if sentence:
+                    sentences.append(sentence)
+
+        return sentences
+
+    def count_words(self, sentence):
+        cleaned_sentence = ''.join(
+            c for c in sentence
+            if c.isascii() and (c.isalpha() or c.isspace())
+        )
+
+        words = cleaned_sentence.split()
+        return len(words)
+
+    def process_text_file(self, sentences_string):
+        sentences = self.split_sentences(sentences_string)
+        max_count = 0
+
+        for sentence in sentences:
+            count = self.count_words(sentence)
+            if count > max_count:
+                max_count = count
+
+        return max_count

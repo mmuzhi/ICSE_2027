@@ -1,0 +1,1153 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
+
+public class AccessGatewayFilter {
+
+    public AccessGatewayFilter() {
+    }
+
+    public boolean filter(Map<String, Object> request) {
+        String requestUri = (String) request.get("path");
+        String method = (String) request.get("method");
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            Map<String, Object> token = getJwtUser(request);
+            Map<String, Object> user = (Map<String, Object>) token.get("user");
+            if ((int) user.get("level") > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        return false;
+    }
+
+    public boolean isStartWith(String requestUri) {
+        String[] startWith = {"/api", "/login"};
+        for (String s : startWith) {
+            if (requestUri.startsWith(s)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public Map<String, Object> getJwtUser(Map<String, Object> request) {
+        Map<String, Object> token = (Map<String, Object>) ((Map<String, Object>) request.get("headers")).get("Authorization");
+        Map<String, Object> user = (Map<String, Object>) token.get("user");
+        String jwt = (String) token.get("jwt");
+
+        if (jwt.startsWith((String) user.get("name"))) {
+            String jwtStrDate = jwt.substring(((String) user.get("name")).length());
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+            LocalDate jwtDate = LocalDate.parse(jwtStrDate, formatter);
+            if (LocalDate.now().minusDays(3).isAfter(jwtDate)) {
+                return null;
+            }
+        }
+        return token;
+    }
+
+    public void setCurrentUserInfoAndLog(Map<String, Object> user) {
+        String host = (String) user.get("address");
+        String message = user.get("name") + host + LocalDate.now();
+        System.out.println(message);
+    }
+}
+
+
+=== REASONING ===
+<think>
+
+We are translating Java to C++.
+ The Java code uses a Map<String, Object> for the request and for the token and user.
+ In C++, we don't have a direct equivalent of such a loosely typed map, but we can use `std::map` with `std::string` and a variant type.
+ However, the original code uses a lot of casting and we need to replicate the behavior.
+
+ Since the problem says to keep behavior identical and use idiomatic C++ only when it doesn't change behavior, we will try to mimic the original structure.
+
+ We note that the Java code uses:
+   - `Map<String, Object>` for the request and for the token and user.
+   - The `Object` in Java can be of various types: String, Integer, Map, etc.
+
+ In C++ we can use `std::any` to hold any type, but it's error-prone and requires careful casting.
+ Alternatively, we can define a variant type. However, the problem does not specify all possible types.
+
+ Given the complexity, and to keep the translation as close as possible, we will use `std::map<std::string, std::any>`.
+
+ Steps:
+  1. We'll use `std::map` for the request and nested structures.
+  2. We'll use `std::any` to hold values of different types.
+  3. We'll use `std::any_cast` to cast the values, and we have to handle `std::bad_any_cast` exceptions.
+
+ However, note that the original Java code catches `Exception` in the `filter` method. We will catch `std::exception` and return false.
+
+ Also, note that the original code uses `LocalDate` from Java. We will use the C++20 `<chrono>` and the date library (or C++20's calendar if available) to handle dates.
+
+ Since C++20's calendar is not fully implemented everywhere, we might use Howard Hinnant's date library, but the problem says to use idiomatic C++ only when it doesn't change behavior.
+
+ Alternatively, we can use the C++20 `<chrono>` if we assume C++20. Let's assume we are using C++20.
+
+ Steps for the date part:
+   - Parsing a string in the format "yyyy-MM-dd" to a `std::chrono::year_month_day`.
+   - Getting the current date as a `std::chrono::year_month_day`.
+   - Subtracting 3 days.
+
+ However, note that the original code uses `LocalDate.now().minusDays(3)`. We'll do the same.
+
+ We'll create a helper function to get the current date as `year_month_day`.
+
+ But note: the original code compares `LocalDate.now().minusDays(3)` with `jwtDate` using `isAfter`. That is equivalent to:
+   `current_date - 3 days > jwtDate` -> which means if the jwtDate is before (earlier than) `current_date - 3 days`, then it's expired.
+
+ We'll do:
+   `if (std::chrono::sys_days{current_date} - std::chrono::days{3} > std::chrono::sys_days{jwt_date})`
+
+ However, note: `year_month_day` doesn't support arithmetic directly, so we convert to `sys_days` (time point with a day precision).
+
+ Alternatively, we can compare:
+   `jwt_date < current_date - days{3}`
+
+ But `year_month_day` doesn't support subtraction of days? We can convert both to `sys_days`.
+
+ Actually, we can do:
+   `auto three_days_ago = current_date - std::chrono::days{3};` but `year_month_day` doesn't have operator- for days? 
+   Instead, we can do:
+   `auto three_days_ago = std::chrono::sys_days{current_date} - std::chrono::days{3};`
+   and then convert back to `year_month_day`? Or we can compare `sys_days`:
+
+   `if (std::chrono::sys_days{jwt_date} < std::chrono::sys_days{current_date} - std::chrono::days{3})`
+
+ But note: the original condition is `if (LocalDate.now().minusDays(3).isAfter(jwtDate))` -> meaning `current_date - 3 > jwtDate` -> `jwtDate < current_date - 3`
+
+ So we can write: `if (jwt_date < current_date - days{3})` but again, `year_month_day` doesn't support subtraction? So let's convert to `sys_days`:
+
+   `if (std::chrono::sys_days(jwt_date) < std::chrono::sys_days(current_date) - std::chrono::days{3})`
+
+ Alternatively, we can do:
+
+   `auto three_days_ago = current_date;`
+   `three_days_ago = std::chrono::year_month_day{ std::chrono::sys_days{current_date} - std::chrono::days{3} };`
+
+   Then compare: `if (jwt_date < three_days_ago)` -> but that's two conversions and creating a new year_month_day.
+
+   Actually, comparing two `year_month_day` objects is natural: `jwt_date < three_days_ago`.
+
+   So let's do:
+
+   ```
+   auto current_sys = std::chrono::sys_days{current_date};
+   auto three_days_ago = current_sys - std::chrono::days(3);
+   auto three_days_ago_ymd = std::chrono::year_month_day{three_days_ago};
+
+   if (jwt_date < three_days_ago_ymd) { ... }
+   ```
+
+   But note: `year_month_day` comparison is chronological? Yes.
+
+   Alternatively, we can avoid converting back to `year_month_day` and just compare `sys_days`:
+
+   `if (std::chrono::sys_days(jwt_date) < current_sys - std::chrono::days(3))`
+
+   That is equivalent and more efficient.
+
+   Let's do:
+
+   ```
+   auto today = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now());
+   auto three_days_ago = today - std::chrono::days(3);
+   auto jwt_sys = std::chrono::sys_days{jwt_date};
+
+   if (jwt_sys < three_days_ago) { ... }
+   ```
+
+   Actually, we can get today as `sys_days`:
+
+   ```
+   using namespace std::chrono;
+   auto today = floor<days>(system_clock::now());
+   auto jwt_sys = sys_days{jwt_date};
+   if (jwt_sys < today - days(3)) { ... }
+   ```
+
+   This is simpler.
+
+ Steps:
+
+  1. Parse the string `jwtStrDate` (which is expected to be in "yyyy-MM-dd") to a `year_month_day`.
+  2. Get today as `sys_days` (which is a `time_point` with day precision).
+  3. Convert the `jwt_date` to `sys_days` and then compare.
+
+ However, note: the original code uses `LocalDate.now()` which is the current date in the system's default time-zone. `system_clock::now()` is UTC. But `LocalDate.now()` in Java is the local date without time zone? Actually, it uses the system's default time zone.
+
+ In C++ we can use `std::chrono::current_zone` to get the current time zone and then get the local time? But that is C++20 and beyond, and might not be implemented.
+
+ Alternatively, we can convert the system clock to local time? That requires time zone conversion which is non-trivial.
+
+ However, note: the original code does not use time of day, only date. And the token string is just a date without time zone.
+
+ We are comparing two dates: one from the token (which is just a date string) and the current local date.
+
+ How to get the current local date in C++? There isn't a standard way until C++20, and even then it's not straightforward.
+
+ Given the constraints, and since the problem says to keep behavior identical, we might have to use a different approach.
+
+ Alternatively, we can get the current time as a `time_t` and then convert to local time using `std::localtime` (from `<ctime>`). But note: `std::localtime` is not thread-safe.
+
+ We are in a filter function, so we must consider thread-safety? We can use `localtime_r` if available, but that's POSIX.
+
+ Alternatively, we can use a mutex? But that might be heavy.
+
+ Since the problem does not specify the environment, and we are translating, we'll use `std::localtime` and hope that the function is called in a context that doesn't involve multiple threads? Or use a mutex.
+
+ However, the original Java code uses the system's default time zone. We can do:
+
+   ```
+   std::time_t t = std::time(nullptr);
+   std::tm tm;
+   #ifdef _WIN32
+       localtime_s(&tm, &t);
+   #else
+       localtime_r(&t, &tm);
+   #endif
+
+   std::chrono::year_month_day today = std::chrono::year{tm.tm_year+1900} / (tm.tm_mon+1) / tm.tm_mday;
+   ```
+
+ But note: the original code uses `LocalDate.now().minusDays(3)`. We can do:
+
+   Then subtract 3 days from `today`? We can convert `today` to `sys_days` and subtract.
+
+   ```
+   auto today_sys = std::chrono::sys_days{today};
+   auto three_days_ago_sys = today_sys - std::chrono::days(3);
+   ```
+
+   And then compare with the token date (which we also convert to `sys_days`).
+
+ However, note: the token date is a string without time zone, so we treat it as a local date? Actually, the token date is stored as a string in the format "yyyy-MM-dd", and we parse it as a local date? The original code uses `LocalDate.parse` which parses without time zone and represents a date in the local context? Actually, `LocalDate` is without time zone.
+
+ So we have two local dates: the token date and the current local date.
+
+ But when we subtract 3 days from the current local date, we get a local date three days ago.
+
+ Then we compare: if the token date is before that three-days-ago date? We can compare as `year_month_day` because they are both in the same calendar? Yes.
+
+ However, note: the token date might be in a different time zone? But the token was generated locally? The original code does not specify.
+
+ Given the ambiguity, we'll assume that the token date is in the same time zone as the server.
+
+ So we'll do:
+
+   Step 1: Parse the token string to `year_month_day`.
+   Step 2: Get the current local date as `year_month_day`.
+   Step 3: Subtract 3 days from the current local date -> we can represent as `year_month_day` by converting to `sys_days` and back? Or we can compare by converting both to `sys_days`? Actually, `year_month_day` has a `sys_days` conversion and comparison.
+
+   But note: `year_month_day` comparison is lexicographical? Actually, it represents a date in the civil calendar and the comparison is chronological.
+
+   So we can do:
+
+      if (jwt_date < (current_date - days{3}))
+
+   But `current_date` is `year_month_day` and subtracting `days{3}` requires converting to `sys_days` and then back to `year_month_day`. We can write:
+
+      auto current_date = ...; // today as year_month_day
+      auto three_days_ago = std::chrono::year_month_day{ std::chrono::sys_days{current_date} - std::chrono::days{3} };
+
+   Then:
+
+      if (jwt_date < three_days_ago) { ... }
+
+   But note: what if subtracting 3 days crosses a month boundary? The conversion handles that.
+
+ However, there is an easier way: we can convert both `jwt_date` and `current_date` to `sys_days`, then subtract 3 days from `current_date` in the `sys_days` domain and compare:
+
+      auto current_sys = std::chrono::sys_days{current_date};
+      auto jwt_sys = std::chrono::sys_days{jwt_date};
+      if (jwt_sys < current_sys - std::chrono::days{3}) { ... }
+
+   This is efficient and avoids converting back to `year_month_day`.
+
+ But note: how do we get the current local date? We can use `std::chrono::current_zone`? But that is not widely implemented.
+
+ Alternatively, we can use `std::chrono::system_clock` and then convert to local time using the system's time zone offset? That is complex.
+
+ Due to the complexity and the fact that the original Java code uses the local date, we'll use the `std::localtime` method.
+
+ Steps for current local date:
+
+   ```
+   std::time_t now = std::time(nullptr);
+   std::tm local_tm = *std::localtime(&now); // This is not thread-safe, but for the purpose of translation we note it.
+
+   std::chrono::year_month_day current_date{
+       std::chrono::year{local_tm.tm_year + 1900},
+       std::chrono::month{static_cast<unsigned>(local_tm.tm_mon + 1)},
+       std::chrono::day{static_cast<unsigned>(local_tm.tm_mday)}
+   };
+   ```
+
+   Then:
+
+   ```
+   auto current_sys = std::chrono::sys_days{current_date};
+   auto jwt_sys = std::chrono::sys_days{jwt_date};
+   if (jwt_sys < current_sys - std::chrono::days{3}) {
+       return nullptr; // in the getJwtUser function, we return nullptr in C++? We'll return an empty map? Or we can use std::optional.
+   }
+   ```
+
+ But note: the original Java function `getJwtUser` returns `Map<String, Object>` and in the condition it returns `null`. We are returning `std::map<std::string, std::any>` so we can return an empty map? Or we can return `std::nullopt` and change the return type to `std::optional<std::map<...>>`. However, the caller in `filter` does:
+
+   `Map<String, Object> token = getJwtUser(request);`
+
+   and then `Map<String, Object> user = (Map<String, Object>) token.get("user");` -> if token is null, then `token.get("user")` would throw a NullPointerException? But the original code catches `Exception` and returns false.
+
+   So if we return `nullopt` from `getJwtUser`, then when we try to assign to `token` (as a map) we would have to check. We'll change the return type to `std::optional<std::map<std::string, std::any>>`.
+
+   Then in the `filter` function:
+
+      try {
+          auto token_opt = getJwtUser(request);
+          if (!token_opt) {
+              return false; // because the getJwtUser returned null -> which in Java would throw when we try to get "user", so we catch and return false.
+          }
+          auto token = *token_opt;
+          auto user_any = token.at("user");
+          // ... and so on.
+
+   But note: the original code catches any exception, so if `token_opt` is empty, then we are effectively skipping the exception? Actually, in the original, if `getJwtUser` returns null, then `token.get("user")` would be called on a null reference -> throws NullPointerException -> caught by the catch block -> returns false.
+
+   So we can simulate by:
+
+      if (!token_opt) {
+          throw std::runtime_error("token is null"); // to get into the catch block?
+      }
+
+   But the original code does not throw in `getJwtUser`? It returns null. Then the next line tries to do `token.get("user")` and throws.
+
+   Alternatively, we can return an empty map? Then `token.at("user")` would throw `std::out_of_range`? Which is caught by the catch-all? Yes.
+
+   So we can do:
+
+      if (jwt_sys < current_sys - std::chrono::days{3}) {
+          return {}; // returns an empty map
+      }
+
+   Then in the `filter` function:
+
+      auto token = getJwtUser(request);
+      if (token.empty()) {
+          // Actually, we don't check for empty? We just try to get "user", which would throw.
+      }
+
+   But note: the `getJwtUser` function also returns `token` (a map) if the condition is not met? And also if the condition is met? Actually, it returns `token` (the map) unless the token is expired (then null) or if the jwt does not start with the user's name? Wait, the condition:
+
+      if (jwt.startsWith((String) user.get("name"))) { ... } else ... ?
+
+   Actually, the code does:
+
+      if (jwt.startsWith((String) user.get("name"))) {
+          ... parse date and check ...
+          if (expired) return null;
+      }
+      return token;
+
+   So if the jwt does not start with the user's name, it returns the token map? And if it does and is expired, returns null.
+
+   Therefore, we must return an empty map to simulate null? Then when we try to get the key "user" from an empty map, it throws.
+
+   How do we get a key from a map? We use `token.at("user")` which throws `std::out_of_range`.
+
+   And `std::out_of_range` is derived from `std::exception`, so the catch block in `filter` will catch it.
+
+   So we'll return an empty map to represent null.
+
+ Implementation:
+
+   In `getJwtUser`:
+      if (the condition fails) return std::map<std::string, std::any>(); // empty map
+
+   Then in `filter`:
+
+      try {
+          auto token = getJwtUser(request);
+          // Now, if token is empty, then token.at("user") will throw.
+          auto user_any = token.at("user");
+          ...
+
+   But note: the token might not be empty, but might not have the key "user"? Then we also get an exception.
+
+   That matches the Java code: if the token map does not have the key "user", then `token.get("user")` returns null? And then casting to `Map<String, Object>` would throw a `ClassCastException`? Because `null` cannot be cast to `Map`.
+
+   But wait: the Java code does:
+
+        Map<String, Object> user = (Map<String, Object>) token.get("user");
+
+   If `token.get("user")` returns null, then `user` becomes null? Then `(int) user.get("level")` would throw NullPointerException.
+
+   So in any case, if the token map is missing "user", or if it is null, we get an exception.
+
+   Similarly, if the token map is empty (which we use to represent null), then `token.at("user")` throws.
+
+   So we are safe.
+
+ Steps for the entire code:
+
+   We'll create a C++ class `AccessGatewayFilter`.
+
+   We'll use:
+      #include <map>
+      #include <any>
+      #include <vector>
+      #include <string>
+      #include <iostream>
+      #include <ctime>
+      #include <chrono>
+      #include <optional> // not needed if we use empty map for null
+      #include <stdexcept>
+      #include <cctype>
+      #include <iomanip> // for formatting? not directly, but for the date parsing we'll do manually?
+
+   For parsing the date string "yyyy-MM-dd", we can use:
+
+      std::istringstream ss(jwtStrDate);
+      std::chrono::year_month_day jwt_date;
+      ss >> std::chrono::parse("%F", jwt_date); // %F is %Y-%m-%d
+
+   But note: `std::chrono::parse` is C++20 and might not be implemented? Alternatively, we can parse manually.
+
+   Alternatively, we can split the string by '-' and then construct `year_month_day`.
+
+   Let's do:
+
+      int year, month, day;
+      char dash1, dash2;
+      std::istringstream ss(jwtStrDate);
+      ss >> year >> dash1 >> month >> dash2 >> day;
+      if (dash1 != '-' || dash2 != '-') {
+          // parse error? then return empty map? But the original code doesn't catch that? It uses DateTimeFormatter which would throw? Then we throw and catch in the filter? So we should throw an exception? Then it will be caught in the filter's catch block.
+          throw std::runtime_error("Invalid date format");
+      }
+      auto jwt_date = std::chrono::year{year} / month / day;
+
+   But note: the month and day are integers.
+
+   However, the original code uses `LocalDate.parse` which throws if the string is invalid. So we'll throw if the parsing fails.
+
+   Alternatively, we can use:
+
+      std::tm tm = {};
+      if (sscanf(jwtStrDate.c_str(), "%d-%d-%d", &year, &month, &day) != 3) {
+          throw ...;
+      }
+
+   But that is C-style.
+
+   We'll use `sscanf` for simplicity.
+
+   Steps for `getJwtUser`:
+
+      // Extract token from request headers: 
+      //   Map<String, Object> token = (Map<String, Object>) ((Map<String, Object>) request.get("headers")).get("Authorization");
+      //   So: request is a map, key "headers" -> value is a map, then key "Authorization" -> value is a map (token).
+
+      try {
+          auto& headers = std::any_cast<std::map<std::string, std::any>&>(request.at("headers"));
+          auto& token_map = std::any_cast<std::map<std::string, std::any>&>(headers.at("Authorization"));
+
+          // Then get the user from the token_map:
+          auto& user = std::any_cast<std::map<std::string, std::any>&>(token_map.at("user"));
+          std::string jwt = std::any_cast<std::string>(token_map.at("jwt"));
+
+          std::string username = std::any_cast<std::string>(user.at("name"));
+
+          if (jwt.starts_with(username)) {
+              std::string jwtStrDate = jwt.substr(username.length());
+              // Parse jwtStrDate to year_month_day
+              int year, month, day;
+              if (sscanf(jwtStrDate.c_str(), "%d-%d-%d", &year, &month, &day) != 3) {
+                  throw std::runtime_error("Invalid date string");
+              }
+              auto jwt_date = std::chrono::year{year}/month/day;
+
+              // Get current local date
+              std::time_t t = std::time(nullptr);
+              std::tm local_tm;
+              #ifdef _WIN32
+                  localtime_s(&local_tm, &t);
+              #else
+                  localtime_r(&t, &local_tm); // POSIX
+              #endif
+              auto current_date = std::chrono::year{local_tm.tm_year + 1900} 
+                                  / (local_tm.tm_mon + 1) 
+                                  / local_tm.tm_mday;
+
+              // Convert both to sys_days for arithmetic
+              auto current_sys = std::chrono::sys_days{current_date};
+              auto jwt_sys = std::chrono::sys_days{jwt_date};
+
+              if (jwt_sys < current_sys - std::chrono::days{3}) {
+                  return {}; // empty map to represent null
+              }
+          }
+          return token_map;
+      } catch (const std::exception& e) {
+          // If any of the any_cast or at() fails, we return empty map? 
+          // But note: the original function might throw? Actually, the original function doesn't catch anything? So it throws and then the filter catches? So we let it throw?
+          throw; // rethrow? But the original doesn't throw from getJwtUser? Actually, the original can throw if the cast fails? Then the filter catches Exception and returns false.
+          // However, we are in getJwtUser and we are catching? We shouldn't catch? The original doesn't catch in getJwtUser.
+      }
+
+   But wait: the original `getJwtUser` does not catch any exceptions? So we should not catch either? Then if any of the `any_cast` or `at` fails, it will propagate to the caller (the `filter` function) and be caught there.
+
+   So we remove the try-catch in `getJwtUser`.
+
+   However, note: we are using `sscanf` and might throw if the format is invalid? That is a new exception? The original `DateTimeFormatter` would throw `DateTimeParseException`? Which is an `Exception`. So we are throwing `std::runtime_error`? Then the `filter` will catch it? Because `std::runtime_error` is derived from `std::exception`.
+
+   So we'll let the function throw on any error.
+
+   Therefore, we write `getJwtUser` without a try-catch block.
+
+   Similarly, in `filter`:
+
+      try {
+          auto token = getJwtUser(request);
+          // If we get here, token is not empty? Not necessarily: we return empty map for expired token.
+          // Then we do:
+          auto& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+          int level = std::any_cast<int>(user.at("level"));
+          if (level > 2) {
+              setCurrentUserInfoAndLog(user);
+              return true;
+          }
+      } catch (const std::exception& e) {
+          return false;
+      }
+
+   But note: the original code does:
+
+        Map<String, Object> token = getJwtUser(request);
+        Map<String, Object> user = (Map<String, Object>) token.get("user");
+        if ((int) user.get("level") > 2) { ... }
+
+   If `token.get("user")` returns an integer? Then casting to `Map` would throw? Similarly, if we do `std::any_cast<std::map<std::string, std::any>>` on an integer, we get `bad_any_cast`.
+
+   So the behavior is the same.
+
+   However, note: the original `user.get("level")` returns an `Object` which is cast to `int`. In Java, if the object is an Integer, it unboxes. If it's a Double, it might not? But the original code expects an int.
+
+   In our C++ code, we use `std::any_cast<int>(user.at("level"))`. But what if the value is a long? Then it throws. We must be consistent.
+
+   The original Java code uses `(int) user.get("level")`. This is a cast that might truncate? But in our case, we are storing the value as `std::any`. How was it stored? The request comes from outside? We assume the level is stored as an integer? But the original Java code uses `(int)`, so we assume it's an integer.
+
+   So we'll use `std::any_cast<int>`.
+
+   But note: in Java, the `user` map might have stored the level as a `Long`? Then `(int)` would cast the long to int? But in C++ we cannot cast a long to int via `any_cast`? We must know the exact type? Then we have a problem.
+
+   Alternatively, we can use `std::any_cast<long long>` and then cast to int? But the original code uses `(int)`, which truncates.
+
+   How to mimic? We can try:
+
+      long long level = 0;
+      try {
+          level = std::any_cast<int>(user.at("level"));
+      } catch (const std::bad_any_cast&) {
+          try {
+              level = std::any_cast<long long>(user.at("level"));
+          } catch (const std::bad_any_cast&) {
+              // ... other types? Then throw? Then caught by the outer catch.
+              throw;
+          }
+      }
+
+   But that is messy.
+
+   Alternatively, we can store integers as `long` in the `std::any`? But Java's `int` is 32-bit and `long` is 64-bit. The original code uses `(int)` which truncates a long if necessary? But that is dangerous.
+
+   Given the ambiguity, and since the problem says to keep behavior identical, we note that the original Java code uses `(int)` which might truncate or wrap. We can mimic by:
+
+        int level = 0;
+        if (user.at("level").type() == typeid(int)) {
+            level = std::any_cast<int>(user.at("level"));
+        } else if (user.at("level").type() == typeid(long)) {
+            long l = std::any_cast<long>(user.at("level"));
+            level = static_cast<int>(l);
+        } else if ... ?
+
+   But we don't know all possible types.
+
+   Alternatively, we can convert everything to `long long` and then cast to `int`? Because `std::any` supports integral types? We can write a helper:
+
+        long long get_int(const std::any& a) {
+            if (a.type() == typeid(int)) {
+                return std::any_cast<int>(a);
+            } else if (a.type() == typeid(long)) {
+                return std::any_cast<long>(a);
+            } else if (a.type() == typeid(long long)) {
+                return std::any_cast<long long>(a);
+            } else if (a.type() == typeid(short)) {
+                return std::any_cast<short>(a);
+            } else if (a.type() == typeid(unsigned int) || 
+                       a.type() == typeid(unsigned long) ||
+                       a.type() == typeid(unsigned long long)) {
+                // cast to signed?
+                return static_cast<long long>(std::any_cast<unsigned long long>(a)); // but we don't know the exact unsigned type?
+                // Instead, we can use a visitor? Not without knowing the type.
+                // Alternatively, we can use a series of any_cast for unsigned types?
+            }
+            throw std::bad_any_cast();
+        }
+
+   Then:
+
+        long long level_val = get_int(user.at("level"));
+        if (static_cast<int>(level_val) > 2) { ... }
+
+   But note: truncation might occur? The original Java cast `(int)` truncates 64-bit to 32-bit? And if the value is too big, it wraps? We do the same by `static_cast<int>`? Yes.
+
+   However, the problem says: keep behavior identical. So we do:
+
+        long long level_val = ...;
+        int level = static_cast<int>(level_val);
+        if (level > 2) ...
+
+   But if the value is too big for an int? Then it wraps? That's what Java does? Actually, Java truncates the higher 32 bits? And if the value is in the range of long but outside int, then the cast is modulo 2^32? Actually, it's narrowing and the specification says it uses the low 32 bits.
+
+   Our `static_cast<int>` does the same? For positive numbers within the range of `int` it's the same? But for values outside, it's implementation-defined? Actually, for signed integers, if the value is too big, it's undefined behavior? But we are on a two's complement system? And Java does two's complement.
+
+   Given the complexity, and since the original code likely uses an `int` (as in the example: `(int) user.get("level")`), we assume the value is stored as an `int` in the map? So we'll use `std::any_cast<int>`.
+
+   If it's stored as a `long` in the map? Then we'll throw? Then the filter catches and returns false.
+
+   That matches the Java code: if the value is a `Long` and then cast to `int`? Actually, Java allows casting a `Long` object to `int`? No, it doesn't: you have to unbox the `Long` and then cast to `int`. But the original code does `(int) user.get("level")` -> if the object is a `Long`, then it unboxes the long and then truncates? Actually, no: the cast `(int)` applied to a `Long` object? That won't compile? Let me check:
+
+        Long l = 3L;
+        int i = (int) l; // This is valid: unboxing and then narrowing? Actually, Java allows this.
+
+   But wait: the `(int)` cast in Java when applied to a `Long` object does unboxing automatically? Then narrowing? So it works.
+
+   How do we mimic? We can try to cast to `long long` first? Then narrow to `int`? But we don't know the type.
+
+   We decide: we'll try `int` and `long` and `long long` and then cast to `int`. And if the value is too big for `int`, it wraps? But that's what Java does.
+
+   So we'll write a helper function:
+
+        int any_to_int(const std::any& a) {
+            if (a.type() == typeid(int)) {
+                return std::any_cast<int>(a);
+            }
+            if (a.type() == typeid(long)) {
+                long l = std::any_cast<long>(a);
+                return static_cast<int>(l);
+            }
+            if (a.type() == typeid(long long)) {
+                long long ll = std::any_cast<long long>(a);
+                return static_cast<int>(ll);
+            }
+            if (a.type() == typeid(short)) {
+                return std::any_cast<short>(a);
+            }
+            if (a.type() == typeid(unsigned int)) {
+                return static_cast<int>(std::any_cast<unsigned int>(a));
+            }
+            // ... and so on for unsigned long, etc.
+            // But we don't know all types. Let's throw for any other type.
+            throw std::bad_any_cast();
+        }
+
+   But note: the Java code might have stored as `Integer` or `Long`? In C++ we are storing as primitive types.
+
+   We'll assume the map stores integral types as `int`, `long`, or `long long`.
+
+   We'll write:
+
+        int level = any_to_int(user.at("level"));
+
+   Then:
+
+        if (level > 2) { ... }
+
+   Similarly, for the `user.get("name")` and `user.get("address")` in `setCurrentUserInfoAndLog`, we assume they are strings.
+
+   Now, the function `setCurrentUserInfoAndLog`:
+
+        void setCurrentUserInfoAndLog(const std::map<std::string, std::any>& user) {
+            std::string host = std::any_cast<std::string>(user.at("address"));
+            // For the message: user.get("name") + host + LocalDate.now().toString()
+            // But we don't have a LocalDate.now().toString()? We'll use the current local date as string? How?
+
+            // We can get the current local date and format it as "yyyy-MM-dd"?
+            std::time_t t = std::time(nullptr);
+            std::tm local_tm;
+            #ifdef _WIN32
+                localtime_s(&local_tm, &t);
+            #else
+                localtime_r(&t, &local_tm);
+            #endif
+            char buffer[20];
+            strftime(buffer, sizeof(buffer), "%Y-%m-%d", &local_tm);
+            std::string today_str(buffer);
+
+            std::string username = std::any_cast<std::string>(user.at("name"));
+            std::string message = username + host + today_str;
+            std::cout << message << std::endl;
+        }
+
+   But note: the original Java uses `LocalDate.now()`, which is the current local date. We do the same.
+
+   However, the original Java prints without a newline? `System.out.println` adds a newline. We use `<< std::endl` which adds a newline and flushes? But `println` in Java flushes? So it's similar.
+
+   Alternatively, we can use `<< '\n'` and then flush? But `std::endl` is fine.
+
+   Now, the function `isStartWith`:
+
+        bool isStartWith(const std::string& requestUri) {
+            std::vector<std::string> startWith = {"/api", "/login"};
+            for (const auto& s : startWith) {
+                if (requestUri.starts_with(s)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+   We use C++20's `starts_with` for string? If we assume C++20.
+
+   But note: the problem says to use idiomatic C++ only when it doesn't change behavior. `starts_with` is available in C++20 and does the same as Java's `startsWith`.
+
+   However, if we don't have C++20, we can use `substr(0, s.length()) == s`.
+
+   We'll assume C++20.
+
+   Finally, the `filter` function:
+
+        bool filter(const std::map<std::string, std::any>& request) {
+            std::string requestUri = std::any_cast<std::string>(request.at("path"));
+            std::string method = std::any_cast<std::string>(request.at("method"));
+
+            if (isStartWith(requestUri)) {
+                return true;
+            }
+
+            try {
+                auto token = getJwtUser(request);
+                // If token is empty, then token.at("user") will throw.
+                auto user = std::any_cast<std::map<std::string, std::any>>(token.at("user"));
+                int level = any_to_int(user.at("level"));
+                if (level > 2) {
+                    setCurrentUserInfoAndLog(user);
+                    return true;
+                }
+            } catch (const std::exception& e) {
+                return false;
+            }
+            return false;
+        }
+
+   But note: the original `filter` function does not use the `method` variable? So we can ignore it? But we must extract it because the Java code does.
+
+   We'll leave it.
+
+   Also, note: the `getJwtUser` function might return an empty map? Then `token.at("user")` throws. That is caught and returns false.
+
+   Now, the class definition:
+
+      class AccessGatewayFilter {
+      public:
+          AccessGatewayFilter() = default;
+
+          bool filter(const std::map<std::string, std::any>& request);
+
+      private:
+          bool isStartWith(const std::string& requestUri);
+          std::map<std::string, std::any> getJwtUser(const std::map<std::string, std::any>& request);
+          void setCurrentUserInfoAndLog(const std::map<std::string, std::any>& user);
+          int any_to_int(const std::any& a); // helper
+      };
+
+   We'll implement `any_to_int` as a private helper.
+
+   However, note: the original Java code has a package `org.example`. We don't need that in C++.
+
+   We'll put everything in a header and source file? Or we can write it in one file.
+
+   We'll write the entire code in one file for simplicity.
+
+   Let's write the code accordingly.
+
+   Important: We must include the necessary headers.
+
+   We'll also note: we are using `std::map` and `std::any`, and `std::any_cast` may throw `std::bad_any_cast`, which is derived from `std::exception`.
+
+   Also, `std::map::at` throws `std::out_of_range`, derived from `std::exception`.
+
+   So the catch block in `filter` catches all these.
+
+   Now, the code:
+
+   Note: We are using C++20 features: `starts_with` for string, and the chrono date library. If the compiler doesn't support C++20, we might need alternatives.
+
+   Due to the complexity, we'll assume C++20.
+
+   Let's write the code accordingly.
+
+   We'll also note: the original Java code uses `System.out.println` for logging. We use `std::cout`.
+
+   Now, the complete code:
+
+   Note: We are using `#ifdef` for `localtime_r` vs `localtime_s`. We define `_WIN32` for Windows.
+
+   We'll write the helper function `any_to_int` to handle common integral types.
+
+   We'll handle: int, long, long long, short, unsigned int, unsigned long, unsigned long long.
+
+   But note: Java does not have unsigned, but we might get unsigned from somewhere? We'll do it for safety.
+
+   Code for `any_to_int`:
+
+        int AccessGatewayFilter::any_to_int(const std::any& a) {
+            if (a.type() == typeid(int)) {
+                return std::any_cast<int>(a);
+            } else if (a.type() == typeid(long)) {
+                return static_cast<int>(std::any_cast<long>(a));
+            } else if (a.type() == typeid(long long)) {
+                return static_cast<int>(std::any_cast<long long>(a));
+            } else if (a.type() == typeid(short)) {
+                return static_cast<int>(std::any_cast<short>(a));
+            } else if (a.type() == typeid(unsigned int)) {
+                return static_cast<int>(std::any_cast<unsigned int>(a));
+            } else if (a.type() == typeid(unsigned long)) {
+                return static_cast<int>(std::any_cast<unsigned long>(a));
+            } else if (a.type() == typeid(unsigned long long)) {
+                return static_cast<int>(std::any_cast<unsigned long long>(a));
+            } else if (a.type() == typeid(unsigned short)) {
+                return static_cast<int>(std::any_cast<unsigned short>(a));
+            }
+            throw std::bad_any_cast();
+        }
+
+   This covers the common integral types.
+
+   Now, the complete C++ code:
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a Java class to C++ while maintaining identical behavior. The Java class involves handling HTTP requests, JWT tokens, and date operations. The C++ implementation must replicate the exact logic, including input/output behavior, side effects, edge cases, and exception handling.
+
+### Approach
+1. **Data Structures**: Use `std::map` and `std::any` to mimic Java's `Map<String, Object>` for flexible key-value storage with mixed types.
+2. **Date Handling**: Utilize C++20's `<chrono>` library for date parsing and comparison. For compatibility, fall back to platform-specific local time functions (`localtime_s` on Windows, `localtime_r` elsewhere).
+3. **String Operations**: Use `std::string::starts_with` (C++20) to check URI prefixes.
+4. **Type Conversion**: Implement a helper function `any_to_int` to handle various integral types stored in `std::any`, ensuring consistent integer casting as in Java.
+5. **Exception Handling**: Catch `std::exception` broadly to mirror Java's catch-all for any exception, returning `false` in such cases.
+
+### Solution Code
+```cpp
+#include <map>
+#include <any>
+#include <vector>
+#include <string>
+#include <iostream>
+#include <ctime>
+#include <chrono>
+#include <stdexcept>
+#include <cstdio>
+#include <sstream>
+#include <iomanip>
+
+class AccessGatewayFilter {
+public:
+    AccessGatewayFilter() = default;
+
+    bool filter(const std::map<std::string, std::any>& request) {
+        std::string requestUri;
+        std::string method;
+        try {
+            requestUri = std::any_cast<std::string>(request.at("path"));
+            method = std::any_cast<std::string>(request.at("method"));
+        } catch (const std::exception& e) {
+            return false;
+        }
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            auto token = getJwtUser(request);
+            auto user = std::any_cast<std::map<std::string, std::any>>(token.at("user"));
+            int level = any_to_int(user.at("level"));
+            if (level > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (const std::exception& e) {
+            return false;
+        }
+        return false;
+    }
+
+private:
+    bool isStartWith(const std::string& requestUri) {
+        std::vector<std::string> startWith = {"/api", "/login"};
+        for (const auto& s : startWith) {
+            if (requestUri.starts_with(s)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::map<std::string, std::any> getJwtUser(const std::map<std::string, std::any>& request) {
+        auto headers = std::any_cast<std::map<std::string, std::any>>(request.at("headers"));
+        auto token_map = std::any_cast<std::map<std::string, std::any>>(headers.at("Authorization"));
+        auto user = std::any_cast<std::map<std::string, std::any>>(token_map.at("user"));
+        std::string jwt = std::any_cast<std::string>(token_map.at("jwt"));
+
+        std::string username = std::any_cast<std::string>(user.at("name"));
+
+        if (jwt.starts_with(username)) {
+            std::string jwtStrDate = jwt.substr(username.length());
+            int year, month, day;
+            if (std::sscanf(jwtStrDate.c_str(), "%d-%d-%d", &year, &month, &day) != 3) {
+                throw std::runtime_error("Invalid date format");
+            }
+            std::chrono::year_month_day jwt_date{std::chrono::year(year), std::chrono::month(month), std::chrono::day(day)};
+
+            std::time_t t = std::time(nullptr);
+            std::tm local_tm;
+#if defined(_WIN32)
+            if (localtime_s(&local_tm, &t) != 0) {
+                throw std::runtime_error("Failed to get local time");
+            }
+#else
+            if (localtime_r(&t, &local_tm) == nullptr) {
+                throw std::runtime_error("Failed to get local time");
+            }
+#endif
+            std::chrono::year_month_day current_date{
+                std::chrono::year(local_tm.tm_year + 1900),
+                std::chrono::month(local_tm.tm_mon + 1),
+                std::chrono::day(local_tm.tm_mday)
+            };
+
+            auto current_sys = std::chrono::sys_days(current_date);
+            auto jwt_sys = std::chrono::sys_days(jwt_date);
+
+            if (jwt_sys < current_sys - std::chrono::days(3)) {
+                return {};
+            }
+        }
+        return token_map;
+    }
+
+    void setCurrentUserInfoAndLog(const std::map<std::string, std::any>& user) {
+        std::string host = std::any_cast<std::string>(user.at("address"));
+        std::string username = std::any_cast<std::string>(user.at("name"));
+
+        std::time_t t = std::time(nullptr);
+        std::tm local_tm;
+#if defined(_WIN32)
+        if (localtime_s(&local_tm, &t) != 0) {
+            throw std::runtime_error("Failed to get local time");
+        }
+#else
+        if (localtime_r(&t, &local_tm) == nullptr) {
+            throw std::runtime_error("Failed to get local time");
+        }
+#endif
+        char buffer[20];
+        std::strftime(buffer, sizeof(buffer), "%Y-%m-%d", &local_tm);
+        std::string today_str(buffer);
+
+        std::string message = username + host + today_str;
+        std::cout << message << std::endl;
+    }
+
+    int any_to_int(const std::any& a) {
+        if (a.type() == typeid(int)) {
+            return std::any_cast<int>(a);
+        } else if (a.type() == typeid(long)) {
+            return static_cast<int>(std::any_cast<long>(a));
+        } else if (a.type() == typeid(long long)) {
+            return static_cast<int>(std::any_cast<long long>(a));
+        } else if (a.type() == typeid(short)) {
+            return static_cast<int>(std::any_cast<short>(a));
+        } else if (a.type() == typeid(unsigned int)) {
+            return static_cast<int>(std::any_cast<unsigned int>(a));
+        } else if (a.type() == typeid(unsigned long)) {
+            return static_cast<int>(std::any_cast<unsigned long>(a));
+        } else if (a.type() == typeid(unsigned long long)) {
+            return static_cast<int>(std::any_cast<unsigned long long>(a));
+        } else if (a.type() == typeid(unsigned short)) {
+            return static_cast<int>(std::any_cast<unsigned short>(a));
+        }
+        throw std::bad_any_cast();
+    }
+};
+```
+
+### Explanation
+1. **Data Structures**: The `std::map<std::string, std::any>` mimics Java's flexible `Map<String, Object>`, allowing storage of various types (strings, integers, nested maps).
+2. **Date Handling**: The current local date is obtained using platform-specific functions (`localtime_s` or `localtime_r`). Dates are compared by converting to `sys_days` (time points) for arithmetic operations.
+3. **String Operations**: The `starts_with` method checks if a URI begins with specified prefixes (`/api`, `/login`), similar to Java's `startsWith`.
+4. **Type Conversion**: The `any_to_int` helper function ensures consistent integer extraction from `std::any`, handling multiple integral types (int, long, etc.) and casting to `int` as in Java.
+5. **Exception Handling**: Broad `catch (const std::exception& e)` blocks ensure any exception (e.g., `bad_any_cast`, `out_of_range`) results in `false`, mirroring Java's catch-all behavior.
+
+This approach ensures the C++ implementation behaves identically to the original Java code, handling all edge cases and maintaining input/output consistency.
+
+=== TRANSLATED CODE (cpp) ===
+#include <map>
+#include <any>
+#include <vector>
+#include <string>
+#include <iostream>
+#include <ctime>
+#include <chrono>
+#include <stdexcept>
+#include <cstdio>
+#include <sstream>
+#include <iomanip>
+
+class AccessGatewayFilter {
+public:
+    AccessGatewayFilter() = default;
+
+    bool filter(const std::map<std::string, std::any>& request) {
+        std::string requestUri;
+        std::string method;
+        try {
+            requestUri = std::any_cast<std::string>(request.at("path"));
+            method = std::any_cast<std::string>(request.at("method"));
+        } catch (const std::exception& e) {
+            return false;
+        }
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            auto token = getJwtUser(request);
+            auto user = std::any_cast<std::map<std::string, std::any>>(token.at("user"));
+            int level = any_to_int(user.at("level"));
+            if (level > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (const std::exception& e) {
+            return false;
+        }
+        return false;
+    }
+
+private:
+    bool isStartWith(const std::string& requestUri) {
+        std::vector<std::string> startWith = {"/api", "/login"};
+        for (const auto& s : startWith) {
+            if (requestUri.starts_with(s)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::map<std::string, std::any> getJwtUser(const std::map<std::string, std::any>& request) {
+        auto headers = std::any_cast<std::map<std::string, std::any>>(request.at("headers"));
+        auto token_map = std::any_cast<std::map<std::string, std::any>>(headers.at("Authorization"));
+        auto user = std::any_cast<std::map<std::string, std::any>>(token_map.at("user"));
+        std::string jwt = std::any_cast<std::string>(token_map.at("jwt"));
+
+        std::string username = std::any_cast<std::string>(user.at("name"));
+
+        if (jwt.starts_with(username)) {
+            std::string jwtStrDate = jwt.substr(username.length());
+            int year, month, day;
+            if (std::sscanf(jwtStrDate.c_str(), "%d-%d-%d", &year, &month, &day) != 3) {
+                throw std::runtime_error("Invalid date format");
+            }
+            std::chrono::year_month_day jwt_date{std::chrono::year(year), std::chrono::month(month), std::chrono::day(day)};
+
+            std::time_t t = std::time(nullptr);
+            std::tm local_tm;
+#if defined(_WIN32)
+            if (localtime_s(&local_tm, &t) != 0) {
+                throw std::runtime_error("Failed to get local time");
+            }
+#else
+            if (localtime_r(&t, &local_tm) == nullptr) {
+                throw std::runtime_error("Failed to get local time");
+            }
+#endif
+            std::chrono::year_month_day current_date{
+                std::chrono::year(local_tm.tm_year + 1900),
+                std::chrono::month(local_tm.tm_mon + 1),
+                std::chrono::day(local_tm.tm_mday)
+            };
+
+            auto current_sys = std::chrono::sys_days(current_date);
+            auto jwt_sys = std::chrono::sys_days(jwt_date);
+
+            if (jwt_sys < current_sys - std::chrono::days(3)) {
+                return {};
+            }
+        }
+        return token_map;
+    }
+
+    void setCurrentUserInfoAndLog(const std::map<std::string, std::any>& user) {
+        std::string host = std::any_cast<std::string>(user.at("address"));
+        std::string username = std::any_cast<std::string>(user.at("name"));
+
+        std::time_t t = std::time(nullptr);
+        std::tm local_tm;
+#if defined(_WIN32)
+        if (localtime_s(&local_tm, &t) != 0) {
+            throw std::runtime_error("Failed to get local time");
+        }
+#else
+        if (localtime_r(&t, &local_tm) == nullptr) {
+            throw std::runtime_error("Failed to get local time");
+        }
+#endif
+        char buffer[20];
+        std::strftime(buffer, sizeof(buffer), "%Y-%m-%d", &local_tm);
+        std::string today_str(buffer);
+
+        std::string message = username + host + today_str;
+        std::cout << message << std::endl;
+    }
+
+    int any_to_int(const std::any& a) {
+        if (a.type() == typeid(int)) {
+            return std::any_cast<int>(a);
+        } else if (a.type() == typeid(long)) {
+            return static_cast<int>(std::any_cast<long>(a));
+        } else if (a.type() == typeid(long long)) {
+            return static_cast<int>(std::any_cast<long long>(a));
+        } else if (a.type() == typeid(short)) {
+            return static_cast<int>(std::any_cast<short>(a));
+        } else if (a.type() == typeid(unsigned int)) {
+            return static_cast<int>(std::any_cast<unsigned int>(a));
+        } else if (a.type() == typeid(unsigned long)) {
+            return static_cast<int>(std::any_cast<unsigned long>(a));
+        } else if (a.type() == typeid(unsigned long long)) {
+            return static_cast<int>(std::any_cast<unsigned long long>(a));
+        } else if (a.type() == typeid(unsigned short)) {
+            return static_cast<int>(std::any_cast<unsigned short>(a));
+        }
+        throw std::bad_any_cast();
+    }
+};

@@ -1,0 +1,276 @@
+=== SOURCE CODE (cpp) ===
+
+#include <sstream>
+
+#include <string>
+#include <stack>
+#include <vector>
+#include <cctype>
+#include <stdexcept>
+#include <unordered_map>
+#include <functional>
+
+class Calculator {
+public:
+    Calculator();
+    double calculate(const std::string& expression);
+    int precedence(char op);
+    std::pair<std::stack<double>, std::stack<char>> apply_operator(std::stack<double> operand_stack, std::stack<char> operator_stack);
+private:
+    std::unordered_map<char, std::function<double(double, double)>> operators;
+};
+
+Calculator::Calculator() {
+    operators['+'] = [](double x, double y) { return x + y; };
+    operators['-'] = [](double x, double y) { return x - y; };
+    operators['*'] = [](double x, double y) { return x * y; };
+    operators['/'] = [](double x, double y) { return x / y; };
+    operators['^'] = [](double x, double y) { return std::pow(x, y); };
+}
+
+double Calculator::calculate(const std::string& expression) {
+    if (expression.empty()) {
+        return 0.0; 
+    }
+
+    std::stack<double> operand_stack;
+    std::stack<char> operator_stack;
+    std::string num_buffer;
+
+    for (char ch : expression) {
+        if (std::isdigit(ch) || ch == '.') {
+            num_buffer += ch;
+        }
+        else {
+            if (!num_buffer.empty()) {
+                operand_stack.push(std::stod(num_buffer));
+                num_buffer.clear();
+            }
+
+            if (ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '^') {
+                while (!operator_stack.empty() && operator_stack.top() != '(' &&
+                    precedence(operator_stack.top()) >= precedence(ch)) {
+                    auto [operands, operators] = apply_operator(operand_stack, operator_stack);
+                    operand_stack = std::move(operands);
+                    operator_stack = std::move(operators);
+                }
+                operator_stack.push(ch);
+            }
+            else if (ch == '(') {
+                operator_stack.push(ch);
+            }
+            else if (ch == ')') {
+                while (!operator_stack.empty() && operator_stack.top() != '(') {
+                    auto [operands, operators] = apply_operator(operand_stack, operator_stack);
+                    operand_stack = std::move(operands);
+                    operator_stack = std::move(operators);
+                }
+                operator_stack.pop(); 
+            }
+        }
+    }
+
+    if (!num_buffer.empty()) {
+        operand_stack.push(std::stod(num_buffer));
+    }
+
+    while (!operator_stack.empty()) {
+        auto [operands, operators] = apply_operator(operand_stack, operator_stack);
+        operand_stack = std::move(operands);
+        operator_stack = std::move(operators);
+    }
+
+    return !operand_stack.empty() ? operand_stack.top() : 0.0; 
+}
+
+int Calculator::precedence(char op) {
+    switch (op) {
+    case '+': case '-': return 1;
+    case '*': case '/': return 2;
+    case '^': return 3;
+    default: return 0;
+    }
+}
+
+std::pair<std::stack<double>, std::stack<char>> Calculator::apply_operator(std::stack<double> operand_stack, std::stack<char> operator_stack) {
+    char op = operator_stack.top();
+    operator_stack.pop();
+
+    double operand2 = operand_stack.top();
+    operand_stack.pop();
+    double operand1 = operand_stack.top();
+    operand_stack.pop();
+
+    double result = operators[op](operand1, operand2);
+    operand_stack.push(result);
+
+    return { operand_stack, operator_stack };
+}
+
+
+=== REASONING ===
+<think>
+We need to translate C++ code to Python. Keep behavior identical. The code is a calculator class that parses infix expressions with +, -, *, /, ^ (power), parentheses, and handles decimal numbers. It uses shunting-yard algorithm with two stacks. operator precedence: +,-:1; *,/:2; ^:3.
+
+Key points:
+
+- Return 0.0 for empty expression.
+- Use Python's float for double.
+- Use stack (list) for both operands and operators.
+- The apply_operator method modifies stacks and returns them (but in C++ they are passed by value, so we need to simulate that; in Python we can just work with stacks and not return them, but the original uses pass-by-value and returns new stacks, meaning it doesn't mutate the original stacks. However, in the calculate method, they assign back: auto [operands, operators] = apply_operator(operand_stack, operator_stack); operand_stack = std::move(operands); operator_stack = std::move(operators); So they are replacing the stacks. To mimic that exactly, we can take stacks as arguments and return new stacks. But in Python, we can just modify in-place and not return anything. However, the behavior should be identical: the original code doesn't affect the original stacks outside apply_operator because they are copies. But the calculate method replaces with returned stacks, so effectively it's like in-place but with copies. For simplicity, we can modify in-place and not return. But the problem says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". The C++ code returns a pair of stacks; in Python we can just modify directly and not return, but the effect on caller is same if we assign the returned pair back. Alternatively, we can keep the same interface: define apply_operator that takes two stacks (lists) and returns two stacks. Since lists are mutable, we need to copy them to avoid side effects, just like C++ pass by value. But careful: in C++, stacks are passed by value, so apply_operator gets copies; the original stacks in calculate are not modified until they are replaced. So to emulate that, we should create copies inside apply_operator before popping, to avoid affecting original lists. But that is inefficient. However, since we will assign back the returned stacks in calculate, the effect is that the original stacks are replaced. So we can just modify the passed lists in place and then return them, and then assign them back in calculate. That will be identical: after apply_operator, the original stacks in calculate are still unchanged (if we pass by value, we can't modify them). But in Python, if we pass lists, they are passed by reference. So if we modify them in apply_operator, the caller's lists will be modified. That would change behavior: the original code passes copies, so the caller's stacks are not changed until assignment. But since the caller immediately assigns the returned stacks to its own stacks, the net effect is the same as if we modified in place. However, there is a subtlety: if an exception occurs during apply_operator, the original stacks might be partially modified in Python, whereas in C++ they are untouched because copies are used. But in this code, no exceptions are thrown inside apply_operator (except maybe from the operators map, but that's a lambda returning double; division by zero? In C++, that throws? std::function may throw if it calls a lambda that divides by zero? Actually dividing by zero with double yields inf, not exception. So no exception. So it's safe. But to be strictly identical, we should copy the stacks and return new ones. However, given that the caller replaces stacks with the returned ones, modifying in place is equivalent. I'll go with modifying in place and not returning anything (or returning None) and then adjust caller accordingly. But the caller expects to assign the results. In C++, apply_operator returns a pair. In Python we can have it return None and modify lists in place. That would be a difference in interface but behavior identical if we adjust caller to not assign. Since we control the whole code, we can change the internal method. I think it's fine to adapt to Pythonic style as long as behavior is identical. I'll write apply_operator to modify stacks in place and return nothing. Then in calculate, call it without assignment. That's simpler and equivalent. But we need to consider that the original returns copies; if we modify in place, the caller's lists are updated directly. That's fine because the caller's lists are the ones we are using. The original also replaces them with returned copies, so end result same. So I'll do that.
+
+- Use float for numbers.
+- Use math.pow for power? operators['^'] should use ** or math.pow. In C++, std::pow. In Python, ** works for floats. Use math.pow to be explicit, but ** is fine. But to match behavior on negative base with fractional exponent? Both work. I'll use math.pow to match std::pow. But need import math.
+
+- Precedence: define as method.
+
+- Use isdigit for digits and '.' in num_buffer.
+
+- In C++, they used std::isdigit from <cctype> which works for char. In Python, ch.isdigit() works.
+
+- The expression is a string. They iterate char by char. Python string iteration yields characters.
+
+- Handling decimal: they concatenate '.' and digits. So we can just use ch.isdigit() or ch == '.'.
+
+- Exception: If expression has invalid characters? In C++, if there is a character not digit, '.', '+', '-', '*', '/', '^', '(', ')', it will be ignored? Actually the else branch handles operators and parentheses, but any other char (like space) will be ignored? Wait: the else branch only processes if ch is an operator or parentheses; if it's something else (like space), it goes into else but does nothing? Actually code: if isdigit or '.' -> num_buffer; else: if num_buffer not empty push; then if ch is +-*... etc. If ch is something else (like space), it enters else, then checks if ch is one of those operators, it's not, so it goes to else if '(' etc. So space would be ignored? No: else if ch == '('; else if ch == ')'. For space, none of these conditions true, so nothing happens. That means spaces are silently ignored. That's fine. We'll keep that behavior: just skip other characters? Actually in C++, they are not skipped; they fall through all conditions and do nothing. So same.
+
+- Also, they treat '-' as binary operator only, not unary minus. So '-3' won't be handled? Actually if expression starts with '-', it would be treated as operator, but there is no left operand, so stacks may cause error. But original code doesn't handle unary minus. We'll keep same.
+
+- In C++, they used std::stod(num_buffer) which throws if conversion fails. But num_buffer contains only digits and '.', so it's safe. In Python, use float(num_buffer).
+
+- For empty expression, return 0.0.
+
+- For final result: if operand_stack empty (shouldn't happen for valid expressions, but maybe if only parentheses?) return 0.
+</think>
+
+=== RAW ANSWER ===
+```
+import math
+
+class Calculator:
+    def __init__(self):
+        self.operators = {
+            '+': lambda x, y: x + y,
+            '-': lambda x, y: x - y,
+            '*': lambda x, y: x * y,
+            '/': lambda x, y: x / y,
+            '^': lambda x, y: math.pow(x, y),
+        }
+
+    def calculate(self, expression: str) -> float:
+        if not expression:
+            return 0.0
+
+        operand_stack = []
+        operator_stack = []
+        num_buffer = ""
+
+        for ch in expression:
+            if ch.isdigit() or ch == '.':
+                num_buffer += ch
+            else:
+                if num_buffer:
+                    operand_stack.append(float(num_buffer))
+                    num_buffer = ""
+
+                if ch in "+-*/^":
+                    while (operator_stack and operator_stack[-1] != '(' and
+                           self.precedence(operator_stack[-1]) >= self.precedence(ch)):
+                        self.apply_operator(operand_stack, operator_stack)
+                    operator_stack.append(ch)
+                elif ch == '(':
+                    operator_stack.append(ch)
+                elif ch == ')':
+                    while operator_stack and operator_stack[-1] != '(':
+                        self.apply_operator(operand_stack, operator_stack)
+                    operator_stack.pop()  # remove '('
+
+        if num_buffer:
+            operand_stack.append(float(num_buffer))
+
+        while operator_stack:
+            self.apply_operator(operand_stack, operator_stack)
+
+        return operand_stack[-1] if operand_stack else 0.0
+
+    def precedence(self, op: str) -> int:
+        if op in ('+', '-'):
+            return 1
+        if op in ('*', '/'):
+            return 2
+        if op == '^':
+            return 3
+        return 0
+
+    def apply_operator(self, operand_stack: list, operator_stack: list) -> None:
+        op = operator_stack.pop()
+        operand2 = operand_stack.pop()
+        operand1 = operand_stack.pop()
+        result = self.operators[op](operand1, operand2)
+        operand_stack.append(result)
+```
+
+=== TRANSLATED CODE (py) ===
+import math
+
+class Calculator:
+    def __init__(self):
+        self.operators = {
+            '+': lambda x, y: x + y,
+            '-': lambda x, y: x - y,
+            '*': lambda x, y: x * y,
+            '/': lambda x, y: x / y,
+            '^': lambda x, y: math.pow(x, y),
+        }
+
+    def calculate(self, expression: str) -> float:
+        if not expression:
+            return 0.0
+
+        operand_stack = []
+        operator_stack = []
+        num_buffer = ""
+
+        for ch in expression:
+            if ch.isdigit() or ch == '.':
+                num_buffer += ch
+            else:
+                if num_buffer:
+                    operand_stack.append(float(num_buffer))
+                    num_buffer = ""
+
+                if ch in "+-*/^":
+                    while (operator_stack and operator_stack[-1] != '(' and
+                           self.precedence(operator_stack[-1]) >= self.precedence(ch)):
+                        self.apply_operator(operand_stack, operator_stack)
+                    operator_stack.append(ch)
+                elif ch == '(':
+                    operator_stack.append(ch)
+                elif ch == ')':
+                    while operator_stack and operator_stack[-1] != '(':
+                        self.apply_operator(operand_stack, operator_stack)
+                    operator_stack.pop()  # remove '('
+
+        if num_buffer:
+            operand_stack.append(float(num_buffer))
+
+        while operator_stack:
+            self.apply_operator(operand_stack, operator_stack)
+
+        return operand_stack[-1] if operand_stack else 0.0
+
+    def precedence(self, op: str) -> int:
+        if op in ('+', '-'):
+            return 1
+        if op in ('*', '/'):
+            return 2
+        if op == '^':
+            return 3
+        return 0
+
+    def apply_operator(self, operand_stack: list, operator_stack: list) -> None:
+        op = operator_stack.pop()
+        operand2 = operand_stack.pop()
+        operand1 = operand_stack.pop()
+        result = self.operators[op](operand1, operand2)
+        operand_stack.append(result)

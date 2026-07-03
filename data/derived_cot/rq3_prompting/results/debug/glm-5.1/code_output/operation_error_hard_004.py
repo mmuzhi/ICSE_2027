@@ -1,0 +1,1 @@
+max_y[i] = max(max_y[i], max_y[1 + 1])

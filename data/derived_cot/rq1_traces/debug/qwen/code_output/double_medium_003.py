@@ -1,0 +1,17 @@
+class Solution:
+    def powerfulIntegers(self, x: int, y: int, bound: int):
+        if bound == 0:
+            return []
+        
+        def get(v):
+            yield 1
+            if v == 1:
+                return
+            vi = v
+            while vi <= bound:
+                yield vi
+                if v == 0:
+                    break
+                vi *= v
+        
+        return list({xi + yi for xi in self.get(x) for yi in self.get(y) if xi + yi <= bound})

@@ -1,0 +1,17 @@
+from collections import defaultdict, deque
+
+class Solution:
+    def isTransformable(self, s: str, t: str) -> bool:
+        idx = defaultdict(deque)
+        for i, c in enumerate(s):
+            idx[int(c)].append(i)
+        
+        for c in t:
+            d = int(c)
+            if not idx[d]:
+                return False
+            pos = idx[d].popleft()
+            for i in range(d + 1, 10):
+                if idx[i] and idx[i][0] < pos:
+                    return False
+        return True

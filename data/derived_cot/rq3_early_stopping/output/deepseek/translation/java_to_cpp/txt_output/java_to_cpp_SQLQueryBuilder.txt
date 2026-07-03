@@ -1,0 +1,414 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+
+public class SQLQueryBuilder {
+
+    public static String select(String table, String columns, Map<String, String> where) {
+        if (columns == null) {
+            columns = "*";
+        }
+        return select(table, columns.split(",\\s*"), where);
+    }
+
+    public static String select(String table, String[] columns, Map<String, String> where) {
+        StringBuilder query = new StringBuilder("SELECT ");
+        if (columns.length > 0) {
+            query.append(String.join(", ", columns));
+        } else {
+            query.append("*");
+        }
+        query.append(" FROM ").append(table);
+
+        if (where != null && !where.isEmpty()) {
+            query.append(" WHERE ");
+            Set<Map.Entry<String, String>> entrySet = where.entrySet();
+            boolean first = true;
+            for (Map.Entry<String, String> entry : entrySet) {
+                if (!first) {
+                    query.append(" AND ");
+                }
+                query.append(entry.getKey()).append("='").append(entry.getValue()).append("'");
+                first = false;
+            }
+        }
+        return query.toString();
+    }
+
+    public static String insert(String table, Map<String, String> data) {
+        StringBuilder query = new StringBuilder("INSERT INTO ").append(table).append(" (");
+        StringBuilder values = new StringBuilder(" VALUES (");
+
+        boolean first = true;
+        for (Map.Entry<String, String> entry : data.entrySet()) {
+            if (!first) {
+                query.append(", ");
+                values.append(", ");
+            }
+            query.append(entry.getKey());
+            values.append("'").append(entry.getValue()).append("'");
+            first = false;
+        }
+
+        query.append(")");
+        values.append(")");
+
+        return query.append(values).toString();
+    }
+
+    public static String delete(String table, Map<String, String> where) {
+        StringBuilder query = new StringBuilder("DELETE FROM ").append(table);
+
+        if (where != null && !where.isEmpty()) {
+            query.append(" WHERE ");
+            Set<Map.Entry<String, String>> entrySet = where.entrySet();
+            boolean first = true;
+            for (Map.Entry<String, String> entry : entrySet) {
+                if (!first) {
+                    query.append(" AND ");
+                }
+                query.append(entry.getKey()).append("='").append(entry.getValue()).append("'");
+                first = false;
+            }
+        }
+        return query.toString();
+    }
+
+    public static String update(String table, Map<String, String> data, Map<String, String> where) {
+        StringBuilder query = new StringBuilder("UPDATE ").append(table).append(" SET ");
+
+        boolean first = true;
+        for (Map.Entry<String, String> entry : data.entrySet()) {
+            if (!first) {
+                query.append(", ");
+            }
+            query.append(entry.getKey()).append("='").append(entry.getValue()).append("'");
+            first = false;
+        }
+
+        if (where != null && !where.isEmpty()) {
+            query.append(" WHERE ");
+            Set<Map.Entry<String, String>> entrySet = where.entrySet();
+            boolean firstWhere = true;
+            for (Map.Entry<String, String> entry : entrySet) {
+                if (!firstWhere) {
+                    query.append(" AND ");
+                }
+                query.append(entry.getKey()).append("='").append(entry.getValue()).append("'");
+                firstWhere = false;
+            }
+        }
+        return query.toString();
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++. The Java code has a class SQLQueryBuilder with static methods: select (two overloads), insert, delete, update. They use LinkedHashMap (preserves insertion order) and Map.Entry. In C++, we'll use std::map or std::unordered_map? The Java code uses LinkedHashMap which maintains insertion order. In C++, std::map is ordered by key, not insertion order. std::unordered_map has no order. To preserve insertion order, we need a custom ordered map like std::map with an index, or use std::vector of pairs. But the behavior: the Java code iterates over entrySet of LinkedHashMap, which returns entries in insertion order. In C++, if we use std::map, iteration will be in key order (lexicographic). That changes behavior if order matters for SQL generation (though SQL doesn't care about order of WHERE conditions or SET clauses, but the exact string might differ). The problem says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)." So we must preserve the exact string output. Therefore we need to preserve insertion order. We can use std::vector<std::pair<std::string, std::string>> as the map-like structure, or use boost::container::map with insertion order? But to keep it simple and standard, we'll define a custom class that wraps a vector of pairs, or just use std::map if we assume order doesn't matter? However, the Java code uses LinkedHashMap, so the output string depends on insertion order. To be identical, we must replicate that. The simplest C++ idiomatic way is to accept std::map but that changes order. Let's read the problem:
+</think>
+
+=== RAW ANSWER ===
+```
+#include <string>
+#include <vector>
+#include <map>
+#include <sstream>
+
+namespace org { namespace example {
+
+class SQLQueryBuilder {
+public:
+    // Use std::vector<std::pair<std::string, std::string>> to preserve insertion order (like LinkedHashMap)
+    using StringMap = std::vector<std::pair<std::string, std::string>>;
+
+    static std::string select(const std::string& table, const std::string& columns, const StringMap& where) {
+        std::string cols = columns.empty() ? "*" : columns;
+        // split by ",\\s*" using regex or manual; manual split to avoid regex dependency
+        std::vector<std::string> colArray;
+        size_t start = 0, end;
+        while ((end = cols.find(", ", start)) != std::string::npos) {
+            std::string token = cols.substr(start, end - start);
+            // remove trailing whitespace? The regex ", " matches comma+space. We'll handle by trimming? Simpler: just split by ',' then trim whitespace.
+            // Actually the Java split regex is ",\s*" which means comma followed by zero or more whitespace.
+            // We'll implement similar behavior: split by comma, then trim leading whitespace from each part.
+            token = cols.substr(start, end - start);
+            // trim leading whitespace (but the split will have no leading spaces because we split on comma-space? Not guaranteed.)
+            // Better to split by comma then trim each.
+            colArray.push_back(trim(token));
+            start = end + 2; // skip comma and space? If only comma? Not robust.
+        }
+        // Actually let's do proper split with regex? We'll implement manual split by ',', then trim leading/trailing whitespace.
+        // To keep it simple and avoid regex, we'll do a simple split on ',' and then trim whitespace.
+        colArray = splitAndTrim(cols, ',');
+        return select(table, colArray, where);
+    }
+
+    static std::string select(const std::string& table, const std::vector<std::string>& columns, const StringMap& where) {
+        std::ostringstream query;
+        query << "SELECT ";
+        if (!columns.empty()) {
+            bool first = true;
+            for (const auto& col : columns) {
+                if (!first) query << ", ";
+                query << col;
+                first = false;
+            }
+        } else {
+            query << "*";
+        }
+        query << " FROM " << table;
+
+        if (!where.empty()) {
+            query << " WHERE ";
+            bool first = true;
+            for (const auto& entry : where) {
+                if (!first) query << " AND ";
+                query << entry.first << "='" << entry.second << "'";
+                first = false;
+            }
+        }
+        return query.str();
+    }
+
+    static std::string insert(const std::string& table, const StringMap& data) {
+        std::ostringstream query, values;
+        query << "INSERT INTO " << table << " (";
+        values << " VALUES (";
+
+        bool first = true;
+        for (const auto& entry : data) {
+            if (!first) {
+                query << ", ";
+                values << ", ";
+            }
+            query << entry.first;
+            values << "'" << entry.second << "'";
+            first = false;
+        }
+
+        query << ")";
+        values << ")";
+        return query.str() + values.str();
+    }
+
+    static std::string deleteRecord(const std::string& table, const StringMap& where) {
+        std::ostringstream query;
+        query << "DELETE FROM " << table;
+
+        if (!where.empty()) {
+            query << " WHERE ";
+            bool first = true;
+            for (const auto& entry : where) {
+                if (!first) query << " AND ";
+                query << entry.first << "='" << entry.second << "'";
+                first = false;
+            }
+        }
+        return query.str();
+    }
+
+    static std::string update(const std::string& table, const StringMap& data, const StringMap& where) {
+        std::ostringstream query;
+        query << "UPDATE " << table << " SET ";
+
+        bool first = true;
+        for (const auto& entry : data) {
+            if (!first) query << ", ";
+            query << entry.first << "='" << entry.second << "'";
+            first = false;
+        }
+
+        if (!where.empty()) {
+            query << " WHERE ";
+            bool firstWhere = true;
+            for (const auto& entry : where) {
+                if (!firstWhere) query << " AND ";
+                query << entry.first << "='" << entry.second << "'";
+                firstWhere = false;
+            }
+        }
+        return query.str();
+    }
+
+private:
+    // Helper to split string by delimiter, trim whitespace from each token
+    static std::vector<std::string> splitAndTrim(const std::string& str, char delimiter) {
+        std::vector<std::string> tokens;
+        std::string token;
+        std::istringstream tokenStream(str);
+        while (std::getline(tokenStream, token, delimiter)) {
+            // trim leading and trailing whitespace
+            size_t start = token.find_first_not_of(" \t\n\r\f\v");
+            size_t end = token.find_last_not_of(" \t\n\r\f\v");
+            if (start != std::string::npos) {
+                tokens.push_back(token.substr(start, end - start + 1));
+            }
+        }
+        return tokens;
+    }
+
+    static std::string trim(const std::string& s) {
+        // simple trim (not fully but okay for now, or use above)
+        size_t start = s.find_first_not_of(" \t\n\r\f\v");
+        size_t end = s.find_last_not_of(" \t\n\r\f\v");
+        if (start == std::string::npos) return "";
+        return s.substr(start, end - start + 1);
+    }
+};
+
+}} // namespace org::example
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <vector>
+#include <map>
+#include <sstream>
+
+namespace org { namespace example {
+
+class SQLQueryBuilder {
+public:
+    // Use std::vector<std::pair<std::string, std::string>> to preserve insertion order (like LinkedHashMap)
+    using StringMap = std::vector<std::pair<std::string, std::string>>;
+
+    static std::string select(const std::string& table, const std::string& columns, const StringMap& where) {
+        std::string cols = columns.empty() ? "*" : columns;
+        // split by ",\\s*" using regex or manual; manual split to avoid regex dependency
+        std::vector<std::string> colArray;
+        size_t start = 0, end;
+        while ((end = cols.find(", ", start)) != std::string::npos) {
+            std::string token = cols.substr(start, end - start);
+            // remove trailing whitespace? The regex ", " matches comma+space. We'll handle by trimming? Simpler: just split by ',' then trim whitespace.
+            // Actually the Java split regex is ",\s*" which means comma followed by zero or more whitespace.
+            // We'll implement similar behavior: split by comma, then trim leading whitespace from each part.
+            token = cols.substr(start, end - start);
+            // trim leading whitespace (but the split will have no leading spaces because we split on comma-space? Not guaranteed.)
+            // Better to split by comma then trim each.
+            colArray.push_back(trim(token));
+            start = end + 2; // skip comma and space? If only comma? Not robust.
+        }
+        // Actually let's do proper split with regex? We'll implement manual split by ',', then trim leading/trailing whitespace.
+        // To keep it simple and avoid regex, we'll do a simple split on ',' and then trim whitespace.
+        colArray = splitAndTrim(cols, ',');
+        return select(table, colArray, where);
+    }
+
+    static std::string select(const std::string& table, const std::vector<std::string>& columns, const StringMap& where) {
+        std::ostringstream query;
+        query << "SELECT ";
+        if (!columns.empty()) {
+            bool first = true;
+            for (const auto& col : columns) {
+                if (!first) query << ", ";
+                query << col;
+                first = false;
+            }
+        } else {
+            query << "*";
+        }
+        query << " FROM " << table;
+
+        if (!where.empty()) {
+            query << " WHERE ";
+            bool first = true;
+            for (const auto& entry : where) {
+                if (!first) query << " AND ";
+                query << entry.first << "='" << entry.second << "'";
+                first = false;
+            }
+        }
+        return query.str();
+    }
+
+    static std::string insert(const std::string& table, const StringMap& data) {
+        std::ostringstream query, values;
+        query << "INSERT INTO " << table << " (";
+        values << " VALUES (";
+
+        bool first = true;
+        for (const auto& entry : data) {
+            if (!first) {
+                query << ", ";
+                values << ", ";
+            }
+            query << entry.first;
+            values << "'" << entry.second << "'";
+            first = false;
+        }
+
+        query << ")";
+        values << ")";
+        return query.str() + values.str();
+    }
+
+    static std::string deleteRecord(const std::string& table, const StringMap& where) {
+        std::ostringstream query;
+        query << "DELETE FROM " << table;
+
+        if (!where.empty()) {
+            query << " WHERE ";
+            bool first = true;
+            for (const auto& entry : where) {
+                if (!first) query << " AND ";
+                query << entry.first << "='" << entry.second << "'";
+                first = false;
+            }
+        }
+        return query.str();
+    }
+
+    static std::string update(const std::string& table, const StringMap& data, const StringMap& where) {
+        std::ostringstream query;
+        query << "UPDATE " << table << " SET ";
+
+        bool first = true;
+        for (const auto& entry : data) {
+            if (!first) query << ", ";
+            query << entry.first << "='" << entry.second << "'";
+            first = false;
+        }
+
+        if (!where.empty()) {
+            query << " WHERE ";
+            bool firstWhere = true;
+            for (const auto& entry : where) {
+                if (!firstWhere) query << " AND ";
+                query << entry.first << "='" << entry.second << "'";
+                firstWhere = false;
+            }
+        }
+        return query.str();
+    }
+
+private:
+    // Helper to split string by delimiter, trim whitespace from each token
+    static std::vector<std::string> splitAndTrim(const std::string& str, char delimiter) {
+        std::vector<std::string> tokens;
+        std::string token;
+        std::istringstream tokenStream(str);
+        while (std::getline(tokenStream, token, delimiter)) {
+            // trim leading and trailing whitespace
+            size_t start = token.find_first_not_of(" \t\n\r\f\v");
+            size_t end = token.find_last_not_of(" \t\n\r\f\v");
+            if (start != std::string::npos) {
+                tokens.push_back(token.substr(start, end - start + 1));
+            }
+        }
+        return tokens;
+    }
+
+    static std::string trim(const std::string& s) {
+        // simple trim (not fully but okay for now, or use above)
+        size_t start = s.find_first_not_of(" \t\n\r\f\v");
+        size_t end = s.find_last_not_of(" \t\n\r\f\v");
+        if (start == std::string::npos) return "";
+        return s.substr(start, end - start + 1);
+    }
+};
+
+}} // namespace org::example

@@ -1,0 +1,311 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+
+public class TriCalculator {
+
+    public TriCalculator() {
+    }
+
+    public double cos(double x) {
+        return round(taylor(x, 50), 10);
+    }
+
+    public BigDecimal factorial(int a) {
+        BigDecimal result = BigDecimal.ONE;
+        while (a > 1) {
+            result = result.multiply(BigDecimal.valueOf(a));
+            a--;
+        }
+        return result;
+    }
+
+    public double taylor(double x, int n) {
+        BigDecimal a = BigDecimal.ONE;
+        x = x / 180 * Math.PI;
+        int count = 1;
+        for (int k = 1; k < n; k++) {
+            BigDecimal term = BigDecimal.valueOf(Math.pow(x, 2 * k))
+                    .divide(factorial(2 * k), MathContext.DECIMAL128);
+            if (count % 2 != 0) {
+                a = a.subtract(term);
+            } else {
+                a = a.add(term);
+            }
+            count++;
+        }
+        return a.doubleValue();
+    }
+
+    public double sin(double x) {
+        x = x / 180 * Math.PI;
+        double g = 0;
+        double t = x;
+        int n = 1;
+
+        while (Math.abs(t) >= 1e-15) {
+            g += t;
+            n += 1;
+            t = -t * x * x / (2 * n - 1) / (2 * n - 2);
+        }
+        return round(g, 10);
+    }
+
+    public Double tan(double x) {
+        double cosValue = cos(x);
+        if (cosValue != 0) {
+            return round(sin(x) / cosValue, 10);
+        } else {
+            return Double.NaN;
+        }
+    }
+
+    private double round(double value, int places) {
+        BigDecimal bd = BigDecimal.valueOf(value);
+        bd = bd.setScale(places, RoundingMode.HALF_UP);
+        return bd.doubleValue();
+    }
+}
+
+
+=== REASONING ===
+<think>
+Let's translate the Java code to C++.
+
+1.  **Package/Imports**: `org.example` package is ignored. `java.math.BigDecimal`, `MathContext`, `RoundingMode` need C++ equivalents. C++ doesn't have a built-in arbitrary precision decimal library exactly like Java's `BigDecimal` in the standard library, but we can use `<boost/multiprecision/cpp_dec_float.hpp>` or implement the exact behavior using standard floating point if precision allows, or we can write a simple arbitrary precision class. Given the constraints "Keep behavior identical", and the use of `MathContext.DECIMAL128` (which is 34 digits of precision), `boost::multiprecision::cpp_dec_float_50` or similar is a good fit. Wait, using Boost might be overkill or unavailable. Let's look at the operations:
+    - `factorial(int a)`: Calculates factorial up to 2*50 = 100. 100! is huge, fits in `cpp_dec_float_50` or `cpp_dec_float_100`.
+    - `taylor(double x, int n)`: Calculates `x^(2k) / (2k)!`. Since `x` is in radians, `Math.pow(x, 2k)` is used. Wait, the Java code computes `BigDecimal.valueOf(Math.pow(x, 2*k))`, which converts a `double` to `BigDecimal`! So it loses precision right there.
+    - `round(double value, int places)`: Sets scale to `places` with `HALF_UP`.
+
+    Actually, since the Java code uses `BigDecimal.valueOf(Math.pow(x, 2*k))`, it's just converting a standard IEEE 754 double to BigDecimal. The division is done with `MathContext.DECIMAL128`, but since the numerator is only double precision, the result is essentially double precision anyway, just with exact rounding on the division. The final result is converted back to `double` via `a.doubleValue()`.
+    Wait, could I just use `double` for everything and emulate the rounding?
+    The division `BigDecimal.valueOf(Math.pow(x, 2 * k)).divide(factorial(2 * k), MathContext.DECIMAL128)` divides a double by a huge factorial. If I use `double`, `Math.pow(x, 2*k) / factorial(2*k)` might lose precision compared to `DECIMAL128` division, but wait, the numerator is a double. The number of significant digits in the numerator is at most 15-17. So dividing it with 34 digits of precision doesn't add any information to the *numerator's* absolute precision, though it avoids underflow to zero that standard double division might suffer from!
+    Wait, `factorial(100)` is ~9.3e157. `Math.pow(x, 100)` for `x = PI` is ~3.1e49. The quotient is ~3.3e-108. Standard `double` minimum positive normal is ~2.2e-308, so it doesn't underflow to zero. Subnormal goes down to 5e-324. So `double` division won't underflow for these values.
+    Is there a difference in rounding? `MathContext.DECIMAL128` does decimal rounding. `double` division does binary rounding. This could cause a 1 ULP difference.
+    To be strictly identical, I should probably use a decimal floating-point library or write a simple one.
+    Alternatively, `std::decimal::decimal128` is in some compilers (GCC), but it's not standard C++.
+    Let's check if we can use `<boost/multiprecision/cpp_dec_float.hpp>`. The prompt says "Use idiomatic C++ only when it doesn't change behavior." If I use standard `double`, the behavior *might* change slightly due to binary vs decimal rounding in `taylor` and `round`.
+    Wait, `round` function uses `BigDecimal.valueOf(value).setScale(places, RoundingMode.HALF_UP)`. This is strictly decimal rounding to 10 decimal places.
+    In C++, we can do decimal rounding to 10 places using `std::round(value * 1e10) / 1e10`. Wait, `std::round` rounds halfway cases away from zero, which is `HALF_UP` for positive numbers, but for negative numbers, `HALF_UP` rounds towards positive infinity (e.g., -2.5 -> -2), whereas `std::round` rounds away from zero (-2.5 -> -3).
+    Let's verify Java's `HALF_UP`:
+    Rounding mode to round towards "nearest neighbor" unless both neighbors are equidistant, in which case round up.
+    Example: 2.5 -> 3, -2.5 -> -2.
+    `std::round` rounds away from zero: 2.5 -> 3, -2.5 -> -3.
+    So `std::round` is not identical to `HALF_UP` for negative numbers.
+    To implement `HALF_UP` rounding to `p` decimal places:
+    ```cpp
+    double round_half_up(double value, int places) {
+        double multiplier = std::pow(10.0, places);
+        double shifted = value * multiplier;
+        double rounded;
+        if (shifted > 0) {
+            rounded = std::floor(shifted + 0.5);
+        } else {
+            rounded = std::ceil(shifted - 0.5);
+        }
+        return rounded / multiplier;
+    }
+    ```
+    Wait, `BigDecimal.valueOf(value).setScale(places, RoundingMode.HALF_UP)` converts the double to its exact decimal representation first, then rounds. A double might not be exactly representable in decimal, e.g., 0.1 is actually 0.1000000000000000055511151231257827021181583404541015625. `BigDecimal.valueOf` uses the exact value of the double.
+    If we use `std::snprintf` with `%.10f` and `HALF_UP`, it's hard.
+    Actually, let's look at the `taylor` function.
+    ```java
+    BigDecimal term = BigDecimal.valueOf(Math.pow(x, 2 * k))
+                    .divide(factorial(2 * k), MathContext.DECIMAL128);
+    ```
+    This converts `Math.pow(x, 2*k)` to a `BigDecimal` (exact representation of the double), then divides by the factorial using `DECIMAL128` (34 decimal digits precision, rounding `HALF_UP`).
+    To perfectly replicate this, we would need a decimal type.
+    Since this is a programming challenge, maybe standard `double` is close enough, but the prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)".
+    Let's consider implementing a minimal `BigDecimal` or using a string conversion trick.
+    Wait, is there a simpler way?
+    If I use `long double`, it has around 18-19 decimal digits of precision on x86. `DECIMAL128` has 34.
+    If I just use `double`, the division `Math.pow(x, 2*k) / factorial(2*k)` will be evaluated in `double` precision.
+    Let's trace `taylor(60.0, 50)`:
+    `x = 60.0 / 180 * PI = PI / 3 = 1.0471975511965976`
+    `k=1`: `Math.pow(x, 2) = 1.0966...`
+    `factorial(2) = 2`
+    `term = 0.5483...`
+    If I use `double` for `factorial` and `term`, the result will be very close to `BigDecimal` because the numerator only has 53 bits of precision. Dividing a 53-bit number by an exact integer using 113 bits (DECIMAL128) vs 53 bits (double) will yield a difference only if the 53-bit division loses precision in the lower bits. Since the quotient is also around 53 bits, the difference will be at most 1-2 ULPs.
+    The `round` function rounds to 10 decimal places. 1 ULP at 1.0 is 2.2e-16, which is much smaller than 1e-10. So the final rounded result will almost certainly be identical whether we use `double` or `DECIMAL128` for the intermediate division!
+    Wait, what about `factorial`? 100! is 9.3e157. A `double` can hold up to 1.7e308, so it doesn't overflow. The precision of a `double` for 100! is about 15-17 decimal digits.
+    If we compute `Math.pow(x, 2*k) / factorial(2*k)` in `double`, `factorial(2*k)` is rounded to the nearest `double`. Then the division is done in `double`.
+    In Java, `factorial` returns an exact `BigDecimal` (up to 158 digits). Then the double `Math.pow(x, 2*k)` is divided by this exact `BigDecimal` with 34 decimal digits of precision.
+    Will this difference in the division cause a difference in the 10th decimal place of the final sum?
+    Let's check the maximum possible error. The error in `factorial` is at most 0.5 ULP, which is relative error of ~1e-16. The error in division is ~1e-16. Summing 50 terms, the error is bounded by ~50 * 1e-16 = 5e-15. This is much smaller than 5e-11 (half of 1e-10). Therefore, rounding to 10 decimal places will yield the EXACT SAME result as the Java code in virtually all cases, except maybe extremely close to a tie-breaking boundary (where the 10th decimal place is exactly .5 and subsequent digits are 0). But since the true mathematical value is irrational, ties are practically impossible.
+    So, using `double` for everything should produce identical outputs for all practical inputs.
+
+    Wait, what about `round`?
+    Java's `round` function:
+    ```java
+    private double round(double value, int places) {
+        BigDecimal bd = BigDecimal.valueOf(value);
+        bd = bd.setScale(places, RoundingMode.HALF_UP);
+        return bd.doubleValue();
+    }
+    ```
+    If I implement `round` using `std::round(value * 1e10) / 1e10`, there are two issues:
+    1. `std::round` rounds away from zero, while `HALF_UP` rounds towards positive infinity for negative ties.
+    2. `value * 1e10` might have floating point representation issues. For example, 0.15 * 1e10 might be 1499999999.999..., which `std::floor(val + 0.5)` would round to 1500000000. Wait, `0.15` in binary is `0.001001100110011...`. `0.15 * 1e10` is exactly `1500000000.0`. What about `0.05`? `0.05 * 1e10` is `500000000.0`.
+    Actually, `BigDecimal.valueOf(value)` uses the exact decimal representation of the double's value. For example, if `value` is `0.1000000000000000055511151231257827021181583404541015625`, `BigDecimal.valueOf` uses exactly this. Then `setScale` rounds this exact value.
+    If we just use `std::stringstream` or `std::snprintf` to format to 10 decimal places, it uses the round-half-to-even rule (banker's rounding), not `HALF_UP`.
+
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <cmath>
+#include <limits>
+
+class TriCalculator {
+public:
+    TriCalculator() {}
+
+    double cos(double x) {
+        return round(taylor(x, 50), 10);
+    }
+
+    double factorial(int a) {
+        double result = 1.0;
+        while (a > 1) {
+            result *= a;
+            a--;
+        }
+        return result;
+    }
+
+    double taylor(double x, int n) {
+        double a = 1.0;
+        x = x / 180.0 * M_PI;
+        int count = 1;
+        for (int k = 1; k < n; k++) {
+            double term = std::pow(x, 2 * k) / factorial(2 * k);
+            if (count % 2 != 0) {
+                a = a - term;
+            } else {
+                a = a + term;
+            }
+            count++;
+        }
+        return a;
+    }
+
+    double sin(double x) {
+        x = x / 180.0 * M_PI;
+        double g = 0;
+        double t = x;
+        int n = 1;
+
+        while (std::abs(t) >= 1e-15) {
+            g += t;
+            n += 1;
+            t = -t * x * x / (2 * n - 1) / (2 * n - 2);
+        }
+        return round(g, 10);
+    }
+
+    double tan(double x) {
+        double cosValue = cos(x);
+        if (cosValue != 0) {
+            return round(sin(x) / cosValue, 10);
+        } else {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+    }
+
+private:
+    double round(double value, int places) {
+        double shift = std::pow(10.0, places);
+        double shifted = value * shift;
+        double int_part;
+        double frac_part = std::modf(shifted, &int_part);
+        
+        if (frac_part > 0.5 || frac_part == 0.5) {
+            int_part += 1.0;
+        } else if (frac_part < -0.5) {
+            int_part -= 1.0;
+        }
+        
+        return int_part / shift;
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <cmath>
+#include <limits>
+
+class TriCalculator {
+public:
+    TriCalculator() {}
+
+    double cos(double x) {
+        return round(taylor(x, 50), 10);
+    }
+
+    double factorial(int a) {
+        double result = 1.0;
+        while (a > 1) {
+            result *= a;
+            a--;
+        }
+        return result;
+    }
+
+    double taylor(double x, int n) {
+        double a = 1.0;
+        x = x / 180.0 * M_PI;
+        int count = 1;
+        for (int k = 1; k < n; k++) {
+            double term = std::pow(x, 2 * k) / factorial(2 * k);
+            if (count % 2 != 0) {
+                a = a - term;
+            } else {
+                a = a + term;
+            }
+            count++;
+        }
+        return a;
+    }
+
+    double sin(double x) {
+        x = x / 180.0 * M_PI;
+        double g = 0;
+        double t = x;
+        int n = 1;
+
+        while (std::abs(t) >= 1e-15) {
+            g += t;
+            n += 1;
+            t = -t * x * x / (2 * n - 1) / (2 * n - 2);
+        }
+        return round(g, 10);
+    }
+
+    double tan(double x) {
+        double cosValue = cos(x);
+        if (cosValue != 0) {
+            return round(sin(x) / cosValue, 10);
+        } else {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+    }
+
+private:
+    double round(double value, int places) {
+        double shift = std::pow(10.0, places);
+        double shifted = value * shift;
+        double int_part;
+        double frac_part = std::modf(shifted, &int_part);
+        
+        if (frac_part > 0.5 || frac_part == 0.5) {
+            int_part += 1.0;
+        } else if (frac_part < -0.5) {
+            int_part -= 1.0;
+        }
+        
+        return int_part / shift;
+    }
+};

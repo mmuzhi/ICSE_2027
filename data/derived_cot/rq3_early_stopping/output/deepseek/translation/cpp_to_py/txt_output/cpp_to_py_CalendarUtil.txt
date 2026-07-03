@@ -1,0 +1,322 @@
+=== SOURCE CODE (cpp) ===
+
+#include <ctime>
+#include <vector>
+#include <utility>
+#include <iostream>
+#include <iomanip>
+
+#include <chrono>
+#include <string>
+#include <vector>
+#include <map>
+
+class CalendarUtil {
+public:
+    struct Event {
+        std::chrono::system_clock::time_point date;
+        std::chrono::system_clock::time_point start_time;
+        std::chrono::system_clock::time_point end_time;
+        std::string description;
+
+        bool operator==(const Event& other) const {
+            return date == other.date &&
+                start_time == other.start_time &&
+                end_time == other.end_time &&
+                description == other.description;
+        }
+    };
+
+    void add_event(const Event& event);
+    void remove_event(const Event& event);
+    std::vector<Event> get_events(const std::chrono::system_clock::time_point& date);
+    bool is_available(const std::chrono::system_clock::time_point& start_time,
+        const std::chrono::system_clock::time_point& end_time);
+    std::vector<std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>> get_available_slots(const std::chrono::system_clock::time_point& date);
+    std::vector<Event> get_upcoming_events(size_t num_events);
+    std::vector<Event> events;
+};
+
+std::chrono::system_clock::time_point time_from_timestamp(time_t timestamp);
+
+void CalendarUtil::add_event(const Event& event) {
+    events.push_back(event);
+}
+
+void CalendarUtil::remove_event(const Event& event) {
+    auto it = std::find(events.begin(), events.end(), event);
+    if (it != events.end()) {
+        events.erase(it);
+    }
+}
+
+std::vector<CalendarUtil::Event> CalendarUtil::get_events(const std::chrono::system_clock::time_point& date) {
+    std::vector<Event> events_on_date;
+    auto date_tm = std::chrono::system_clock::to_time_t(date);
+    std::tm date_tm_struct;
+    localtime_s(&date_tm_struct, &date_tm);
+    for (const auto& event : events) {
+        auto event_date_tm = std::chrono::system_clock::to_time_t(event.date);
+        std::tm event_date_tm_struct;
+        localtime_s(&event_date_tm_struct, &event_date_tm);
+        if (date_tm_struct.tm_year == event_date_tm_struct.tm_year &&
+            date_tm_struct.tm_mon == event_date_tm_struct.tm_mon &&
+            date_tm_struct.tm_mday == event_date_tm_struct.tm_mday) {
+            events_on_date.push_back(event);
+        }
+    }
+    return events_on_date;
+}
+
+bool CalendarUtil::is_available(const std::chrono::system_clock::time_point& start_time,
+    const std::chrono::system_clock::time_point& end_time) {
+    for (const auto& event : events) {
+        if (start_time < event.end_time && end_time > event.start_time) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>> CalendarUtil::get_available_slots(const std::chrono::system_clock::time_point& date) {
+    std::vector<std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>> available_slots;
+    auto start_time = date;
+    auto end_time = date + std::chrono::hours(24) - std::chrono::seconds(1);
+
+    while (start_time < end_time) {
+        auto slot_end_time = start_time + std::chrono::hours(1);
+        if (is_available(start_time, slot_end_time)) {
+            available_slots.emplace_back(start_time, slot_end_time);
+        }
+        start_time = slot_end_time;
+    }
+
+    return available_slots;
+}
+
+std::vector<CalendarUtil::Event> CalendarUtil::get_upcoming_events(size_t num_events) {
+    auto now = std::chrono::system_clock::now();
+    std::vector<Event> upcoming_events;
+    for (const auto& event : events) {
+        if (event.start_time >= now) {
+            upcoming_events.push_back(event);
+            if (upcoming_events.size() == num_events) {
+                break;
+            }
+        }
+    }
+    return upcoming_events;
+}
+
+std::chrono::system_clock::time_point time_from_timestamp(time_t timestamp) {
+    std::tm tm;
+    localtime_s(&tm, &timestamp);
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+}
+
+
+=== REASONING ===
+<think>
+We need to translate the given C++ code to Python. The code defines a CalendarUtil class with an Event struct (nested), methods for adding/removing/getting events, checking availability, getting available slots, and getting upcoming events. It uses std::chrono for time points and durations, and <ctime> for converting to/from time_t. In Python, we'll use datetime module for similar functionality.
+
+Key points:
+- Event struct: fields date, start_time, end_time, description. They are all time points. In Python, we can use datetime.datetime.
+- Equality operator: compares all fields.
+- add_event: simply append to list.
+- remove_event: find by equality and remove (first occurrence). In Python, we can remove by value using list.remove, which raises ValueError if not found. But C++ code uses std::find and erase if found, so no error if not found. We need to replicate exactly: if event exists, remove it; else do nothing. So we should check existence before removing.
+- get_events(date): returns events whose date (day-level) matches the given date (ignoring time part). In C++, it compares year, month, day after converting to local time. In Python, we can compare date() of datetime objects.
+- is_available(start, end): checks if any event overlaps with [start,end). Overlap condition: start < event.end_time && end > event.start_time. In Python, same logic.
+- get_available_slots(date): returns list of (start, end) pairs for each hour slot from date to date+24h-1s, if slot is available. The slot is 1 hour long. Uses is_available.
+- get_upcoming_events(num_events): returns first num_events events whose start_time >= now. In C++, it iterates through events in order (as stored) and breaks when num_events reached. Python: iterate and collect.
+- time_from_timestamp(timestamp): converts time_t to time_point using localtime. In Python, we can use datetime.fromtimestamp.
+
+Edge cases:
+- localtime_s is Microsoft-specific, but the C++ code uses it. In translation, we'll use Python's datetime methods that inherently use local time.
+- The C++ code uses std::chrono::system_clock::time_point. In Python, we'll use datetime.datetime objects but representing absolute time (naive? or aware?). For simplicity and consistency with typical usage, we'll use naive datetime objects but we must be careful about timezone. The C++ code uses local time for comparisons. We'll assume the input and output are in local time. In Python, we can use datetime.datetime without tzinfo, treated as local time. However, careful: datetime.fromtimestamp(timestamp) returns local time. For equality and comparisons, we'll treat them as local time. The behavior should match.
+
+- get_events: compares year, month, day of the date field. In Python, we can compare event.date.date() == date.date().
+- get_available_slots: creates slots from date to date+24h-1s, each 1 hour. In Python, we can use timedelta.
+- remove_event: need to check if event exists, else ignore. Use a try-except ValueError? Or use list comprehension? But need to remove first occurrence only. list.remove does that. We'll catch ValueError.
+
+- get_upcoming_events: break after collecting num_events. Do not sort; just filter in order.
+
+Implementation details:
+- Use from datetime import datetime, timedelta, date, time
+- CalendarUtil class with events list, methods as described.
+
+We'll replicate exactly method signatures and behavior.
+
+Potential pitfalls:
+- C++ uses std::pair for slots. Python tuple is fine.
+- The equality operator for Event is needed for remove_event. In Python, we can define __eq__ method in Event class. But Event is a nested class or we can use a namedtuple or dataclass. Since C++ struct is used with value semantics, we can use a simple class with __init__ and __eq__. Or use dataclass for convenience. Let's use a dataclass for Event (Python 3.7+). But to keep it similar and allow mutable fields? In C++ it's a struct with public fields. We can use a simple class with __slots__ or just a dataclass with frozen=False (default) and mutable fields. We'll define __eq__ and __hash__? C++ doesn't define hash, only equality. So we can define __eq__ but not __hash__ (or set to None if we want to use in sets, but not needed). For list.remove, it uses equality. So __eq__ is enough.
+
+But careful: In C++, operator== is defined for Event. In Python, we can override __eq__. If we use dataclass, it auto-generates __eq__ based on fields. That works. We'll also need to ensure the fields are comparable (datetime objects).
+
+We'll also need to import typing for List, Tuple, Optional. But not strictly necessary.
+
+Let's write the translation.
+
+Also, note: C++ uses localtime_s for thread safety. Not a concern for Python.
+
+We'll write a direct translation.
+
+Make sure to handle the time_from_timestamp function as a standalone function, not a method.
+
+Let's produce the final answer.
+</think>
+
+=== RAW ANSWER ===
+```python
+from datetime import datetime, timedelta, date, time
+from typing import List, Tuple
+import sys
+
+class CalendarUtil:
+    class Event:
+        def __init__(self, date_time: datetime, start_time: datetime, end_time: datetime, description: str):
+            self.date = date_time
+            self.start_time = start_time
+            self.end_time = end_time
+            self.description = description
+
+        def __eq__(self, other):
+            if not isinstance(other, CalendarUtil.Event):
+                return NotImplemented
+            return (self.date == other.date and
+                    self.start_time == other.start_time and
+                    self.end_time == other.end_time and
+                    self.description == other.description)
+
+        def __repr__(self):
+            return f"Event(date={self.date}, start={self.start_time}, end={self.end_time}, desc={self.description})"
+
+    def __init__(self):
+        self.events: List[CalendarUtil.Event] = []
+
+    def add_event(self, event: Event) -> None:
+        self.events.append(event)
+
+    def remove_event(self, event: Event) -> None:
+        try:
+            self.events.remove(event)
+        except ValueError:
+            pass  # event not found, do nothing (matching C++ behavior)
+
+    def get_events(self, date: datetime) -> List[Event]:
+        events_on_date = []
+        # Compare only year, month, day (local time assumed, same as C++ localtime_s)
+        for ev in self.events:
+            if (ev.date.year == date.year and
+                ev.date.month == date.month and
+                ev.date.day == date.day):
+                events_on_date.append(ev)
+        return events_on_date
+
+    def is_available(self, start_time: datetime, end_time: datetime) -> bool:
+        for ev in self.events:
+            if start_time < ev.end_time and end_time > ev.start_time:
+                return False
+        return True
+
+    def get_available_slots(self, date: datetime) -> List[Tuple[datetime, datetime]]:
+        # slots from date to date+24h-1s, each 1 hour long
+        slots = []
+        slot_start = date
+        day_end = date + timedelta(hours=24) - timedelta(seconds=1)
+        while slot_start < day_end:
+            slot_end = slot_start + timedelta(hours=1)
+            if self.is_available(slot_start, slot_end):
+                slots.append((slot_start, slot_end))
+            slot_start = slot_end
+        return slots
+
+    def get_upcoming_events(self, num_events: int) -> List[Event]:
+        now = datetime.now()  # local time
+        upcoming = []
+        for ev in self.events:
+            if ev.start_time >= now:
+                upcoming.append(ev)
+                if len(upcoming) == num_events:
+                    break
+        return upcoming
+
+def time_from_timestamp(timestamp: int) -> datetime:
+    # Convert a time_t (seconds since epoch) to a local datetime
+    return datetime.fromtimestamp(timestamp)
+
+```
+
+=== TRANSLATED CODE (py) ===
+from datetime import datetime, timedelta, date, time
+from typing import List, Tuple
+import sys
+
+class CalendarUtil:
+    class Event:
+        def __init__(self, date_time: datetime, start_time: datetime, end_time: datetime, description: str):
+            self.date = date_time
+            self.start_time = start_time
+            self.end_time = end_time
+            self.description = description
+
+        def __eq__(self, other):
+            if not isinstance(other, CalendarUtil.Event):
+                return NotImplemented
+            return (self.date == other.date and
+                    self.start_time == other.start_time and
+                    self.end_time == other.end_time and
+                    self.description == other.description)
+
+        def __repr__(self):
+            return f"Event(date={self.date}, start={self.start_time}, end={self.end_time}, desc={self.description})"
+
+    def __init__(self):
+        self.events: List[CalendarUtil.Event] = []
+
+    def add_event(self, event: Event) -> None:
+        self.events.append(event)
+
+    def remove_event(self, event: Event) -> None:
+        try:
+            self.events.remove(event)
+        except ValueError:
+            pass  # event not found, do nothing (matching C++ behavior)
+
+    def get_events(self, date: datetime) -> List[Event]:
+        events_on_date = []
+        for ev in self.events:
+            if (ev.date.year == date.year and
+                ev.date.month == date.month and
+                ev.date.day == date.day):
+                events_on_date.append(ev)
+        return events_on_date
+
+    def is_available(self, start_time: datetime, end_time: datetime) -> bool:
+        for ev in self.events:
+            if start_time < ev.end_time and end_time > ev.start_time:
+                return False
+        return True
+
+    def get_available_slots(self, date: datetime) -> List[Tuple[datetime, datetime]]:
+        slots = []
+        slot_start = date
+        day_end = date + timedelta(hours=24) - timedelta(seconds=1)
+        while slot_start < day_end:
+            slot_end = slot_start + timedelta(hours=1)
+            if self.is_available(slot_start, slot_end):
+                slots.append((slot_start, slot_end))
+            slot_start = slot_end
+        return slots
+
+    def get_upcoming_events(self, num_events: int) -> List[Event]:
+        now = datetime.now()  # local time
+        upcoming = []
+        for ev in self.events:
+            if ev.start_time >= now:
+                upcoming.append(ev)
+                if len(upcoming) == num_events:
+                    break
+        return upcoming
+
+def time_from_timestamp(timestamp: int) -> datetime:
+    return datetime.fromtimestamp(timestamp)

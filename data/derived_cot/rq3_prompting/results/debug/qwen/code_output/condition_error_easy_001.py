@@ -1,0 +1,8 @@
+class Solution:
+    def thirdMax(self, nums: List[int]) -> int:
+        distinct_nums = sorted(set(nums), reverse=True)
+        n = len(distinct_nums)
+        if n < 3:
+            return distinct_nums[0]
+        else:
+            return distinct_nums[2]

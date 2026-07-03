@@ -1,0 +1,260 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.sql.*;
+import java.util.*;
+
+public class DatabaseProcessor {
+    private String databaseName;
+
+    static {
+        try {
+            Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public DatabaseProcessor(String databaseName) {
+        this.databaseName = databaseName;
+    }
+
+    public void createTable(String tableName, String key1, String key2) {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + databaseName);
+             Statement stmt = conn.createStatement()) {
+            String createTableQuery = String.format(
+                    "CREATE TABLE IF NOT EXISTS %s (id INTEGER PRIMARY KEY, %s TEXT, %s INTEGER)",
+                    tableName, key1, key2);
+            stmt.execute(createTableQuery);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void insertIntoDatabase(String tableName, List<Map<String, Object>> data) {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + databaseName);
+             Statement stmt = conn.createStatement()) {
+            for (Map<String, Object> item : data) {
+                String insertQuery = String.format(
+                        "INSERT INTO %s (name, age) VALUES ('%s', %d)",
+                        tableName, item.get("name"), (int) item.get("age"));
+                stmt.execute(insertQuery);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public List<Map<String, Object>> searchDatabase(String tableName, String name) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + databaseName);
+             Statement stmt = conn.createStatement()) {
+            String selectQuery = String.format("SELECT * FROM %s WHERE name = '%s'", tableName, name);
+            ResultSet rs = stmt.executeQuery(selectQuery);
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                row.put("id", rs.getInt("id"));
+                row.put("name", rs.getString("name"));
+                row.put("age", rs.getInt("age"));
+                result.add(row);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return result.isEmpty() ? null : result;
+    }
+
+    public void deleteFromDatabase(String tableName, String name) {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + databaseName);
+             Statement stmt = conn.createStatement()) {
+            String deleteQuery = String.format("DELETE FROM %s WHERE name = '%s'", tableName, name);
+            stmt.execute(deleteQuery);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++. The Java code uses SQLite via JDBC. In C++, we can use SQLite's C API directly, or a C++ wrapper like SQLiteCpp. Since the instruction says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)", and "Use idiomatic C++ only when it doesn't change behavior". For simplicity and to avoid external dependencies beyond SQLite, we can use the SQLite3 C API (libsqlite3). We'll need to map the class structure, static initializer (loading driver) is not needed in C++ as SQLite is a library. DatabaseProcessor class: constructor takes databaseName, creates connection each time? Java code uses try-with-resources to get connection per method. In C++, we'll do similar: open and close connection per method. We'll also need to handle exceptions (SQLite errors) by printing and potentially rethrowing? Java catches and prints stack trace, doesn't rethrow. So we'll print errors and continue. Return types: createTable void, insertIntoDatabase void, searchDatabase returns List<Map<String,Object>> or null if empty. In C++, we can use std::vector<std::map<std::string, std::variant<int, std::string>>> or similar. But to keep simple and idiomatic, we could return std::vector<std::map<std::string, std::string>>? But Java uses Object for values (int, String). We'll need to handle types. Since Java code casts age to int, we can store as int. We can use a struct or a map with variant. Or simply return vector of pair? But to match behavior, we need a list of maps.
+</think>
+
+=== RAW ANSWER ===
+```
+#include <sqlite3.h>
+#include <string>
+#include <vector>
+#include <map>
+#include <variant>
+#include <iostream>
+#include <sstream>
+
+class DatabaseProcessor {
+private:
+    std::string databaseName;
+
+public:
+    DatabaseProcessor(const std::string& databaseName) : databaseName(databaseName) {}
+
+    void createTable(const std::string& tableName, const std::string& key1, const std::string& key2) {
+        sqlite3* db;
+        sqlite3_open(databaseName.c_str(), &db);
+        std::string query = "CREATE TABLE IF NOT EXISTS " + tableName +
+                            " (id INTEGER PRIMARY KEY, " + key1 + " TEXT, " + key2 + " INTEGER);";
+        char* errMsg = nullptr;
+        sqlite3_exec(db, query.c_str(), nullptr, nullptr, &errMsg);
+        if (errMsg) {
+            std::cerr << "SQL error: " << errMsg << std::endl;
+            sqlite3_free(errMsg);
+        }
+        sqlite3_close(db);
+    }
+
+    void insertIntoDatabase(const std::string& tableName, const std::vector<std::map<std::string, std::variant<int, std::string>>>& data) {
+        sqlite3* db;
+        sqlite3_open(databaseName.c_str(), &db);
+        for (const auto& item : data) {
+            std::string name = std::get<std::string>(item.at("name"));
+            int age = std::get<int>(item.at("age"));
+            std::string query = "INSERT INTO " + tableName + " (name, age) VALUES ('" + name + "', " + std::to_string(age) + ");";
+            char* errMsg = nullptr;
+            sqlite3_exec(db, query.c_str(), nullptr, nullptr, &errMsg);
+            if (errMsg) {
+                std::cerr << "SQL error: " << errMsg << std::endl;
+                sqlite3_free(errMsg);
+            }
+        }
+        sqlite3_close(db);
+    }
+
+    std::vector<std::map<std::string, std::variant<int, std::string>>>* searchDatabase(const std::string& tableName, const std::string& name) {
+        sqlite3* db;
+        sqlite3_open(databaseName.c_str(), &db);
+        std::string query = "SELECT * FROM " + tableName + " WHERE name = '" + name + "';";
+        sqlite3_stmt* stmt;
+        if (sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            std::cerr << "SQL error: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_close(db);
+            return nullptr;
+        }
+        auto* result = new std::vector<std::map<std::string, std::variant<int, std::string>>>();
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            std::map<std::string, std::variant<int, std::string>> row;
+            row["id"] = sqlite3_column_int(stmt, 0);
+            row["name"] = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+            row["age"] = sqlite3_column_int(stmt, 2);
+            result->push_back(row);
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        if (result->empty()) {
+            delete result;
+            return nullptr;
+        }
+        return result;
+    }
+
+    void deleteFromDatabase(const std::string& tableName, const std::string& name) {
+        sqlite3* db;
+        sqlite3_open(databaseName.c_str(), &db);
+        std::string query = "DELETE FROM " + tableName + " WHERE name = '" + name + "';";
+        char* errMsg = nullptr;
+        sqlite3_exec(db, query.c_str(), nullptr, nullptr, &errMsg);
+        if (errMsg) {
+            std::cerr << "SQL error: " << errMsg << std::endl;
+            sqlite3_free(errMsg);
+        }
+        sqlite3_close(db);
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <sqlite3.h>
+#include <string>
+#include <vector>
+#include <map>
+#include <variant>
+#include <iostream>
+#include <sstream>
+
+class DatabaseProcessor {
+private:
+    std::string databaseName;
+
+public:
+    DatabaseProcessor(const std::string& databaseName) : databaseName(databaseName) {}
+
+    void createTable(const std::string& tableName, const std::string& key1, const std::string& key2) {
+        sqlite3* db;
+        sqlite3_open(databaseName.c_str(), &db);
+        std::string query = "CREATE TABLE IF NOT EXISTS " + tableName +
+                            " (id INTEGER PRIMARY KEY, " + key1 + " TEXT, " + key2 + " INTEGER);";
+        char* errMsg = nullptr;
+        sqlite3_exec(db, query.c_str(), nullptr, nullptr, &errMsg);
+        if (errMsg) {
+            std::cerr << "SQL error: " << errMsg << std::endl;
+            sqlite3_free(errMsg);
+        }
+        sqlite3_close(db);
+    }
+
+    void insertIntoDatabase(const std::string& tableName, const std::vector<std::map<std::string, std::variant<int, std::string>>>& data) {
+        sqlite3* db;
+        sqlite3_open(databaseName.c_str(), &db);
+        for (const auto& item : data) {
+            std::string name = std::get<std::string>(item.at("name"));
+            int age = std::get<int>(item.at("age"));
+            std::string query = "INSERT INTO " + tableName + " (name, age) VALUES ('" + name + "', " + std::to_string(age) + ");";
+            char* errMsg = nullptr;
+            sqlite3_exec(db, query.c_str(), nullptr, nullptr, &errMsg);
+            if (errMsg) {
+                std::cerr << "SQL error: " << errMsg << std::endl;
+                sqlite3_free(errMsg);
+            }
+        }
+        sqlite3_close(db);
+    }
+
+    std::vector<std::map<std::string, std::variant<int, std::string>>>* searchDatabase(const std::string& tableName, const std::string& name) {
+        sqlite3* db;
+        sqlite3_open(databaseName.c_str(), &db);
+        std::string query = "SELECT * FROM " + tableName + " WHERE name = '" + name + "';";
+        sqlite3_stmt* stmt;
+        if (sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            std::cerr << "SQL error: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_close(db);
+            return nullptr;
+        }
+        auto* result = new std::vector<std::map<std::string, std::variant<int, std::string>>>();
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            std::map<std::string, std::variant<int, std::string>> row;
+            row["id"] = sqlite3_column_int(stmt, 0);
+            row["name"] = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+            row["age"] = sqlite3_column_int(stmt, 2);
+            result->push_back(row);
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        if (result->empty()) {
+            delete result;
+            return nullptr;
+        }
+        return result;
+    }
+
+    void deleteFromDatabase(const std::string& tableName, const std::string& name) {
+        sqlite3* db;
+        sqlite3_open(databaseName.c_str(), &db);
+        std::string query = "DELETE FROM " + tableName + " WHERE name = '" + name + "';";
+        char* errMsg = nullptr;
+        sqlite3_exec(db, query.c_str(), nullptr, nullptr, &errMsg);
+        if (errMsg) {
+            std::cerr << "SQL error: " << errMsg << std::endl;
+            sqlite3_free(errMsg);
+        }
+        sqlite3_close(db);
+    }
+};

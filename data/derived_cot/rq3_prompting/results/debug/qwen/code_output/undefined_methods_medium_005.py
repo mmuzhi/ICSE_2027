@@ -1,0 +1,1 @@
+ans = e + 1 if curr > 0 else max(ans, e - D.get(curr - 1, e))

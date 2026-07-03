@@ -1,0 +1,696 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+
+class EmailClient {
+    private String addr;
+    private double capacity;
+    private List<Map<String, Object>> inbox;
+
+    public EmailClient(String addr, double capacity) {
+        this.addr = addr;
+        this.capacity = capacity;
+        this.inbox = new ArrayList<>();
+    }
+
+    public boolean sendTo(EmailClient recv, String content, double size) {
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            Map<String, Object> email = new HashMap<>();
+            email.put("sender", this.addr);
+            email.put("receiver", recv.addr);
+            email.put("content", content);
+            email.put("size", size);
+            email.put("time", timestamp);
+            email.put("state", "unread");
+            recv.inbox.add(email);
+            return true;
+        }
+        else {
+            this.clearInbox(size);
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size); // Retry sending after clearing
+        }
+    }
+
+    public Map<String, Object> fetch() {
+        if (this.inbox.isEmpty()) {
+            return null;
+        }
+        for (Map<String, Object> email : this.inbox) {
+            if ("unread".equals(email.get("state"))) {
+                email.put("state", "read");
+                return email;
+            }
+        }
+        return null;
+    }
+
+    public boolean isFullWithOneMoreEmail(double size) {
+        double occupiedSize = this.getOccupiedSize();
+        return occupiedSize + size > this.capacity;
+    }
+
+    public double getOccupiedSize() {
+        double occupiedSize = 0;
+        for (Map<String, Object> email : this.inbox) {
+            Object sizeObj = email.get("size");
+            if (sizeObj instanceof Number) {
+                occupiedSize += ((Number) sizeObj).doubleValue();
+            }
+        }
+        return occupiedSize;
+    }
+
+    public void clearInbox(double size) {
+        if (this.addr.isEmpty()) {
+            return;
+        }
+        double freedSpace = 0;
+        while (freedSpace < size && !this.inbox.isEmpty()) {
+            Map<String, Object> email = this.inbox.remove(0);
+            Object sizeObj = email.get("size");
+            if (sizeObj instanceof Number) {
+                freedSpace += ((Number) sizeObj).doubleValue();
+            }
+        }
+    }
+
+    public List<Map<String, Object>> getInbox() {
+        return this.inbox;
+    }
+
+    public void setInbox(List<Map<String, Object>> inbox) {
+        this.inbox = inbox;
+    }
+}
+
+
+=== REASONING ===
+<think>
+1.  **Understand the Goal**: The objective is to translate a Java class (`EmailClient`) into C++, maintaining identical behavior, side effects, edge cases, and exceptions, using idiomatic C++ where it doesn't alter behavior.
+
+2.  **Analyze the Java Code**:
+    *   **Class Name**: `EmailClient` (in `org.example` package, which translates to namespaces in C++, but usually for simple translations, a class or namespace is fine. I'll omit the namespace unless strictly necessary, but maybe add `namespace org { namespace example { ... } }` or just the class). Let's stick to a simple class or `org::example::EmailClient`. I'll use `org::example::EmailClient` to match the package.
+    *   **Fields**:
+        *   `String addr;` -> `std::string addr;`
+        *   `double capacity;` -> `double capacity;`
+        *   `List<Map<String, Object>> inbox;` -> `std::vector<std::map<std::string, std::any>> inbox;` or `std::vector<std::unordered_map<std::string, std::any>> inbox;`. Since Java `HashMap` is unordered, `std::unordered_map` is closer, but `std::map` is often more idiomatic in C++ unless hash performance is specifically needed. Let's use `std::unordered_map` to match `HashMap`. Wait, `std::any` is C++17. Let's use C++17.
+    *   **Constructor**: Initializes `addr`, `capacity`, and `inbox` (empty list).
+    *   **Method `sendTo`**:
+        *   Takes `EmailClient& recv`, `std::string content`, `double size`.
+        *   Checks `recv.isFullWithOneMoreEmail(size)`.
+        *   If not full, gets current timestamp ("yyyy-MM-dd HH:mm:ss"), creates a map, puts sender, receiver, content, size, time, state ("unread"), adds to `recv.inbox`, returns `true`.
+        *   If full, calls `this->clearInbox(size)`. Wait, the Java code says `this.clearInbox(size)`. This clears the *sender's* inbox, not the receiver's! Let me double-check the Java code. Yes, `this.clearInbox(size)`. That's an interesting bug/feature in the original Java code. I must replicate it exactly.
+        *   After clearing, checks `recv.isFullWithOneMoreEmail(size)`. If still full, returns `false`.
+        *   If not full, recursively calls `sendTo(recv, content, size)`.
+    *   **Method `fetch`**:
+        *   If `inbox` is empty, returns `null` (which in C++ translates to `std::optional` or returning a pointer. Since we need to return a map, returning `std::optional<std::unordered_map<std::string, std::any>>` or a pointer. But wait, the Java method modifies the map *in the list* and returns a *reference* to it. In C++, returning an optional by value would return a copy, not a reference to the modified map. However, Java returns a reference to the map. If we want to perfectly match, we could return a pointer `std::unordered_map<std::string, std::any>*`, which can be `nullptr`. Let's use `std::unordered_map<std::string, std::any>*` to perfectly match the null return and reference semantics, or `std::optional<std::reference_wrapper<...>>`. Let's go with pointer for simplicity and exact null semantics, or `std::any*`? No, it returns `Map<String, Object>`. Let's use `std::unordered_map<std::string, std::any>*`.
+    *   **Method `isFullWithOneMoreEmail`**:
+        *   Returns `occupiedSize + size > capacity`.
+    *   **Method `getOccupiedSize`**:
+        *   Sums up `size` from all emails. `sizeObj instanceof Number` -> in C++, we can use `std::any_cast<double>` and catch `std::bad_any_cast`, or check `type()`. Since we control what goes into the map, we know `size` is a `double`. But to strictly match `instanceof Number`, we'd have to check `sizeObj.type() == typeid(double)` or `typeid(int)` etc. Since `sendTo` puts a `double` in, `std::any_cast<double>` will work. Let's just use `std::any_cast<double>`.
+    *   **Method `clearInbox`**:
+        *   If `addr` is empty, return.
+        *   While `freedSpace < size` and `!inbox.isEmpty()`, removes the first element (`inbox.remove(0)`) and adds its size to `freedSpace`. In C++, `inbox.erase(inbox.begin())`.
+    *   **Method `getInbox`**:
+        *   Returns the list. In C++, we can return a reference `std::vector<...>&`.
+    *   **Method `setInbox`**:
+        *   Sets the inbox.
+
+3.  **Refining Data Structures**:
+    *   `Map<String, Object>` -> `std::unordered_map<std::string, std::any>`.
+    *   `List<Map<String, Object>>` -> `std::vector<std::unordered_map<std::string, std::any>>`.
+    *   Timestamp: Java uses `LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))`. C++ equivalent requires `<chrono>` and `<iomanip>`. C++20 has `std::format`, but C++17 requires manual stream formatting. Let's use C++11/14/17 compatible stream formatting, or C++20 `std::format` if available. To be safe and portable, `<ctime>` or `<chrono>` with `std::stringstream`. Let's use `std::chrono::system_clock::to_time_t` and `std::localtime`, then format to "yyyy-MM-dd HH:mm:ss".
+    *   Wait, `std::localtime` returns a pointer to a static internal `std::tm` object, which might be overwritten by subsequent calls. It's fine here.
+    *   Time formatting:
+        ```cpp
+        auto now = std::chrono::system_clock::now();
+        auto in_time_t = std::chrono::system_clock::to_time_t(now);
+        std::stringstream ss;
+        ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+        std::string timestamp = ss.str();
+        ```
+
+4.  **Translating `sendTo`**:
+    *   ```java
+        public boolean sendTo(EmailClient recv, String content, double size) {
+            if (!recv.isFullWithOneMoreEmail(size)) {
+                // ...
+                return true;
+            }
+            else {
+                this.clearInbox(size); // Note: clears sender's inbox!
+                if (recv.isFullWithOneMoreEmail(size)) {
+                    return false;
+                }
+                return sendTo(recv, content, size);
+            }
+        }
+        ```
+    *   C++ equivalent:
+        ```cpp
+        bool sendTo(EmailClient& recv, const std::string& content, double size) {
+            if (!recv.isFullWithOneMoreEmail(size)) {
+                auto now = std::chrono::system_clock::now();
+                auto in_time_t = std::chrono::system_clock::to_time_t(now);
+                std::stringstream ss;
+                ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+                std::string timestamp = ss.str();
+
+                std::unordered_map<std::string, std::any> email;
+                email["sender"] = this->addr;
+                email["receiver"] = recv.addr;
+                email["content"] = content;
+                email["size"] = size;
+                email["time"] = timestamp;
+                email["state"] = std::string("unread");
+                recv.inbox.push_back(email);
+                return true;
+            } else {
+                this->clearInbox(size);
+                if (recv.isFullWithOneMoreEmail(size)) {
+                    return false;
+                }
+                return sendTo(recv, content, size);
+            }
+        }
+        ```
+
+5.  **Translating `fetch`**:
+    *   ```java
+        public Map<String, Object> fetch() {
+            if (this.inbox.isEmpty()) {
+                return null;
+            }
+            for (Map<String, Object> email : this.inbox) {
+                if ("unread".equals(email.get("state"))) {
+                    email.put("state", "read");
+                    return email;
+                }
+            }
+            return null;
+        }
+        ```
+    *   In C++, returning `null` for an object type usually means returning a pointer `nullptr`, or returning `std::optional`. Since Java returns a reference to the *actual map in the list*, modifying it in Java modifies the list element. If we return `std::optional<std::unordered_map<...>>`, it returns a copy. If we return a pointer, we preserve reference semantics.
+    *   Let's use `std::unordered_map<std::string, std::any>*` for the return type.
+        ```cpp
+        std::unordered_map<std::string, std::any>* fetch() {
+            if (this->inbox.empty()) {
+                return nullptr;
+            }
+            for (auto& email : this->inbox) {
+                if (auto it = email.find("state"); it != email.end()) {
+                    // Java's "unread".equals(email.get("state")) handles null state safely.
+                    // In C++, std::any_cast might throw if type mismatches.
+                    // Let's check if it's a string and equals "unread".
+                    const std::any& state_any = it->second;
+                    if (state_any.type() == typeid(std::string)) {
+                        if (std::any_cast<std::string>(state_any) == "unread") {
+                            email["state"] = std::string("read");
+                            return &email;
+                        }
+                    }
+                }
+            }
+            return nullptr;
+        }
+        ```
+    *   Wait, `std::any_cast<std::string>&` is better to avoid copy, but we just compare. `std::any_cast<std::string>(state_any)` creates a copy. `std::any_cast<std::string>(&state_any)` returns a pointer if the type matches, `nullptr` otherwise. This is safer and avoids exceptions!
+        ```cpp
+        std::unordered_map<std::string, std::any>* fetch() {
+            if (this->inbox.empty()) {
+                return nullptr;
+            }
+            for (auto& email : this->inbox) {
+                auto it = email.find("state");
+                if (it != email.end()) {
+                    const std::any& state_any = it->second;
+                    const std::string* state_ptr = std::any_cast<std::string>(&state_any);
+                    if (state_ptr && *state_ptr == "unread") {
+                        email["state"] = std::string("read");
+                        return &email;
+                    }
+                }
+            }
+            return nullptr;
+        }
+        ```
+    *   Alternatively, returning `std::optional<std::reference_wrapper<std::unordered_map<std::string, std::any>>>` is very C++-idiomatic for "nullable reference". Let's use this! It's cleaner than raw pointers and perfectly conveys the non-owning reference semantics of Java.
+        ```cpp
+        #include <optional>
+        #include <functional>
+        // ...
+        std::optional<std::reference_wrapper<std::unordered_map<std::string, std::any>>> fetch() {
+            if (this->inbox.empty()) {
+                return std::nullopt;
+            }
+            for (auto& email : this->inbox) {
+                auto it = email.find("state");
+                if (it != email.end()) {
+                    const std::string* state_ptr = std::any_cast<std::string>(&it->second);
+                    if (state_ptr && *state_ptr == "unread") {
+                        email["state"] = std::string("read");
+                        return std::ref(email);
+                    }
+                }
+            }
+            return std::nullopt;
+        }
+        ```
+    *   Actually, raw pointer is simpler and closer to Java's `null` return. The prompt says "Use idiomatic C++ only when it doesn't change behavior." Raw pointer is fine and universally understood for this pattern. I'll stick to raw pointer to avoid `reference_wrapper` boilerplate for the user, or I'll use the `optional<reference_wrapper>`. Let's just use a raw pointer, it's very straightforward. Wait, `optional<reference_wrapper>` is more idiomatic. I'll provide the pointer, it's less likely to cause compilation issues for beginners. Let's use raw pointer, it's safer than dealing with `reference_wrapper` if they just want a direct translation. Actually, `std::unordered_map<...>*` is perfectly fine. Let's use pointer.
+
+6.  **Translating `isFullWithOneMoreEmail`**:
+    *   ```java
+        public boolean isFullWithOneMoreEmail(double size) {
+            double occupiedSize = this.getOccupiedSize();
+            return occupiedSize + size > this.capacity;
+        }
+        ```
+    *   ```cpp
+        bool isFullWithOneMoreEmail(double size) const {
+            double occupiedSize = this->getOccupiedSize();
+            return occupiedSize + size > this->capacity;
+        }
+        ```
+
+7.  **Translating `getOccupiedSize`**:
+    *   ```java
+        public double getOccupiedSize() {
+            double occupiedSize = 0;
+            for (Map<String, Object> email : this.inbox) {
+                Object sizeObj = email.get("size");
+                if (sizeObj instanceof Number) {
+                    occupiedSize += ((Number) sizeObj).doubleValue();
+                }
+            }
+            return occupiedSize;
+        }
+        ```
+    *   ```cpp
+        double getOccupiedSize() const {
+            double occupiedSize = 0;
+            for (const auto& email : this->inbox) {
+                auto it = email.find("size");
+                if (it != email.end()) {
+                    const std::any& sizeObj = it->second;
+                    // Check if it's a double or int, etc. Java checks `instanceof Number`.
+                    // In C++, we can check for double.
+                    if (sizeObj.type() == typeid(double)) {
+                        occupiedSize += std::any_cast<double>(sizeObj);
+                    } else if (sizeObj.type() == typeid(int)) {
+                        occupiedSize += std::any_cast<int>(sizeObj);
+                    } else if (sizeObj.type() == typeid(float)) {
+                        occupiedSize += std::any_cast<float>(sizeObj);
+                    }
+                }
+            }
+            return occupiedSize;
+        }
+        ```
+    *   Since we only insert `double` in `sendTo`, checking `typeid(double)` is sufficient, but to strictly match `instanceof Number`, I'll add `int` and `float` checks. Actually, just `double` is fine because we control the insertion. But let's be thorough. Wait, `std::any_cast<double>(&sizeObj)` returns a pointer if it's a double, otherwise `nullptr`.
+        ```cpp
+        double getOccupiedSize() const {
+            double occupiedSize = 0;
+            for (const auto& email : this->inbox) {
+                auto it = email.find("size");
+                if (it != email.end()) {
+                    const std::any& sizeObj = it->second;
+                    if (const double* d = std::any_cast<double>(&sizeObj)) {
+                        occupiedSize += *d;
+                    } else if (const int* i = std::any_cast<int>(&sizeObj)) {
+                        occupiedSize += *i;
+                    } else if (const float* f = std::any_cast<float>(&sizeObj)) {
+                        occupiedSize += *f;
+                    }
+                }
+            }
+            return occupiedSize;
+        }
+        ```
+
+8.  **Translating `clearInbox`**:
+    *   ```java
+        public void clearInbox(double size) {
+            if (this.addr.isEmpty()) {
+                return;
+            }
+            double freedSpace = 0;
+            while (freedSpace < size && !this.inbox.isEmpty()) {
+                Map<String, Object> email = this.inbox.remove(0);
+                Object sizeObj = email.get("size");
+                if (sizeObj instanceof Number) {
+                    freedSpace += ((Number) sizeObj).doubleValue();
+                }
+            }
+        }
+        ```
+    *   ```cpp
+        void clearInbox(double size) {
+            if (this->addr.empty()) {
+                return;
+            }
+            double freedSpace = 0;
+            while (freedSpace < size && !this->inbox.empty()) {
+                auto email = this->inbox.front(); // copy or just read size?
+                // Wait, Java's remove(0) removes and returns the element.
+                // We need the size before removing, or we can remove and then read.
+                auto it = this->inbox.begin();
+                auto email = std::move(*it); // Move it out to avoid copy if possible, though we just read size.
+                this->inbox.erase(it);
+                
+                auto sizeIt = email.find("size");
+                if (sizeIt != email.end()) {
+                    const std::any& sizeObj = sizeIt->second;
+                    if (const double* d = std::any_cast<double>(&sizeObj)) {
+                        freedSpace += *d;
+                    } else if (const int* i = std::any_cast<int>(&sizeObj)) {
+                        freedSpace += *i;
+                    } else if (const float* f = std::any_cast<float>(&sizeObj)) {
+                        freedSpace += *f;
+                    }
+                }
+            }
+        }
+        ```
+
+9.  **Translating `getInbox` and `setInbox`**:
+    *   ```java
+        public List<Map<String, Object>> getInbox() {
+            return this.inbox;
+        }
+
+        public void setInbox(List<Map<String, Object>> inbox) {
+            this.inbox = inbox;
+        }
+        ```
+    *   ```cpp
+        std::vector<std::unordered_map<std::string, std::any>>& getInbox() {
+            return this->inbox;
+        }
+
+        void setInbox(const std::vector<std::unordered_map<std::string, std::any>>& inbox) {
+            this->inbox = inbox;
+        }
+        ```
+    *   Java returns a reference to the list (effectively, since it's a mutable object). C++ should return a reference. `setInbox` should take a const reference or value.
+
+10. **Includes and Namespace**:
+    *   `#include <string>`
+    *   `#include <vector>`
+    *   `#include <unordered_map>`
+    *   `#include <any>`
+    *   `#include <chrono>`
+    *   `#include <iomanip>`
+    *   `#include <sstream>`
+    *   `namespace org { namespace example { ... } }` or just a class. I'll use `namespace org { namespace example { ... } }` to match Java package.
+
+11. **Refining Timestamp Logic**:
+    *   The Java code uses `LocalDateTime.now()`. This gets the local date-time without timezone. `std::localtime` does the same in C++.
+    *   ```cpp
+        auto now = std::chrono::system_clock::now();
+        auto in_time_t = std::chrono::system_clock::to_time_t(now);
+        std::stringstream ss;
+        ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+        std::string timestamp = ss.str();
+        ```
+
+12. **Double Check Edge Cases**:
+    *   `sendTo` calls `this.clearInbox(size)`. In Java, `this` refers to the sender. My C++ code does `this->clearInbox(size)`. Correct.
+    *   `fetch` iterates and modifies the first "unread" email to "read" and returns it. My C++ code does this and returns a pointer. Correct.
+    *   `isFullWithOneMoreEmail` returns `occupiedSize + size > this.capacity`. Correct.
+    *   `clearInbox` checks `this.addr.isEmpty()`. My C++ code checks `this->addr.empty()`. Correct.
+    *   `clearInbox` removes from index 0. My C++ code uses `inbox.erase(inbox.begin())`. Correct.
+    *   `getOccupiedSize` uses `instanceof Number`. I implemented checks for `double`, `int`, and `float`. This covers typical numeric types that might be inserted.
+
+13. **Alternative to `std::any`**:
+    *   `std::any` requires C++17.
+    *   Is there a better way? `std::variant<double, std::string, ...>` but since it's `Object`, `std::any` is the exact equivalent.
+    *   Let's ensure C++17 is mentioned or implied by using `std::any`.
+
+14. **Formatting the Output**:
+    *   Put everything together neatly.
+
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <any>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+
+namespace org {
+namespace example {
+
+class EmailClient {
+private:
+    std::string addr;
+    double capacity;
+    std::vector<std::unordered_map<std::string, std::any>> inbox;
+
+public:
+    EmailClient(const std::string& addr, double capacity) {
+        this->addr = addr;
+        this->capacity = capacity;
+    }
+
+    bool sendTo(EmailClient& recv, const std::string& content, double size) {
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            auto now = std::chrono::system_clock::now();
+            auto in_time_t = std::chrono::system_clock::to_time_t(now);
+            std::stringstream ss;
+            ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+            std::string timestamp = ss.str();
+
+            std::unordered_map<std::string, std::any> email;
+            email["sender"] = this->addr;
+            email["receiver"] = recv.addr;
+            email["content"] = content;
+            email["size"] = size;
+            email["time"] = timestamp;
+            email["state"] = std::string("unread");
+            recv.inbox.push_back(email);
+            return true;
+        } else {
+            this->clearInbox(size);
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size);
+        }
+    }
+
+    std::unordered_map<std::string, std::any>* fetch() {
+        if (this->inbox.empty()) {
+            return nullptr;
+        }
+        for (auto& email : this->inbox) {
+            auto it = email.find("state");
+            if (it != email.end()) {
+                const std::string* state_ptr = std::any_cast<std::string>(&it->second);
+                if (state_ptr && *state_ptr == "unread") {
+                    email["state"] = std::string("read");
+                    return &email;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    bool isFullWithOneMoreEmail(double size) const {
+        double occupiedSize = this->getOccupiedSize();
+        return occupiedSize + size > this->capacity;
+    }
+
+    double getOccupiedSize() const {
+        double occupiedSize = 0;
+        for (const auto& email : this->inbox) {
+            auto it = email.find("size");
+            if (it != email.end()) {
+                const std::any& sizeObj = it->second;
+                if (const double* d = std::any_cast<double>(&sizeObj)) {
+                    occupiedSize += *d;
+                } else if (const int* i = std::any_cast<int>(&sizeObj)) {
+                    occupiedSize += *i;
+                } else if (const float* f = std::any_cast<float>(&sizeObj)) {
+                    occupiedSize += *f;
+                }
+            }
+        }
+        return occupiedSize;
+    }
+
+    void clearInbox(double size) {
+        if (this->addr.empty()) {
+            return;
+        }
+        double freedSpace = 0;
+        while (freedSpace < size && !this->inbox.empty()) {
+            auto it = this->inbox.begin();
+            auto email = std::move(*it);
+            this->inbox.erase(it);
+            
+            auto sizeIt = email.find("size");
+            if (sizeIt != email.end()) {
+                const std::any& sizeObj = sizeIt->second;
+                if (const double* d = std::any_cast<double>(&sizeObj)) {
+                    freedSpace += *d;
+                } else if (const int* i = std::any_cast<int>(&sizeObj)) {
+                    freedSpace += *i;
+                } else if (const float* f = std::any_cast<float>(&sizeObj)) {
+                    freedSpace += *f;
+                }
+            }
+        }
+    }
+
+    std::vector<std::unordered_map<std::string, std::any>>& getInbox() {
+        return this->inbox;
+    }
+
+    void setInbox(const std::vector<std::unordered_map<std::string, std::any>>& inbox) {
+        this->inbox = inbox;
+    }
+};
+
+}
+}
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <any>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+
+namespace org {
+namespace example {
+
+class EmailClient {
+private:
+    std::string addr;
+    double capacity;
+    std::vector<std::unordered_map<std::string, std::any>> inbox;
+
+public:
+    EmailClient(const std::string& addr, double capacity) {
+        this->addr = addr;
+        this->capacity = capacity;
+    }
+
+    bool sendTo(EmailClient& recv, const std::string& content, double size) {
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            auto now = std::chrono::system_clock::now();
+            auto in_time_t = std::chrono::system_clock::to_time_t(now);
+            std::stringstream ss;
+            ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+            std::string timestamp = ss.str();
+
+            std::unordered_map<std::string, std::any> email;
+            email["sender"] = this->addr;
+            email["receiver"] = recv.addr;
+            email["content"] = content;
+            email["size"] = size;
+            email["time"] = timestamp;
+            email["state"] = std::string("unread");
+            recv.inbox.push_back(email);
+            return true;
+        } else {
+            this->clearInbox(size);
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size);
+        }
+    }
+
+    std::unordered_map<std::string, std::any>* fetch() {
+        if (this->inbox.empty()) {
+            return nullptr;
+        }
+        for (auto& email : this->inbox) {
+            auto it = email.find("state");
+            if (it != email.end()) {
+                const std::string* state_ptr = std::any_cast<std::string>(&it->second);
+                if (state_ptr && *state_ptr == "unread") {
+                    email["state"] = std::string("read");
+                    return &email;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    bool isFullWithOneMoreEmail(double size) const {
+        double occupiedSize = this->getOccupiedSize();
+        return occupiedSize + size > this->capacity;
+    }
+
+    double getOccupiedSize() const {
+        double occupiedSize = 0;
+        for (const auto& email : this->inbox) {
+            auto it = email.find("size");
+            if (it != email.end()) {
+                const std::any& sizeObj = it->second;
+                if (const double* d = std::any_cast<double>(&sizeObj)) {
+                    occupiedSize += *d;
+                } else if (const int* i = std::any_cast<int>(&sizeObj)) {
+                    occupiedSize += *i;
+                } else if (const float* f = std::any_cast<float>(&sizeObj)) {
+                    occupiedSize += *f;
+                }
+            }
+        }
+        return occupiedSize;
+    }
+
+    void clearInbox(double size) {
+        if (this->addr.empty()) {
+            return;
+        }
+        double freedSpace = 0;
+        while (freedSpace < size && !this->inbox.empty()) {
+            auto it = this->inbox.begin();
+            auto email = std::move(*it);
+            this->inbox.erase(it);
+            
+            auto sizeIt = email.find("size");
+            if (sizeIt != email.end()) {
+                const std::any& sizeObj = sizeIt->second;
+                if (const double* d = std::any_cast<double>(&sizeObj)) {
+                    freedSpace += *d;
+                } else if (const int* i = std::any_cast<int>(&sizeObj)) {
+                    freedSpace += *i;
+                } else if (const float* f = std::any_cast<float>(&sizeObj)) {
+                    freedSpace += *f;
+                }
+            }
+        }
+    }
+
+    std::vector<std::unordered_map<std::string, std::any>>& getInbox() {
+        return this->inbox;
+    }
+
+    void setInbox(const std::vector<std::unordered_map<std::string, std::any>>& inbox) {
+        this->inbox = inbox;
+    }
+};
+
+}
+}

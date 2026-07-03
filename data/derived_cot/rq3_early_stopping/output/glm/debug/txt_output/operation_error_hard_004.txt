@@ -1,0 +1,221 @@
+=== BUGGY CODE ===
+
+import math
+from typing import List
+import bisect
+
+class Solution:
+    def maximumSumQueries(self, nums1: List[int], nums2: List[int], queries: List[List[int]]) -> List[int]:
+        def buildSparseTable(arr, n):
+            k = int(math.log2(n))
+            st = [[None for j in range(n)] for i in range(k + 1)]
+            for i in range(k + 1):
+                for j in range(n - (1 << i) + 1):
+                    if i == 0:
+                        st[i][j] = arr[j]
+                    else:
+                        st[i][j] = max(st[i - 1][j], st[i - 1][j + (1 << (i - 1))])
+            return st
+
+        def getMax(st, l, r):
+            i = int(math.log2(r - l + 1))
+            return max(st[i][l], st[i][r - (1 << i) + 1])
+
+        n = len(nums1)
+        a = sorted([[nums1[i], nums2[i]] for i in range(n)])
+        max_y = [v[1] for v in a]
+        for i in range(n - 2, -1, -1):
+            max_y[i] = max(max_y[i], max_y[1 + 1])   
+        _sum = [v[0] + v[1] for v in a]
+        st_max_sum = buildSparseTable(_sum, n)
+        res = []
+        for x, y in queries:
+            i = bisect.bisect_left(a, [x, y])
+            if i == n or max_y[i] < y:
+                res.append(-1)
+                continue
+            left, right = i, n - 1
+            while left < right:
+                m = (left + right + 1) // 2
+                if max_y[m] >= y:
+                    left = m
+                else:
+                    right = m - 1
+            j = right
+            res.append(getMax(st_max_sum, i, j))
+        return res
+
+
+=== REASONING ===
+<think>
+The problem asks us to fix the bugs in the provided Python code.
+The code solves a problem involving `nums1`, `nums2`, and `queries`. Given `queries[i] = [x, y]`, it seems we want to find the maximum `nums1[j] + nums2[j]` such that `nums1[j] >= x` and `nums2[j] >= y`.
+
+Let's trace the logic.
+`a = sorted([[nums1[i], nums2[i]] for i in range(n)])`
+This sorts the pairs by `nums1[i]`, then `nums2[i]`.
+`max_y` is computed. Wait, the code has:
+```python
+        max_y = [v[1] for v in a]
+        for i in range(n - 2, -1, -1):
+            max_y[i] = max(max_y[i], max_y[1 + 1])   
+```
+Bug 1: `max_y[1 + 1]` should be `max_y[i + 1]`. This computes the suffix maximum of `nums2`.
+
+For a query `[x, y]`:
+`i = bisect.bisect_left(a, [x, y])`
+Wait, `bisect_left(a, [x, y])` finds the first index where `a[j][0] >= x` and `a[j][1] >= y`? No, `bisect_left` on a list of lists compares `[x, y]` with `[a[j][0], a[j][1]]`.
+So it finds the first `j` such that `a[j][0] >= x` or (`a[j][0] == x` and `a[j][1] >= y`).
+Actually, to find the first element with `a[j][0] >= x`, we should use `bisect.bisect_left(a, [x, 0])` or similar, because if `a[j][0] == x` but `a[j][1] < y`, `bisect_left` might return an earlier index.
+Wait, if `a = [[2, 1], [2, 3]]`, and `x=2, y=2`, `bisect_left(a, [2, 2])` returns 1. But the element at 0 also has `a[0][0] >= x`. We want ALL elements with `a[j][0] >= x`. So the starting index should be `bisect.bisect_left(a, [x, 0])` or `bisect.bisect_left(a, [x, -float('inf')])` or just `bisect.bisect_left(a, [x])` (which is equivalent to `bisect_left` on the first element).
+Wait, `bisect_left` on a list of lists compares element by element. So `bisect_left(a, [x])` is the same as `bisect_left(a, [x, -inf])`. Wait, in Python `[x] < [x, y]` is True. So `bisect_left(a, [x])` will find the first element `>= [x]`. Since `[x] < [x, y]`, the first element `>= [x]` is the first element with `a[j][0] >= x`. Wait, if `a[j][0] == x`, then `[x, a[j][1]] >= [x]` is True. So `bisect_left(a, [x])` correctly finds the first element with `a[j][0] >= x`.
+Wait, let's check `bisect_left(a, [x, y])`. If `a = [[2, 1], [2, 3]]`, `x=2, y=2`, `bisect_left` returns 1. But index 0 also has `a[0][0] >= x`. If we start from index 1, we miss index 0. But index 0 has `a[0][1] = 1 < y = 2`, so it wouldn't satisfy the condition anyway. But what if `x=2, y=0`? `bisect_left(a, [2, 0])` returns 0. That's correct.
+What if `a = [[2, 3], [2, 1]]`? Wait, `a` is sorted, so `[2, 1]` comes before `[2, 3]`.
+If `x=2, y=2`, `bisect_left(a, [2, 2])` returns 1 (which is `[2, 3]`). Index 0 is `[2, 1]`, which doesn't satisfy `y>=2`. So it's fine.
+Wait, what if `x=2, y=0`? `bisect_left(a, [2, 0])` returns 0.
+Is it possible that `bisect_left(a, [x, y])` skips an element that has `a[j][0] >= x` and `a[j][1] >= y`?
+Suppose `a = [[2, 5], [2, 6]]`. `x=2, y=3`. `bisect_left(a, [2, 3])` returns 0. Correct.
+Suppose `a = [[2, 1], [2, 5]]`. `x=2, y=3`. `bisect_left(a, [2, 3])` returns 1. Index 0 has `a[0][0]=2, a[0][1]=1`. It doesn't satisfy `y>=3`. So it's fine.
+Actually, wait. If `x=2, y=3`, `bisect_left(a, [x, y])` returns 1. But wait, the problem requires `nums1[j] >= x` and `nums2[j] >= y`.
+If we use `bisect_left(a, [x, y])`, we are finding the first element `>= [x, y]`.
+Could there be an element `a[j] = [x-1, 100]`? No, because `a` is sorted by `nums1`. All elements before index `i` will have `a[j][0] < x`. So they definitely don't satisfy `nums1[j] >= x`.
+So any element before `bisect_left(a, [x, y])` will have `a[j][0] < x`, except if `a[j][0] == x` and `a[j][1] < y`.
+If `a[j][0] == x` and `a[j][1] < y`, it doesn't satisfy `nums2[j] >= y`.
+So `bisect_left(a, [x, y])` actually correctly identifies the first element that *could* satisfy both conditions?
+Wait. What if `a = [[2, 1], [2, 5]]`. `x=2, y=3`. `bisect_left(a, [2, 3])` returns 1. Index 1 is `[2, 5]`. This satisfies `x>=2` and `y>=3`.
+What if `a = [[2, 1], [3, 5]]`. `x=2, y=3`. `bisect_left(a, [2, 3])` returns 1. Index 1 is `[3, 5]`. This satisfies `x>=2` and `y>=3`.
+What if `a = [[2, 4], [3, 1]]`. `x=2, y=3`. `bisect_left(a, [2, 3])` returns 0. Index 0 is `[2, 4]`. This satisfies `x>=2` and `y>=3`.
+So `bisect_left(a, [x, y])` is actually perfectly fine for finding the first index `i` such that `a[i][0] >= x` and `a[i][1] >= y`?
+Wait! What if `a = [[2, 1], [3, 5]]`. `x=2, y=3`. `bisect_left(a, [2, 3])` returns 1.
+But wait, what if `x=2, y=3` and `a = [[2, 1], [2, 4]]`? `bisect_left(a, [2, 3])` returns 1. Index 1 is `[2, 4]`. It satisfies `x>=2` and `y>=3`.
+Is there any case where `bisect_left(a, [x, y])` misses an element that satisfies `a[j][0] >= x` and `a[j][1] >= y`?
+Let's check. If `a[j][0] >= x` and `a[j][1] >= y`, then `a[j] >= [x, y]`.
+Since `a` is sorted, any element after `j` will also be `>= [x, y]`?
+Wait, `a` is sorted by `nums1`, then `nums2`.
+So if `a[j] = [2, 4]` and `a[j+1] = [3, 1]`.
+`x=2, y=3`. `bisect_left(a, [2, 3])` returns 0 (since `[2, 4] >= [2, 3]`).
+Wait, `[2, 4] >= [2, 3]` is True. So `bisect_left` returns 0.
+What if `a[j] = [2, 1]` and `a[j+1] = [3, 5]`.
+`x=2, y=3`. `bisect_left(a, [2, 3])` returns 1.
+Index 1 is `[3, 5]`. It satisfies `x>=2` and `y>=3`.
+Is there any element before index 1 that satisfies `x>=2` and `y>=3`?
+Index 0 is `[2, 1]`. It does not satisfy `y>=3`.
+So `bisect_left(a, [x, y])` works?
+Wait, what if `a[j] = [2, 1]` and `a[j+1] = [2, 5]`.
+`x=2, y=3`. `bisect_left(a, [2, 3])` returns 1.
+Index 1 is `[2, 5]`. It satisfies `x>=2` and `y>=3`.
+Index 0 is `[2, 1]`. It does not satisfy `y>=3`.
+So `bisect_left(a, [x, y])` seems to correctly find the first element that satisfies BOTH conditions?
+Wait! What if `a[j] = [2, 1]`, `a[j+1] = [3, 5]`.
+`x=3, y=1`. `bisect_left(a, [3, 1])` returns 1.
+Index 1 is `[3, 5]`. It satisfies `x>=3` and `y>=1`.
+What if `a[j] = [2, 5]`, `a[j+1] = [3, 1]`.
+`x=3, y=1`. `bisect_left(a, [3, 1])` returns 1.
+Index 1 is `[3, 1]`. It satisfies `x>=3` and `y>=1`.
+Wait, what if `x=3, y=2`? `bisect_left(a, [3, 2])` returns 2 (if n=2).
+But index 1 is `[3, 1]`, which does not satisfy `y>=2`.
+Is there any element before index 2 that satisfies `x>=3` and `y>=2`?
+Index 0 is `[2, 5]`. `x>=3` is False.
+So no.
+Wait, is there ANY case where an element satisfies `a[j][0] >= x` and `a[j][1] >= y` but `a[j] < [x, y]`?
+If `a[j][0] >= x` and `a[j][1] >= y`:
+If `a[j][0] > x`, then `a[j] > [x, y]` regardless of `a[j][1]`.
+If `a[j][0] == x`, then since `a[j][1] >= y`, `a[j] >= [x, y]`.
+So if `a[j]` satisfies the conditions, it MUST be `>= [x, y]`.
+Therefore, `bisect_left(a, [x, y])` will correctly find the first such element!
+Wait, but wait.
+</think>
+
+=== RAW ANSWER ===
+```python
+import math
+from typing import List
+import bisect
+
+class Solution:
+    def maximumSumQueries(self, nums1: List[int], nums2: List[int], queries: List[List[int]]) -> List[int]:
+        def buildSparseTable(arr, n):
+            k = int(math.log2(n))
+            st = [[None for j in range(n)] for i in range(k + 1)]
+            for i in range(k + 1):
+                for j in range(n - (1 << i) + 1):
+                    if i == 0:
+                        st[i][j] = arr[j]
+                    else:
+                        st[i][j] = max(st[i - 1][j], st[i - 1][j + (1 << (i - 1))])
+            return st
+
+        def getMax(st, l, r):
+            i = int(math.log2(r - l + 1))
+            return max(st[i][l], st[i][r - (1 << i) + 1])
+
+        n = len(nums1)
+        a = sorted([[nums1[i], nums2[i]] for i in range(n)])
+        max_y = [v[1] for v in a]
+        for i in range(n - 2, -1, -1):
+            max_y[i] = max(max_y[i], max_y[i + 1])
+        _sum = [v[0] + v[1] for v in a]
+        st_max_sum = buildSparseTable(_sum, n)
+        res = []
+        for x, y in queries:
+            i = bisect.bisect_left(a, [x, y])
+            if i == n or max_y[i] < y:
+                res.append(-1)
+                continue
+            left, right = i, n - 1
+            while left < right:
+                m = (left + right + 1) // 2
+                if max_y[m] >= y:
+                    left = m
+                else:
+                    right = m - 1
+            j = right
+            res.append(getMax(st_max_sum, i, j))
+        return res
+```
+
+=== FIXED CODE ===
+import math
+from typing import List
+import bisect
+
+class Solution:
+    def maximumSumQueries(self, nums1: List[int], nums2: List[int], queries: List[List[int]]) -> List[int]:
+        def buildSparseTable(arr, n):
+            k = int(math.log2(n))
+            st = [[None for j in range(n)] for i in range(k + 1)]
+            for i in range(k + 1):
+                for j in range(n - (1 << i) + 1):
+                    if i == 0:
+                        st[i][j] = arr[j]
+                    else:
+                        st[i][j] = max(st[i - 1][j], st[i - 1][j + (1 << (i - 1))])
+            return st
+
+        def getMax(st, l, r):
+            i = int(math.log2(r - l + 1))
+            return max(st[i][l], st[i][r - (1 << i) + 1])
+
+        n = len(nums1)
+        a = sorted([[nums1[i], nums2[i]] for i in range(n)])
+        max_y = [v[1] for v in a]
+        for i in range(n - 2, -1, -1):
+            max_y[i] = max(max_y[i], max_y[i + 1])
+        _sum = [v[0] + v[1] for v in a]
+        st_max_sum = buildSparseTable(_sum, n)
+        res = []
+        for x, y in queries:
+            i = bisect.bisect_left(a, [x, y])
+            if i == n or max_y[i] < y:
+                res.append(-1)
+                continue
+            left, right = i, n - 1
+            while left < right:
+                m = (left + right + 1) // 2
+                if max_y[m] >= y:
+                    left = m
+                else:
+                    right = m - 1
+            j = right
+            res.append(getMax(st_max_sum, i, j))
+        return res

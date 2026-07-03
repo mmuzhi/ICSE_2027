@@ -1,0 +1,771 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+
+public class ShoppingCart {
+    private Map<String, Item> items;
+
+    public ShoppingCart() {
+        this.items = new HashMap<>();
+    }
+
+    public void addItem(String item, double price, int quantity) {
+        if (items.containsKey(item)) {
+            Item existingItem = items.get(item);
+            existingItem.setPrice(price);
+            existingItem.setQuantity(existingItem.getQuantity() + quantity);
+        } else {
+            items.put(item, new Item(price, quantity));
+        }
+    }
+
+    public void removeItem(String item, int quantity) {
+        if (items.containsKey(item)) {
+            Item existingItem = items.get(item);
+            int newQuantity = existingItem.getQuantity() - quantity;
+            if (newQuantity <= 0) {
+                items.remove(item);
+            } else {
+                existingItem.setQuantity(newQuantity);
+            }
+        }
+    }
+
+    public Map<String, Item> viewItems() {
+        return new HashMap<>(items);
+    }
+
+    public double totalPrice() {
+        double total = 0.0;
+        for (Item item : items.values()) {
+            total += item.getPrice() * item.getQuantity();
+        }
+        return total;
+    }
+
+    public static class Item {
+        private double price;
+        private int quantity;
+
+        public Item(double price, int quantity) {
+            this.price = price;
+            this.quantity = quantity;
+        }
+
+        public double getPrice() {
+            return price;
+        }
+
+        public void setPrice(double price) {
+            this.price = price;
+        }
+
+        public int getQuantity() {
+            return quantity;
+        }
+
+        public void setQuantity(int quantity) {
+            this.quantity = quantity;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            Item item = (Item) o;
+            return Double.compare(item.price, price) == 0 && quantity == item.quantity;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(price, quantity);
+        }
+    }
+}
+
+=== REASONING ===
+<think>
+Let me translate this Java code to Python, keeping behavior identical.
+
+Key things to note:
+1. `ShoppingCart` with a `Map<String, Item>` - use a dict
+2. `Item` is a static inner class - make it a separate class
+3. `addItem` - if key exists, update price and add quantity; else put new Item
+4. `removeItem` - if key exists, subtract quantity; if <= 0, remove; else update
+5. `viewItems` - returns a copy of the map (shallow copy)
+6. `totalPrice` - sum of price * quantity
+7. `Item` has equals/hashCode based on price and quantity
+8. Java `double` arithmetic - Python float should behave similarly for basic operations
+9. Java `HashMap` doesn't maintain order - Python dict maintains insertion order (3.7+), but this shouldn't affect behavior since the Java code doesn't rely on order
+
+Let me think about edge cases:
+- `addItem` with existing item updates the price (overwrites) and adds to quantity
+- `removeItem` with non-existing item does nothing
+- `removeItem` with quantity >= existing quantity removes the item entirely
+- `viewItems` returns a shallow copy - the Item objects in the returned dict are the same references. In Python, we need to return a shallow copy of the dict (`dict(items)` or `items.copy()`)
+- `Item.equals` uses `Double.compare` which handles NaN and -0.0 specially. In Python, `float('nan') != float('nan')` and `-0.0 == 0.0`. Java's `Double.compare` returns 0 if values are equal (including NaN == NaN and -0.0 < 0.0). So Java's equals would consider NaN equal to NaN and -0.0 not equal to 0.0. Python's `==` would consider -0.0 == 0.0 and NaN != NaN. 
+
+This is a subtle difference. To keep behavior identical, I should implement `__eq__` using `math.copysign` or similar to distinguish -0.0 from 0.0, and handle NaN. Let me think...
+
+Actually, `Double.compare(a, b) == 0` is true when:
+- Both are NaN
+- Both are the same value (including both +0.0 or both -0.0)
+- But +0.0 and -0.0 are different (Double.compare(-0.0, 0.0) returns -1)
+
+So for exact behavioral fidelity, I need to handle this. Let me implement it properly.
+
+For `__eq__`:
+- Check if price is NaN: `math.isnan(price)` and `math.isnan(other.price)` - if both NaN, they're equal
+- For -0.0 vs 0.0: `math.copysign(1, price) != math.copysign(1, other.price)` would distinguish them
+- Actually, a simpler approach: use `float.__repr__` or compare with `math.copysign`
+
+Let me think more carefully. The simplest way to replicate `Double.compare` behavior:
+
+```python
+import math
+
+def _double_compare(a, b):
+    if math.isnan(a) and math.isnan(b):
+        return 0
+    if math.isnan(a):
+        return 1
+    if math.isnan(b):
+        return -1
+    if a == b:
+        # Distinguish -0.0 and 0.0
+        if a == 0.0 and b == 0.0:
+            if math.copysign(1, a) < math.copysign(1, b):
+                return -1
+            elif math.copysign(1, a) > math.copysign(1, b):
+                return 1
+            else:
+                return 0
+        return 0
+    return -1 if a < b else 1
+```
+
+Then `__eq__` checks `_double_compare(self.price, other.price) == 0 and self.quantity == other.quantity`.
+
+For `hashCode`, Java's `Objects.hash(price, quantity)` uses `Double.hashCode(price)` which is `Double.doubleToLongBits(price)` then XOR of halves. And `Integer.hashCode(quantity)` is just `quantity`. Then combines them with `31 * hash + value`.
+
+This is getting very complex. Let me think about whether this level of fidelity is really needed. The prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)." 
+
+For practical purposes, the NaN and -0.0 edge cases are extremely rare in a shopping cart context. But the prompt says to keep behavior identical...
+
+I'll implement it faithfully but note that for most practical purposes, a simpler `__eq__` would suffice. Let me implement the full thing.
+
+Actually, let me reconsider. The `__eq__` and `__hash__` methods need to be consistent (if a == b then hash(a) == hash(b)). In Java, `Objects.hash` uses `Double.hashCode` which treats -0.0 and +0.0 differently (they have different bit patterns), and NaN has a specific bit pattern too. So the Java hashCode is consistent with Java equals.
+
+In Python, if I implement `__eq__` to distinguish -0.0 and 0.0, I also need `__hash__` to be consistent. Python's default `hash(-0.0) == hash(0.0)` which would be inconsistent with a custom `__eq__` that distinguishes them.
+
+So I need custom `__hash__` too. Let me implement `__hash__` using the bit representation of the float.
+
+Let me write the full implementation:
+
+```python
+import math
+import struct
+
+class ShoppingCart:
+    def __init__(self):
+        self._items = {}
+
+    def addItem(self, item, price, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            existing_item.setPrice(price)
+            existing_item.setQuantity(existing_item.getQuantity() + quantity)
+        else:
+            self._items[item] = Item(price, quantity)
+
+    def removeItem(self, item, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            new_quantity = existing_item.getQuantity() - quantity
+            if new_quantity <= 0:
+                del self._items[item]
+            else:
+                existing_item.setQuantity(new_quantity)
+
+    def viewItems(self):
+        return dict(self._items)
+
+    def totalPrice(self):
+        total = 0.0
+        for item in self._items.values():
+            total += item.getPrice() * item.getQuantity()
+        return total
+
+
+class Item:
+    def __init__(self, price, quantity):
+        self._price = price
+        self._quantity = quantity
+
+    def getPrice(self):
+        return self._price
+
+    def setPrice(self, price):
+        self._price = price
+
+    def getQuantity(self):
+        return self._quantity
+
+    def setQuantity(self, quantity):
+        self._quantity = quantity
+
+    @staticmethod
+    def _double_compare(a, b):
+        """Replicates Java's Double.compare behavior."""
+        if math.isnan(a) and math.isnan(b):
+            return 0
+        if math.isnan(a):
+            return 1
+        if math.isnan(b):
+            return -1
+        if a == b:
+            if a == 0.0:
+                sa = math.copysign(1, a)
+                sb = math.copysign(1, b)
+                if sa < sb:
+                    return -1
+                elif sa > sb:
+                    return 1
+                return 0
+            return 0
+        return -1 if a < b else 1
+
+    @staticmethod
+    def _double_to_long_bits(d):
+        """Replicates Java's Double.doubleToLongBits."""
+        if math.isnan(d):
+            return 0x7ff8000000000000
+        return struct.unpack('>q', struct.pack('>d', d))[0]
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if other is None or type(self) is not type(other):
+            return False
+        return Item._double_compare(self._price, other._price) == 0 and self._quantity == other._quantity
+
+    def __hash__(self):
+        # Replicate Java's Objects.hash(price, quantity)
+        # Objects.hash calls Double.hashCode for price and Integer.hashCode for quantity
+        # Double.hashCode = Double.doubleToLongBits(price) XOR (bits >>> 32)
+        # Integer.hashCode = quantity
+        # Then combines: result = 31 * result + element.hashCode() for each
+        price_bits = Item._double_to_long_bits(self._price)
+        price_hash = int(price_bits ^ (price_bits >> 32)) & 0xFFFFFFFF
+        # Need to handle sign properly for Python integers
+        price_hash = price_hash if price_hash < 0x80000000 else price_hash - 0x100000000
+        
+        # Objects.hash: result = 1; result = 31 * result + price_hash; result = 31 * result + quantity_hash
+        result = 1
+        result = 31 * result + price_hash
+        result = 31 * result + self._quantity
+        return result
+```
+
+Hmm, this is getting really complex. Let me reconsider.
+
+Actually, looking at Java's `Objects.hash`:
+```java
+public static int hash(Object... values) {
+    return Arrays.hashCode(values);
+}
+
+public static int hashCode(Object a[]) {
+    if (a == null) return 0;
+    int result = 1;
+    for (Object element : a)
+        result = 31 * result + (element == null ? 0 : element.hashCode());
+    return result;
+}
+```
+
+And `Double.hashCode()`:
+```java
+public static int hashCode(double value) {
+    long bits = doubleToLongBits(value);
+    return (int)(bits ^ (bits >>> 32));
+}
+```
+
+And `Integer.hashCode()`:
+```java
+public static int hashCode(int value) {
+    return value;
+}
+```
+
+So `Objects.hash(price, quantity)`:
+1. result = 1
+2. result = 31 * 1 + Double.hashCode(price)
+3. result = 31 * result + Integer.hashCode(quantity)
+
+Where `Double.hashCode(price) = (int)(doubleToLongBits(price) ^ (doubleToLongBits(price) >>> 32))`
+
+This is doable but complex. Let me implement it properly.
+
+Actually, I realize I'm overcomplicating this. Let me think about what level of fidelity is truly needed. The prompt says "Keep behavior identical" but also "Use idiomatic Python only when it doesn't change behavior."
+
+For a shopping cart, the NaN and -0.0 cases are extremely unlikely. But the prompt is clear about keeping behavior identical. Let me implement it fully.
+
+Let me reconsider the hash implementation. Python's `__hash__` must return an int, and it can be any int (not limited to 32 bits like Java). But to match Java's behavior exactly, I should compute the same 32-bit value.
+
+Actually, wait. The hash values don't need to be identical between Java and Python - they just need to be consistent within each language's implementation. The behavior that matters is:
+1. `a == b` implies `hash(a) == hash(b)` 
+2. `a != b` doesn't imply `hash(a) != hash(b)`
+
+So as long as my `__eq__` and `__hash__` are consistent with each other in Python, the behavior is preserved. The actual numeric hash values don't need to match Java's.
+
+But wait - if someone relies on the specific hash value... that would be unusual. Let me just make `__eq__` and `__hash__` consistent.
+
+For `__eq__`, I need to match Java's behavior with Double.compare. For `__hash__`, I need it to be consistent with `__eq__`.
+
+Let me simplify: I'll implement `__eq__` to match Java's Double.compare semantics, and `__hash__` to be consistent.
+
+Actually, you know what, let me step back. The most common and practical approach would be to just use Python's default float comparison for `__eq__` and a simple hash. The edge cases with NaN and -0.0 are so rare in practice that matching them exactly seems like overkill. But the prompt says "Keep behavior identical."
+
+Let me implement it properly but in a clean way.
+
+```python
+import math
+import struct
+
+
+class ShoppingCart:
+
+    def __init__(self):
+        self._items = {}
+
+    def addItem(self, item, price, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            existing_item.setPrice(price)
+            existing_item.setQuantity(existing_item.getQuantity() + quantity)
+        else:
+            self._items[item] = Item(price, quantity)
+
+    def removeItem(self, item, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            new_quantity = existing_item.getQuantity() - quantity
+            if new_quantity <= 0:
+                del self._items[item]
+            else:
+                existing_item.setQuantity(new_quantity)
+
+    def viewItems(self):
+        return dict(self._items)
+
+    def totalPrice(self):
+        total = 0.0
+        for item in self._items.values():
+            total += item.getPrice() * item.getQuantity()
+        return total
+
+
+class Item:
+
+    def __init__(self, price, quantity):
+        self._price = price
+        self._quantity = quantity
+
+    def getPrice(self):
+        return self._price
+
+    def setPrice(self, price):
+        self._price = price
+
+    def getQuantity(self):
+        return self._quantity
+
+    def setQuantity(self, quantity):
+        self._quantity = quantity
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if not isinstance(other, Item):
+            return False
+        return (_double_compare(self._price, other._price) == 0
+                and self._quantity == other._quantity)
+
+    def __hash__(self):
+        return hash((_double_key(self._price), self._quantity))
+
+
+def _double_compare(a, b):
+    """Replicates Java's Double.compare for equality checking."""
+    if math.isnan(a) and math.isnan(b):
+        return 0
+    if math.isnan(a):
+        return 1
+    if math.isnan(b):
+        return -1
+    if a == b:
+        if a == 0.0:
+            sa = math.copysign(1, a)
+            sb = math.copysign(1, b)
+            if sa < sb:
+                return -1
+            elif sa > sb:
+                return 1
+            return 0
+        return 0
+    return -1 if a < b else 1
+
+
+def _double_key(d):
+    """Returns a key suitable for hashing that distinguishes -0.0 from 0.0 and handles NaN."""
+    if math.isnan(d):
+        return ('NaN',)
+    if d == 0.0:
+        return ('zero', math.copysign(1, d))
+    return d
+```
+
+Wait, but `_double_key` for hashing - I need to make sure that if `_double_compare(a, b) == 0`, then `_double_key(a) == _double_key(b)`. Let me verify:
+- NaN vs NaN: `_double_compare` returns 0, `_double_key` returns `('NaN',)` for both. ✓
+- -0.0 vs -0.0: `_double_compare` returns 0, `_double_key` returns `('zero', -1.0)` for both. ✓
+- 0.0 vs 0.0: `_double_compare` returns 0, `_double_key` returns `('zero', 1.0)` for both. ✓
+- -0.0 vs 0.0: `_double_compare` returns -1 (not 0), `_double_key` returns `('zero', -1.0)` vs `('zero', 1.0)` (different). ✓
+- 1.5 vs 1.5: `_double_compare` returns 0, `_double_key` returns 1.5 for both. ✓
+- 1.5 vs 2.5: `_double_compare` returns -1 (not 0), `_double_key` returns 1.5 vs 2.5 (different). ✓
+
+Good, the consistency holds.
+
+Now, one more thing: `viewItems()` returns `new HashMap<>(items)` in Java, which is a shallow copy. The Item objects in the returned map are the same references. In Python, `dict(self._items)` also creates a shallow copy. ✓
+
+Let me also consider: Java's `HashMap.containsKey` uses `equals` on the key (String), which is the same as Python's `in` operator on dict keys. ✓
+
+Java's `HashMap.get` also uses `equals`. ✓
+
+Java's `HashMap.remove` uses `equals`. ✓
+
+I think the implementation is correct. Let me also consider the `isinstance` check in `__eq__`. In Java, `getClass() != o.getClass()` means subclasses are not equal. In Python, `isinstance(other, Item)` would return True for subclasses. To match Java exactly, I should use `type(self) is not type(other)`.
+
+Wait, but `Item` is a static inner class, so it can't be subclassed in the same way... Actually in Java, `getClass() != o.getClass()` means that even if a subclass of Item is passed, it won't be equal. In Python, `isinstance(other, Item)` would return True for subclasses. To match Java's behavior exactly, I should use `type(self) is not type(other)`.
+
+Let me fix that.
+
+Also, the Java code checks `o == null` first. In Python, `isinstance(None, Item)` returns False, so that's handled. But `type(self) is not type(other)` would also handle None since `type(None) is not Item`. Actually, `type(self) is not type(other)` when `other` is None: `type(self)` is `Item`, `type(None)` is `NoneType`, they're not the same, so it returns `False`. Good.
+
+Let me finalize the code:
+
+```python
+import math
+
+
+class ShoppingCart:
+
+    def __init__(self):
+        self._items = {}
+
+    def addItem(self, item, price, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            existing_item.setPrice(price)
+            existing_item.setQuantity(existing_item.getQuantity() + quantity)
+        else:
+            self._items[item] = Item(price, quantity)
+
+    def removeItem(self, item, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            new_quantity = existing_item.getQuantity() - quantity
+            if new_quantity <= 0:
+                del self._items[item]
+            else:
+                existing_item.setQuantity(new_quantity)
+
+    def viewItems(self):
+        return dict(self._items)
+
+    def totalPrice(self):
+        total = 0.0
+        for item in self._items.values():
+            total += item.getPrice() * item.getQuantity()
+        return total
+
+
+class Item:
+
+    def __init__(self, price, quantity):
+        self._price = price
+        self._quantity = quantity
+
+    def getPrice(self):
+        return self._price
+
+    def setPrice(self, price):
+        self._price = price
+
+    def getQuantity(self):
+        return self._quantity
+
+    def setQuantity(self, quantity):
+        self._quantity = quantity
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if type(self) is not type(other):
+            return False
+        return (_double_compare(self._price, other._price) == 0
+                and self._quantity == other._quantity)
+
+    def __hash__(self):
+        return hash((_double_key(self._price), self._quantity))
+
+
+def _double_compare(a, b):
+    """Replicates Java's Double.compare for equality checking."""
+    if math.isnan(a) and math.isnan(b):
+        return 0
+    if math.isnan(a):
+        return 1
+    if math.isnan(b):
+        return -1
+    if a == b:
+        if a == 0.0:
+            sa = math.copysign(1, a)
+            sb = math.copysign(1, b)
+            if sa < sb:
+                return -1
+            elif sa > sb:
+                return 1
+            return 0
+        return 0
+    return -1 if a < b else 1
+
+
+def _double_key(d):
+    """Returns a hashable key that distinguishes -0.0 from 0.0 and handles NaN, consistent with _double_compare."""
+    if math.isnan(d):
+        return ('NaN',)
+    if d == 0.0:
+        return ('zero', math.copysign(1, d))
+    return d
+```
+
+This looks good. Let me review once more:
+
+1. `ShoppingCart()` - creates empty dict ✓
+2. `addItem` - updates existing or adds new ✓
+3. `removeItem` - removes or updates, no-op if not found ✓
+4. `viewItems` - shallow copy ✓
+5. `totalPrice` - sum of price * quantity ✓
+6. `Item` - with getters/setters ✓
+7. `Item.equals` - matches Java's Double.compare semantics ✓
+8. `Item.hashCode` - consistent with equals ✓
+
+One thing I want to double-check: in Java, `new HashMap<>(items)` creates a shallow copy where the keys and values are the same references. In Python, `dict(self._items)` does the same - it creates a new dict with the same key and value references. ✓
+
+I think this is complete and correct.
+</think>
+
+=== RAW ANSWER ===
+```python
+import math
+
+
+class ShoppingCart:
+
+    def __init__(self):
+        self._items = {}
+
+    def addItem(self, item, price, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            existing_item.setPrice(price)
+            existing_item.setQuantity(existing_item.getQuantity() + quantity)
+        else:
+            self._items[item] = Item(price, quantity)
+
+    def removeItem(self, item, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            new_quantity = existing_item.getQuantity() - quantity
+            if new_quantity <= 0:
+                del self._items[item]
+            else:
+                existing_item.setQuantity(new_quantity)
+
+    def viewItems(self):
+        return dict(self._items)
+
+    def totalPrice(self):
+        total = 0.0
+        for item in self._items.values():
+            total += item.getPrice() * item.getQuantity()
+        return total
+
+
+class Item:
+
+    def __init__(self, price, quantity):
+        self._price = price
+        self._quantity = quantity
+
+    def getPrice(self):
+        return self._price
+
+    def setPrice(self, price):
+        self._price = price
+
+    def getQuantity(self):
+        return self._quantity
+
+    def setQuantity(self, quantity):
+        self._quantity = quantity
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if type(self) is not type(other):
+            return False
+        return (_double_compare(self._price, other._price) == 0
+                and self._quantity == other._quantity)
+
+    def __hash__(self):
+        return hash((_double_key(self._price), self._quantity))
+
+
+def _double_compare(a, b):
+    """Replicates Java's Double.compare semantics."""
+    if math.isnan(a) and math.isnan(b):
+        return 0
+    if math.isnan(a):
+        return 1
+    if math.isnan(b):
+        return -1
+    if a == b:
+        if a == 0.0:
+            sa = math.copysign(1, a)
+            sb = math.copysign(1, b)
+            if sa < sb:
+                return -1
+            elif sa > sb:
+                return 1
+            return 0
+        return 0
+    return -1 if a < b else 1
+
+
+def _double_key(d):
+    """Returns a hashable key consistent with _double_compare for use in __hash__."""
+    if math.isnan(d):
+        return ('NaN',)
+    if d == 0.0:
+        return ('zero', math.copysign(1, d))
+    return d
+```
+
+**Key translation notes:**
+
+- **`HashMap` → `dict`**: Python dicts are used analogously; `containsKey` → `in`, `put` → assignment, `get` → indexing, `remove` → `del`.
+- **`viewItems`**: Returns a shallow copy via `dict(self._items)`, matching `new HashMap<>(items)`.
+- **`Item.__eq__`**: Uses `type(self) is not type(other)` to match Java's `getClass()` check (subclasses are not equal). The price comparison uses `_double_compare` to replicate Java's `Double.compare`, which treats `NaN == NaN` as true and `-0.0 ≠ 0.0`.
+- **`Item.__hash__`**: Uses `_double_key` to produce a hashable representation consistent with `__eq__` — distinguishing `-0.0` from `0.0` and handling `NaN`, ensuring `a == b → hash(a) == hash(b)`.
+- **Method names**: Kept in camelCase to match the Java API exactly.
+
+=== TRANSLATED CODE (py) ===
+import math
+
+
+class ShoppingCart:
+
+    def __init__(self):
+        self._items = {}
+
+    def addItem(self, item, price, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            existing_item.setPrice(price)
+            existing_item.setQuantity(existing_item.getQuantity() + quantity)
+        else:
+            self._items[item] = Item(price, quantity)
+
+    def removeItem(self, item, quantity):
+        if item in self._items:
+            existing_item = self._items[item]
+            new_quantity = existing_item.getQuantity() - quantity
+            if new_quantity <= 0:
+                del self._items[item]
+            else:
+                existing_item.setQuantity(new_quantity)
+
+    def viewItems(self):
+        return dict(self._items)
+
+    def totalPrice(self):
+        total = 0.0
+        for item in self._items.values():
+            total += item.getPrice() * item.getQuantity()
+        return total
+
+
+class Item:
+
+    def __init__(self, price, quantity):
+        self._price = price
+        self._quantity = quantity
+
+    def getPrice(self):
+        return self._price
+
+    def setPrice(self, price):
+        self._price = price
+
+    def getQuantity(self):
+        return self._quantity
+
+    def setQuantity(self, quantity):
+        self._quantity = quantity
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if type(self) is not type(other):
+            return False
+        return (_double_compare(self._price, other._price) == 0
+                and self._quantity == other._quantity)
+
+    def __hash__(self):
+        return hash((_double_key(self._price), self._quantity))
+
+
+def _double_compare(a, b):
+    """Replicates Java's Double.compare semantics."""
+    if math.isnan(a) and math.isnan(b):
+        return 0
+    if math.isnan(a):
+        return 1
+    if math.isnan(b):
+        return -1
+    if a == b:
+        if a == 0.0:
+            sa = math.copysign(1, a)
+            sb = math.copysign(1, b)
+            if sa < sb:
+                return -1
+            elif sa > sb:
+                return 1
+            return 0
+        return 0
+    return -1 if a < b else 1
+
+
+def _double_key(d):
+    """Returns a hashable key consistent with _double_compare for use in __hash__."""
+    if math.isnan(d):
+        return ('NaN',)
+    if d == 0.0:
+        return ('zero', math.copysign(1, d))
+    return d

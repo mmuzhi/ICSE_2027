@@ -1,0 +1,1556 @@
+=== PROMPT VARIANT ===
+r1
+
+=== BUGGY CODE ===
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            
+            if word in backward and backward[word] != i:
+                res.append([i, backward[word]])
+                
+            if word != "" and "" in backward and word == word[::-1]:
+                res.append([i, backward[""]])
+                res.append([backward[""], i])
+                
+            for j in range(len(word)):
+                if word[j:] in backward and word[:j] == word[j::-1]:
+                    res.append([backward[word[j:]], i])
+                if word[:j] in backward and word[j:] == word[:j-1:-1]:
+                    res.append([i, backward[word[:j]]])
+                    
+        return res
+
+=== PROMPT ===
+Observe the following faulty python code. It contains one or more bugs.
+Fix the code and output only the fixed code.
+
+```python
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            
+            if word in backward and backward[word] != i:
+                res.append([i, backward[word]])
+                
+            if word != "" and "" in backward and word == word[::-1]:
+                res.append([i, backward[""]])
+                res.append([backward[""], i])
+                
+            for j in range(len(word)):
+                if word[j:] in backward and word[:j] == word[j::-1]:
+                    res.append([backward[word[j:]], i])
+                if word[:j] in backward and word[j:] == word[:j-1:-1]:
+                    res.append([i, backward[word[:j]]])
+                    
+        return res
+```
+
+Reason in a repair-and-recheck way.
+
+A practical pattern for this task usually looks like this:
+- Start from the clearest failing symptom, suspicious line, or local inconsistency.
+- Build the smallest explanation that accounts for that symptom, then check it against the nearby control flow, state updates, and dependent conditions.
+- Once one repair path is reasonably supported, move into corrected code early and prefer a fix that can be checked against the same failing path.
+- After the edit, rerun that path or the most relevant edge case.
+- Then do one small coupled-region scan: a directly connected guard, index update, return path, or call site that could still break the same fix.
+- If the recheck is still off, refine the same local region before opening a distant new theory.
+- Once the failing path and its directly coupled region look consistent, finalize the code.
+
+Try to avoid patterns like these:
+- staying in diagnosis mode for too long without testing the next plausible edit;
+- moving from a local repair into a fresh branch of speculative causes when the current path has not been rechecked yet;
+- turning a focused fix into a broad rewrite unless the surrounding code clearly forces it.
+
+Output only the fixed Python code.
+
+=== REASONING ===
+<think>
+Looking at this code for `palindromePairs`, I need to find the bugs.
+
+The algorithm finds pairs of words that concatenate to form a palindrome.
+
+Let me trace through the logic:
+
+1. Build a `backward` map from reversed word to index.
+2. For each word, check:
+   - If the reversed word exists and is different index → pair
+   - If word is palindrome and empty string exists → pair with empty string
+   - For each split point j, check if one part's reverse exists and the other part is a palindrome
+
+Let me look at the bugs:
+
+**Bug 1**: The empty string case. When `word != ""` and `""` in backward and `word` is a palindrome, it adds both `[i, backward[""]]` and `[backward[""], i]`. But the first check (`if word in backward and backward[word] != i`) would already have caught the case where the word itself reversed equals another word. For the empty string case, if `word` is a palindrome, we need `[i, backward[""]]` and `[backward[""], i]`. But wait - if `word` is a palindrome, then `word[::-1] == word`, so `word in backward` would be true and `backward[word]` could be `i` itself (since we stored `backward[word[::-1]] = i`). So the first check would skip it because `backward[word] == i`. The empty string pair is correct but we'd get duplicates if we also find it through other means. Actually, the empty string case seems fine - if word is a palindrome, we need both orderings with the empty string.
+
+Wait, but the first condition `if word in backward and backward[word] != i` - for a palindrome word, `backward[word]` would be set to its own index (since `word[::-1] == word`). So `backward[word] == i` and it won't be added. The empty string case handles it separately. That seems correct.
+
+But wait - what about duplicates? If we have `["a", ""]`, the empty string check for word "a" would add `[0, 1]` and `[1, 0]`. Then for word "", the first check `if word in backward` - `""` in backward? Yes, `backward[""[::-1]] = backward[""] = 1`. And `backward[""] != 1`? No, `backward[""] == 1` and `i == 1`, so it won't be added. But wait, we need the pair `[1, 0]` and `[0, 1]`. The empty string check for word "a" already adds both. So that's fine.
+
+But actually there could be a duplicate issue. Let me think again...
+
+For `["a", ""]`:
+- backward = {"a": 0, "": 1}
+- i=0, word="a":
+  - "a" in backward and backward["a"]=0 != 0? No. Skip.
+  - "a" != "" and "" in backward and "a" == "a"[::-1]? Yes. Add [0, 1] and [1, 0].
+  - j=0: word[0:] = "a" in backward and word[:0] = "" == word[0::-1] = "a"? No.
+  - j=0: word[:0] = "" in backward and word[0:] = "a" == word[:0-1:-1] = word[:-1:-1] = ""? No. Wait, word[:j-1:-1] when j=0 is word[:-1:-1]. For word="a", word[:-1:-1] = "". "a" == ""? No.
+
+Hmm, that's fine. No duplicates.
+
+**Bug 2**: The palindrome check in the split logic. Let me look more carefully.
+
+For `word[:j] == word[j::-1]`: This checks if `word[:j]` is a palindrome. But `word[j::-1]` reverses from index j to 0, which is `word[:j+1][::-1]`, not `word[:j][::-1]`. So this is checking if `word[:j]` equals `word[:j+1][::-1]`, which is wrong.
+
+Wait, let me re-examine. `word[j::-1]` means start at index j, go to beginning, step -1. So for word="abcd", j=2: `word[2::-1]` = "cba". And `word[:j]` = "ab". So we're checking if "ab" == "cba", which is wrong.
+
+What we actually want: check if `word[:j]` is a palindrome. That means `word[:j] == word[:j][::-1]`, i.e., `word[:j] == word[j-1::-1]` (or `word[:j][::-1]`).
+
+Actually wait, let me reconsider what the algorithm is trying to do.
+
+For a split at position j:
+- Left part: `word[:j]`, Right part: `word[j:]`
+- If right part's reverse exists in backward, and left part is a palindrome, then we can form: `backward[word[j:]]` + `word` = `word[j:][::-1]` + `word[:j]` + `word[j:]`. For this to be a palindrome, `word[j:][::-1]` must be the reverse of `word[:j] + word[j:]`'s prefix... Actually, let me think differently.
+
+If we concatenate `other + word` and want it to be a palindrome:
+- other = word[j:][::-1] (so word[j:] in backward gives us the index of other)
+- other + word = word[j:][::-1] + word[:j] + word[j:]
+- For this to be a palindrome, word[j:][::-1] + word[:j] + word[j:] must equal its reverse
+- Reverse: word[j:][::-1] + word[:j][::-1] + word[j:]
+- So we need word[:j] == word[:j][::-1], i.e., word[:j] is a palindrome.
+
+So the check should be: `word[:j]` is a palindrome, i.e., `word[:j] == word[:j][::-1]`.
+
+In the code: `word[:j] == word[j::-1]`
+- `word[j::-1]` = `word[:j+1][::-1]`, not `word[:j][::-1]`
+
+This is a bug! It should be `word[:j] == word[:j][::-1]` or equivalently `word[:j] == word[j-1::-1]` (but careful with j=0).
+
+Similarly, for the other case:
+- If left part's reverse exists in backward, and right part is a palindrome
+- word + other where other = word[:j][::-1]
+- word[:j] + word[j:] + word[:j][::-1]
+- For this to be a palindrome, word[j:] must be a palindrome
+- Check: `word[j:] == word[j:][::-1]`
+
+In the code: `word[j:] == word[:j-1:-1]`
+- `word[:j-1:-1]` means start at end, go to index j (exclusive), step -1. This is `word[j:][::-1]` only if we're careful.
+
+Wait, `word[:j-1:-1]` - this slices from the end to index j-1 (exclusive), stepping -1. So it's `word[len(word)-1:j-1:-1]` which is `word[j:][::-1]` only if... let me check with an example.
+
+word = "abcd", j=2:
+- word[:j-1:-1] = word[:1:-1] = word[3:1:-1] = "dc"
+- word[j:] = "cd"
+- word[j:][::-1] = "dc"
+
+OK so word[:j-1:-1] = word[j:][::-1] when j > 0. But what about j=0?
+- word[:-1:-1] = word[len-1:-1:-1] = ... hmm, this would be empty because we start at len-1 and go to -1 exclusive, which means we go all the way to index 0. Wait no.
+
+Actually, `word[:j-1:-1]` when j=0 becomes `word[:-1:-1]`. In Python, `word[:-1:-1]` means start from the end, step -1, stop before index -1. Since -1 in Python indexing is the last element, and we stop before it... Actually, let me just test this mentally.
+
+For word = "abcd":
+- `word[:-1:-1]` - start is omitted (defaults to end for step -1), so start=3, stop=-1, step=-1. This gives indices 3, 2, 1, 0... wait, stop=-1 means stop before index -1 which is index len-1=3. So we stop before 3, giving indices 3... no that doesn't make sense.
+
+Actually in Python slicing, `word[:-1:-1]`:
+- start is omitted, step is -1, so start defaults to the end (index len-1 = 3)
+- stop is -1, which in terms of the actual index is len-1 = 3
+- So this is word[3:3:-1] = ""
+
+Hmm, that's wrong. When j=0, we want word[0:] which is the whole word, and we want to check if it's a palindrome. word[:0-1:-1] = word[:-1:-1] = "" which is wrong.
+
+Actually wait, the loop is `for j in range(len(word))`, so j goes from 0 to len(word)-1.
+
+When j=0:
+- First condition: word[0:] in backward and word[:0] == word[0::-1]
+  - word[:0] = "" and word[0::-1] = word[0] (first char reversed) = first char
+  - "" == first char? Only if word is empty, but j ranges over len(word) which is 0 if word is empty (and then the loop doesn't execute)
+  - So this is checking if "" is a palindrome, which it is, but the check is wrong
+
+- Second condition: word[:0] in backward and word[0:] == word[:-1:-1]
+  - word[:0] = "" in backward? Possibly
+  - word[0:] = full word, word[:-1:-1] = "" (as computed above)
+  - full word == ""? Only if word is empty
+
+So the j=0 case is buggy for the second condition.
+
+Let me reconsider the correct checks:
+
+For the first case (other word goes before current word):
+- We split word at j: left = word[:j], right = word[j:]
+- If right's reverse exists (backward[word[j:]]) and left is a palindrome
+- Check: word[:j] is a palindrome → word[:j] == word[:j][::-1]
+
+For the second case (other word goes after current word):
+- We split word at j: left = word[:j], right = word[j:]
+- If left's reverse exists (backward[word[:j]]) and right is a palindrome
+- Check: word[j:] is a palindrome → word[j:] == word[j:][::-1]
+
+So the correct code should be:
+```python
+if word[j:] in backward and word[:j] == word[:j][::-1]:
+    res.append([backward[word[j:]], i])
+if word[:j] in backward and word[j:] == word[j:][::-1]:
+    res.append([i, backward[word[:j]]])
+```
+
+But wait, using `word[:j][::-1]` and `word[j:][::-1]` creates new strings which is less efficient but correct. The original code tried to use clever slicing to avoid creating new strings but got it wrong.
+
+Let me verify the original bugs:
+
+1. `word[:j] == word[j::-1]` should be `word[:j] == word[:j][::-1]`
+   - word[j::-1] = word[:j+1][::-1] (includes character at index j)
+   - This is wrong because it includes one extra character
+
+2. `word[j:] == word[:j-1:-1]` should be `word[j:] == word[j:][::-1]`
+   - word[:j-1:-1] is supposed to be word[j:][::-1] but fails at j=0
+
+Let me also think about whether there are duplicate results. The first check `if word in backward and backward[word] != i` would find the case where the entire word reversed equals another word. But the loop with j could also find this when j=0 or j=len(word). Wait, j only goes up to len(word)-1, not len(word). When j=len(word), word[j:] = "" and word[:j] = word. So we'd check if "" is in backward and word is a palindrome. That's the empty string case which is handled separately.
+
+Actually, could there be duplicates between the first check and the loop? Let's say word="abc" and there's another word "cba". The first check finds [i, backward["cba"]]. In the loop, when j=0: word[0:]="abc" in backward? backward["abc"] would be the index of "abc" reversed = "cba", no wait, backward maps reversed words. backward["cba"[::-1]] = backward["abc"] = index of "cba". So backward contains "abc" → index of "cba". So word[0:] = "abc" in backward? Yes, backward["abc"] = index of "cba". And word[:0] = "" == word[:0][::-1] = ""? Yes. So we'd add [backward["abc"], i] = [index of "cba", i]. This is the same pair as the first check but reversed!
+
+Wait no. The first check adds [i, backward[word]] where backward[word] = backward["abc"] = index of "cba". So it adds [i_of_abc, i_of_cba]. The loop adds [backward[word[0:]], i] = [backward["abc"], i_of_abc] = [i_of_cba, i_of_abc]. These are different pairs (different orderings).
+
+But wait, when we process word="cba" (at index i_of_cba), the first check would find "cba" in backward and backward["cba"] = i_of_abc (since backward["cba"] was set when processing "abc" because "abc"[::-1] = "cba"). So it adds [i_of_cba, i_of_abc]. And the loop for j=0 would add [backward["cba"], i_of_cba] = [i_of_abc, i_of_cba].
+
+So we get:
+- From word="abc": [i_abc, i_cba] and [i_cba, i_abc]
+- From word="cba": [i_cba, i_abc] and [i_abc, i_cba]
+
+That's duplicates! We'd have each pair twice.
+
+Hmm, but looking at the original code more carefully, when j=0:
+- word[:0] = "" and word[0::-1] = first character. "" == first_char is only true if the word is empty (but then the loop doesn't run). So with the buggy code, j=0 doesn't produce duplicates for non-empty words.
+
+But with the fix `word[:j] == word[:j][::-1]`, when j=0: word[:0] = "" and ""[::-1] = "". So "" == "" is True. This means for j=0, if word[0:] (the whole word) is in backward, we'd add [backward[word], i]. But backward[word] is the index of the word whose reverse is `word`. And the first check already handles this case (when backward[word] != i).
+
+So we'd get duplicates! We need to handle this.
+
+One approach: in the loop, skip j=0 for the first condition (since it's handled by the first check), and skip j=len(word) for the second condition (but j doesn't reach len(word) anyway).
+
+Wait, actually let me reconsider. The first condition adds [backward[word[j:]], i]. When j=0, this is [backward[word], i]. The first check adds [i, backward[word]]. These are different orderings - one is [backward[word], i] and the other is [i, backward[word]]. So they're not duplicates of each other, but they represent different concatenations.
+
+Actually wait, let me think about what pairs mean. [a, b] means words[a] + words[b] is a palindrome.
+
+First check: [i, backward[word]] means word + word[::-1] is a palindrome. This is true when backward[word] != i (meaning the reverse is a different word).
+
+Loop j=0, first condition: [backward[word[0:]], i] = [backward[word], i] means word[::-1] + word is a palindrome. This is also true.
+
+So [i, backward[word]] and [backward[word], i] are both valid pairs but different pairs. They're not duplicates.
+
+But when we process the other word (the one at index backward[word]), we'd also get these same pairs. Let me check:
+
+When processing word at index backward[word] (let's call it word2, where word2 = word[::-1]):
+- First check: word2 in backward and backward[word2] != i2. backward[word2] = backward[word[::-1]] = i (the original word's index). So we add [i2, i] = [backward[word], i]. This is the same as what the loop found for the original word.
+- Loop j=0: [backward[word2], i2] = [i, backward[word]]. Same as the first check for the original word.
+
+So yes, we get duplicates across different iterations of the outer loop. The original code avoids this because the j=0 case in the loop doesn't trigger (due to the bug in the palindrome check).
+
+So the fix needs to also handle duplicates. One common approach is to add a condition to skip j=0 in the first sub-condition and not have j reach len(word) in the second sub-condition.
+
+Wait, actually, let me reconsider. The standard approach for this problem:
+
+For each word at index i:
+1. If the reverse of the entire word exists at a different index j, then [i, j] is a pair.
+2. For each split point j (1 to len(word)-1 for left split, 0 to len(word)-1 for right split):
+   - If word[:j] is a palindrome and word[j:][::-1] exists at index k (k != i), then [k, i] is a pair.
+   - If word[j:] is a palindrome and word[:j][::-1] exists at index k (k != i), then [i, k] is a pair.
+
+But we need to avoid the case where j=0 in the first sub-condition (because word[:0] = "" is always a palindrome, and word[0:][::-1] = word[::-1], which is the same as case 1). Similarly, j=len(word) in the second sub-condition would be the same as case 1.
+
+Actually, the standard approach handles this by:
+- For the first sub-condition: j ranges from 1 to len(word) (so word[:j] is non-empty)
+- For the second sub-condition: j ranges from 0 to len(word)-1 (so word[j:] is non-empty)
+
+Wait, but we also need to handle the empty string case. If word is a palindrome and there's an empty string, we need [i, empty_index] and [empty_index, i]. The first check would catch [empty_index, i] if the empty string's reverse (which is "") is in backward. And the loop would catch [i, empty_index] when j=len(word) and word[:len(word)] = word is a palindrome.
+
+Hmm, this is getting complicated. Let me look at what a correct solution looks like.
+
+Standard correct approach:
+
+```python
+def palindromePairs(self, words):
+    backward = {word[::-1]: i for i, word in enumerate(words)}
+    res = []
+    for i, word in enumerate(words):
+        for j in range(len(word) + 1):
+            # Case 1: word[:j] is palindrome, word[j:][::-1] exists
+            # Then word[j:][::-1] + word[:j] + word[j:] is palindrome
+            if word[:j] == word[:j][::-1] and word[j:] in backward and backward[word[j:]] != i:
+                res.append([backward[word[j:]], i])
+            # Case 2: word[j:] is palindrome, word[:j][::-1] exists  
+            # Then word[:j] + word[j:] + word[:j][::-1] is palindrome
+            if word[j:] == word[j:][::-1] and word[:j] in backward and backward[word[:j]] != i:
+                res.append([i, backward[word[:j]]])
+    return res
+```
+
+But this would produce duplicates. For example, if word="abc" and "cba" exists:
+- j=0, case 1: word[:0]="" is palindrome, word[0:]="abc" in backward? Yes (backward["abc"]=index of "cba"). Add [index_cba, i_abc].
+- j=3, case 2: word[3:]="" is palindrome, word[:3]="abc" in backward? Yes. Add [i_abc, index_cba].
+
+And when processing "cba":
+- j=0, case 1: Add [i_abc, i_cba]
+- j=3, case 2: Add [i_cba, i_abc]
+
+So we get each pair twice. To avoid this, we can use a set or we can restrict j ranges.
+
+The typical approach to avoid duplicates:
+- For case 1: j ranges from 1 to len(word) (skip j=0 since empty prefix is always palindrome, and this case is covered by case 2 with j=len(word) of the other word, or by the full reverse check)
+- For case 2: j ranges from 0 to len(word)-1 (skip j=len(word) since empty suffix is always palindrome)
+
+Wait, but that still might have duplicates. Let me think again...
+
+Actually, the key insight is:
+- Case 1 with j=0: This finds pairs where the other word is the full reverse. This is the same as the "full reverse" check.
+- Case 2 with j=len(word): This also finds pairs where the other word is the full reverse.
+
+If we do both case 1 and case 2 for all j from 0 to len(word), we'd find the full reverse pair twice (once from case 1 j=0 and once from case 2 j=len(word)).
+
+But actually, case 1 j=0 gives [backward[word], i] and case 2 j=len(word) gives [i, backward[word]]. These are different pairs (different orderings). So they're not duplicates of each other.
+
+The real duplicate issue is: when processing word A, case 1 j=0 gives [backward[A], i_A]. When processing word B (=A[::-1]), case 2 j=len(B) gives [i_B, backward[B]] = [i_B, i_A]. These are the same pair!
+
+Similarly, case 2 j=len(word) for A gives [i_A, backward[A]] = [i_A, i_B], and case 1 j=0 for B gives [backward[B], i_B] = [i_A, i_B]. Same pair!
+
+So to avoid duplicates, we can:
+1. Skip j=0 in case 1 and j=len(word) in case 2, and handle the full reverse case separately with a single check.
+2. Or use a set to deduplicate.
+
+Looking at the original code, it seems like the approach was:
+- Handle full reverse separately (first check)
+- In the loop, j ranges from 0 to len(word)-1
+- Case 1: word[j:] in backward and word[:j] is palindrome → [backward[word[j:]], i]
+- Case 2: word[:j] in backward and word[j:] is palindrome → [i, backward[word[:j]]]
+
+With j starting from 0, case 1 at j=0 would be: word[0:] in backward and word[:0] is palindrome → [backward[word], i]. This is the reverse of the full reverse check. So it would produce a duplicate when the other word is processed.
+
+With j ending at len(word)-1, case 2 at j=len(word)-1 would be: word[:len(word)-1] in backward and word[len(word)-1:] is palindrome. This is fine.
+
+But the original code's first check already handles [i, backward[word]], and the loop's case 1 at j=0 would handle [backward[word], i]. These are different pairs. The duplicate would come from processing the other word.
+
+Hmm, I think the cleanest fix is:
+
+1. Fix the palindrome checks: `word[:j] == word[:j][::-1]` and `word[j:] == word[j:][::-1]`
+2. In the loop, start j from 1 for case 1 (to avoid the j=0 duplicate with the full reverse check from the other word's perspective)
+3. Keep j going up to len(word)-1 for case 2
+
+Wait, but then we'd miss some pairs. Let me think about what pairs we'd miss.
+
+If we skip j=0 in case 1, we miss [backward[word], i] where the other word is the full reverse of word. But this pair is found when processing the other word: the first check gives [i_other, backward[other]] where other = word[::-1], so backward[other] = backward[word[::-1]] = i. So [i_other, i] = [backward[word], i]. Yes, this is found!
+
+So skipping j=0 in case 1 is fine because the pair [backward[word], i] is found by the first check when processing the other word.
+
+Similarly, if we had j going up to len(word) in case 2, we'd get [i, backward[word[:len(word)]]] = [i, backward[word]] at j=len(word). This is the same as the first check. So we should skip j=len(word) in case 2.
+
+The original loop goes from 0 to len(word)-1, so j never reaches len(word). That's fine for case 2.
+
+But for case 1, j starts at 0, which would give [backward[word], i]. This is a valid pair that's also found when processing the other word. So it's a duplicate.
+
+To fix: start j from 1 in case 1, or add `backward[word[j:]] != i` check.
+
+Actually, wait. Even with j starting from 1, we could still have issues. Consider word = "ab", and there's a word "ba" in the list. When j=1: case 1 checks if word[1:]="b" is in backward and word[:1]="a" is a palindrome. "a" is a palindrome, and "b" in backward only if there's a word whose reverse is "b", i.e., word "b". This is a different scenario.
+
+I think the cleanest approach is to just add the `backward[word[j:]] != i` and `backward[word[:j]] != i` checks to avoid self-pairing, and handle duplicates by either using a set or by being careful about j ranges.
+
+Let me look at the original code again and figure out the minimal fix:
+
+Original bugs:
+1. `word[:j] == word[j::-1]` should be `word[:j] == word[:j][::-1]` (palindrome check for prefix)
+2. `word[j:] == word[:j-1:-1]` should be `word[j:] == word[j:][::-1]` (palindrome check for suffix)
+
+These are the core bugs. Let me also check for the duplicate issue.
+
+With the fixed palindrome checks, when j=0:
+- Case 1: word[0:] in backward and word[:0]="" == ""[::-1]="". So if word is in backward, we add [backward[word], i]. But we need backward[word] != i to avoid self-pairing.
+- Case 2: word[:0]="" in backward and word[0:] == word[0:][::-1]. If "" is in backward and word is a palindrome, we add [i, backward[""]]. This overlaps with the explicit empty string check.
+
+So with the fix, we'd get duplicates from:
+1. The explicit empty string check and case 2 with j=0
+2. The first full-reverse check and case 1 with j=0 (from the other word's processing)
+
+For issue 1: The explicit empty string check adds [i, backward[""]] and [backward[""], i]. Case 2 with j=0 adds [i, backward[""]] when word is a palindrome and "" is in backward. So [i, backward[""]] is duplicated. And case 1 with j=0 when word is a palindrome and "" is in backward: word[0:] = word is in backward (backward[word] exists), and word[:0]="" is a palindrome, so we add [backward[word], i]. But backward[word] for a palindrome word is i itself (since word[::-1]=word), so backward[word]=i, and we'd be adding [i, i] which is wrong. We need the != i check.
+
+Hmm wait, backward[word] = i only if word is a palindrome. If word is "aba", then backward["aba"] = i_aba. So backward[word] = i, and [backward[word], i] = [i, i] which is wrong. We need to check backward[word[j:]] != i.
+
+OK let me just write the correct solution:
+
+```python
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            for j in range(len(word) + 1):
+                # Case 1: prefix word[:j] is palindrome, suffix word[j:] reversed exists
+                if word[:j] == word[:j][::-1] and word[j:] in backward and backward[word[j:]] != i:
+                    res.append([backward[word[j:]], i])
+                # Case 2: suffix word[j:] is palindrome, prefix word[:j] reversed exists
+                if j < len(word) and word[j:] == word[j:][::-1] and word[:j] in backward and backward[word[:j]] != i:
+                    res.append([i, backward[word[:j]]])
+        return res
+```
+
+Wait, but this would still produce duplicates. When word A and word B are reverses of each other:
+- Processing A, j=0, case 1: [backward[A], i_A] = [i_B, i_A]
+- Processing B, j=0, case 1: [backward[B], i_B] = [i_A, i_B]
+- Processing A, j=len(A), case 2: [i_A, backward[A]] = [i_A, i_B]
+- Processing B, j=len(B), case 2: [i_B, backward[B]] = [i_B, i_A]
+
+So [i_A, i_B] appears twice and [i_B, i_A] appears twice.
+
+To avoid duplicates, I should restrict j:
+- Case 1: j from 1 to len(word) (skip j=0, as the reverse pair is found by case 2 when processing the other word)
+- Case 2: j from 0 to len(word)-1 (skip j=len(word), as the reverse pair is found by case 1 when processing the other word)
+
+Wait, that doesn't work either. Let me think again.
+
+Case 1 with j=0: finds [backward[word], i] — the other word is the full reverse, placed before.
+Case 2 with j=len(word): finds [i, backward[word]] — the other word is the full reverse, placed after.
+
+These are different pairs. [backward[word], i] means other+word is palindrome. [i, backward[word]] means word+other is palindrome.
+
+When processing the other word (word2 = word[::-1]):
+Case 1 with j=0: [backward[word2], i2] = [i, i2] — same as [i, backward[word]]
+Case 2 with j=len(word2): [i2, backward[word2]] = [i2, i] — same as [backward[word], i]
+
+So:
+- [backward[word], i] is found by: case 1 j=0 of word, AND case 2 j=len of word2
+- [i, backward[word]] is found by: case 2 j=len of word, AND case 1 j=0 of word2
+
+Each pair is found twice. To avoid this, we can:
+- In case 1, skip j=0 (then [backward[word], i] is only found by case 2 j=len of word2)
+- In case 2, skip j=len(word) (then [i, backward[word]] is only found by case 1 j=0 of word2)
+
+But then we need to make sure j=len(word) is included in the range for case 2... wait, I said skip it. Let me re-examine.
+
+If we skip j=0 in case 1 and skip j=len(word) in case 2:
+- [backward[word], i] is found only by case 2 j=len(word2) when processing word2. ✓
+- [i, backward[word]] is found only by case 1 j=0 of word2 when processing word2. But we're skipping j=0 in case 1! ✗
+
+So this doesn't work. We'd miss the pair [i, backward[word]].
+
+Alternative: skip j=0 in case 1, but keep j=len(word) in case 2. Then:
+- [backward[word], i] is found by case 2 j=len(word2) when processing word2. ✓
+- [i, backward[word]] is found by case 2 j=len(word) when processing word. ✓
+
+But [i, backward[word]] is also found by case 1 j=0 of word2. Since we skip j=0 in case 1, no duplicate. ✓
+
+And [backward[word], i] is also found by case 1 j=0 of word. Since we skip j=0 in case 1, no duplicate from word itself. But it's found by case 2 j=len(word2) of word2. Only once. ✓
+
+Wait, but what about the pair [backward[word], i] from case 1 j=0 of word? We're skipping it. Is it found elsewhere? Yes, case 2 j=len(word2) when processing word2 finds [i2, backward[word2]] = [i2, i] = [backward[word], i]. ✓
+
+OK so the approach is:
+- Case 1: j from 1 to len(word) — skip j=0
+- Case 2: j from 0 to len(word) — include j=len(word)
+
+But wait, at j=len(word), case 2 checks: word[len(word):] = "" is palindrome (yes), and word[:len(word)] = word is in backward. So it checks if word's reverse exists. This is the full reverse case.
+
+And case 1 at j=len(word): word[:len(word)] = word is palindrome? Only if word is a palindrome. And word[len(word):] = "" in backward? Only if there's an empty string. This is the empty string + palindrome case.
+
+Hmm, this is getting complicated. Let me just go with the approach that avoids duplicates by restricting j ranges properly.
+
+Actually, the simplest correct approach that avoids duplicates:
+
+```python
+for i, word in enumerate(words):
+    for j in range(len(word) + 1):
+        prefix, suffix = word[:j], word[j:]
+        # If prefix is palindrome, check if reverse of suffix exists
+        if prefix == prefix[::-1] and suffix in backward and backward[suffix] != i:
+            res.append([backward[suffix], i])
+        # If suffix is palindrome, check if reverse of prefix exists
+        # Only when suffix is non-empty to avoid duplicates with the first condition
+        if suffix and suffix == suffix[::-1] and prefix in backward and backward[prefix] != i:
+            res.append([i, backward[prefix]])
+```
+
+The key: in case 2, require suffix to be non-empty. This avoids the duplicate where j=len(word) in case 2 gives the same pair as j=0 in case 1 of the reversed word.
+
+Wait, let me verify. With suffix non-empty requirement in case 2:
+
+For word A and word B = A[::-1]:
+- Processing A:
+  - j=0, case 1: prefix="" palindrome, suffix=A in backward? Yes (backward[A]=i_B). Add [i_B, i_A]. ✓
+  - j=len(A), case 2: suffix="" is empty, skip. ✓
+- Processing B:
+  - j=0, case 1: prefix="" palindrome, suffix=B in backward? Yes (backward[B]=i_A). Add [i_A, i_B]. ✓
+  - j=len(B), case 2: suffix="" is empty, skip. ✓
+
+No duplicates! Each pair is found exactly once.
+
+What about the empty string case? word A is a palindrome, and "" exists:
+- Processing A:
+  - j=0, case 1: prefix="" palindrome, suffix=A in backward? backward[A] = i_A (since A is palindrome, A[::-1]=A). backward[A] != i_A? No. Skip. ✓ (correct, we don't want [i_A, i_A])
+  - j=len(A), case 1: prefix=A palindrome (A is palindrome), suffix="" in backward? Yes. backward[""] != i_A? Yes. Add [backward[""], i_A]. ✓
+  - j=len(A), case 2: suffix="" is empty, skip.
+- Processing "":
+  - j=0, case 1: prefix="" palindrome, suffix="" in backward? backward[""] = i_empty. backward[""] != i_empty? No. Skip.
+  - j=1 (len("")=0, so loop doesn't execute for empty string)
+
+Wait, for empty string, len("")=0, so range(1) = [0]. j=0:
+- case 1: prefix="" palindrome, suffix="" in backward? backward[""]=i_empty. != i_empty? No. Skip.
+- case 2: suffix="" is empty, skip.
+
+So we only get [backward[""], i_A] from processing A, which is [i_empty, i_A]. But we also need [i_A, i_empty] (i.e., A + "" is a palindrome, which it is since A is a palindrome).
+
+Hmm, where does [i_A, i_empty] come from? It should come from case 2 with suffix being a palindrome and prefix's reverse existing.
+
+Processing A:
+- Some j where suffix is a palindrome and prefix's reverse exists. If A = "aba":
+  - j=0: case 2: suffix="aba" palindrome, prefix="" in backward? backward[""]=i_empty. Add [i_A, i_empty]. ✓
+
+But wait, I said suffix must be non-empty for case 2. "aba" is non-empty. So this works!
+
+Let me re-check: j=0, case 2: suffix=word[0:]="aba", which is non-empty and a palindrome. prefix=word[:0]="", and "" in backward? Yes. backward[""]=i_empty != i_A? Yes. Add [i_A, i_empty]. ✓
+
+And from case 1 j=len(A): Add [i_empty, i_A]. ✓
+
+So we get both [i_empty, i_A] and [i_A, i_empty]. 
+
+But wait, what about duplicates? When processing the empty string:
+- j=0, case 1: suffix="" in backward, backward[""]=i_empty, != i_empty? No. Skip.
+- j=0, case 2: suffix="" is empty, skip.
+
+No additional pairs from processing "". Good, no duplicates.
+
+But what about when A is not a palindrome and B = A[::-1] exists? Let's check for duplicates more carefully.
+
+A = "abc", B = "cba", i_A = 0, i_B = 1.
+backward = {"cba": 0, "abc": 1}
+
+Processing A (i=0):
+- j=0: case 1: prefix="" palindrome, suffix="abc" in backward? backward["abc"]=1. != 0? Yes. Add [1, 0]. 
+  case 2: suffix="abc" non-empty, "abc"=="cba"? No. Skip.
+- j=1: case 1: prefix="a" palindrome, suffix="bc" in backward? backward["bc"]? Only if there's a word "cb". Assume no. Skip.
+  case 2: suffix="bc" non-empty, "bc"=="cb"? No. Skip.
+- j=2: case 1: prefix="ab" palindrome? No. Skip.
+  case 2: suffix="c" palindrome, prefix="ab" in backward? backward["ab"]? Only if there's word "ba". Assume no. Skip.
+- j=3: case 1: prefix="abc" palindrome? No. Skip.
+  case 2: suffix="" empty, skip.
+
+Processing B (i=1):
+- j=0: case 1: prefix="" palindrome, suffix="cba" in backward? backward["cba"]=0. != 1? Yes. Add [0, 1].
+  case 2: suffix="cba" non-empty, "cba"=="abc"? No. Skip.
+- j=1: case 1: prefix="c" palindrome, suffix="ba" in backward? backward["ba"]? Assume no. Skip.
+  case 2: suffix="ba" non-empty, "ba"=="ab"? No. Skip.
+- j=2: case 1: prefix="cb" palindrome? No. Skip.
+  case 2: suffix="a" palindrome, prefix="cb" in backward? backward["cb"]? Assume no. Skip.
+- j=3: case 1: prefix="cba" palindrome? No. Skip.
+  case 2: suffix="" empty, skip.
+
+Result: [[1, 0], [0, 1]]. Correct and no duplicates!
+
+Now let me also check: what if there are words like "ab", "ba", "a"?
+backward = {"ba": 0, "ab": 1, "a": 2}
+
+Processing "ab" (i=1):
+- j=0: case 1: suffix="ab" in backward? backward["ab"]=1. != 1? No. Skip.
+  case 2: suffix="ab" non-empty, palindrome? No. Skip.
+- j=1: case 1: prefix="a" palindrome, suffix="b" in backward? backward["b"]? No. Skip.
+  case 2: suffix="b" palindrome, prefix="a" in backward? backward["a"]=2. != 1? Yes. Add [1, 2].
+- j=2: case 1: prefix="ab" palindrome? No. Skip.
+  case 2: suffix="" empty, skip.
+
+Processing "ba" (i=0):
+- j=0: case 1: suffix="ba" in backward? backward["ba"]=0. != 0? No. Skip.
+  case 2: suffix="ba" palindrome? No. Skip.
+- j=1: case 1: prefix="b" palindrome, suffix="a" in backward? backward["a"]=2. != 0? Yes. Add [2, 0].
+  case 2: suffix="a" palindrome, prefix="b" in backward? backward["b"]? No. Skip.
+- j=2: case 1: prefix="ba" palindrome? No. Skip.
+  case 2: suffix="" empty, skip.
+
+Processing "a" (i=2):
+- j=0: case 1: suffix="a" in backward? backward["a"]=2. != 2? No. Skip.
+  case 2: suffix="a" palindrome, prefix="" in backward? backward[""]? No. Skip.
+- j=1: case 1: prefix="a" palindrome, suffix="" in backward? No. Skip.
+  case 2: suffix="" empty, skip.
+
+Result: [[1, 2], [2, 0]]. Let me verify:
+- "ab" + "a" = "aba" palindrome? Yes! ✓
+- "a" + "ba" = "aba" palindrome? Yes! ✓
+
+What about "ba" + "a" = "baa"? Not palindrome. "a" + "ab" = "aab"? Not palindrome. Correct that these aren't included.
+
+But wait, what about "ab" + "ba" = "abba"? That's a palindrome! And "ba" + "ab" = "baab"? Not a palindrome.
+
+"ab" + "ba" = "abba" — this should be found. When processing "ab" (i=1):
+- j=0, case 1: suffix="ab" in backward? backward["ab"]=1 (self). Skip.
+Hmm, backward["ab"] = 1 because "ba"[::-1] = "ab" and "ab"[::-1] = "ba". So backward = {"ba": 0, "ab": 1, "a": 2}. backward["ab"] = 1, which equals i=1. So skip.
+
+But "ab" + "ba" = "abba" is a palindrome. How should this be found?
+
+When processing "ab" (i=1), we need to find that "ba" (at index 0) can be appended. "ab" + "ba" — the suffix of "ab" that is a palindrome is... well, we need word[j:] to be a palindrome and word[:j][::-1] to exist. For j=2: word[2:]="" is empty (skip in case 2). For j=1: word[1:]="b" is a palindrome, word[:1]="a", backward["a"]=2. So we'd add [1, 2] which is "ab"+"a"="aba". That's correct but different.
+
+For "ab"+"ba", we need case 2 where j=0: suffix="ab" is a palindrome? No, "ab" is not a palindrome.
+
+Hmm, actually "ab" + "ba" = "abba". For this, we need the entire word "ab" followed by "ba". In our framework, this means word[:j][::-1] should equal "ba", so word[:j] = "ab", j=2. Then word[j:] = "" must be a palindrome (it is, but we skip empty suffix in case 2).
+
+Oh! The issue is that by skipping empty suffix in case 2, we miss the case where the full word's reverse exists and should be appended. But this case is handled by case 1 j=0 of the other word!
+
+Processing "ba" (i=0):
+- j=0, case 1: suffix="ba" in backward? backward["ba"]=0 (self). Skip.
+
+Hmm, backward["ba"] = 0 because when we process "ba" at index 0, we set backward["ba"[::-1]] = backward["ab"] = 0. Wait no, backward[word[::-1]] = i. So for word="ba" at i=0: backward["ab"] = 0. For word="ab" at i=1: backward["ba"] = 1.
+
+So backward = {"ab": 0, "ba": 1, "a": 2}.
+
+Processing "ab" (i=1):
+- j=0, case 1: suffix="ab" in backward? backward["ab"]=0. != 1? Yes. Add [0, 1]. This means words[0] + words[1] = "ba" + "ab" = "baab". Is "baab" a palindrome? "baab"[::-1] = "baab". Yes! ✓
+
+Oh wait, I had the backward map wrong earlier. Let me redo.
+
+words = ["ba", "ab", "a"]
+backward = {}
+- i=0, word="ba": backward["ab"] = 0
+- i=1, word="ab": backward["ba"] = 1
+- i=2, word="a": backward["a"] = 2
+
+backward = {"ab": 0, "ba": 1, "a": 2}
+
+Processing "ab" (i=1):
+- j=0, case 1: suffix="ab" in backward? backward["ab"]=0. != 1? Yes. Add [0, 1]. → "ba"+"ab"="baab" palindrome? Yes ✓
+
+Processing "ba" (i=0):
+- j=0, case 1: suffix="ba" in backward? backward["ba"]=1. != 0? Yes. Add [1, 0]. → "ab"+"ba"="abba" palindrome? Yes ✓
+
+So both [0,1] and [1,0] are found through case 1 j=0. And with the suffix non-empty restriction in case 2, there are no duplicates from case 2 j=len.
+
+Great, the approach works!
+
+Now, let me also handle the edge case where the same pair might be found through both case 1 and case 2 for different j values. For example, if word = "aba" and there's a word "a" at some index:
+
+Processing "aba":
+- j=0, case 1: suffix="aba" in backward? If backward["aba"] exists and != i. If "aba" is a palindrome, backward["aba"] = i (self). Skip.
+- j=1, case 1: prefix="a" palindrome, suffix="ba" in backward? backward["ba"]? If "ab" exists. 
+- j=1, case 2: suffix="ba" palindrome? No.
+- j=2, case 1: prefix="ab" palindrome? No.
+- j=2, case 2: suffix="a" palindrome, prefix="ab" in backward? backward["ab"]? If "ba" exists.
+- j=3, case 1: prefix="aba" palindrome, suffix="" in backward? If "" exists.
+- j=3, case 2: suffix="" empty, skip.
+
+This seems fine, no duplicates within a single word's processing.
+
+Could there be duplicates across different words? Let me think... If word A at j1 in case 1 gives the same pair as word B at j2 in case 2, that would be a duplicate.
+
+Case 1 gives [backward[suffix_A], i_A] where suffix_A = A[j1:].
+Case 2 gives [i_B, backward[prefix_B]] where prefix_B = B[:j2].
+
+For these to be the same pair: backward[suffix_A] = i_B and i_A = backward[prefix_B].
+This means B = suffix_A[::-1] and A = prefix_B[::-1].
+So B = A[j1:][::-1] and A = B[:j2][::-1].
+
+From the second: A = B[:j2][::-1], so A[::-1] = B[:j2], meaning B[:j2] = A[::-1].
+And B = A[j1:][::-1], so B[::-1] = A[j1:], meaning A[j1:] = B[::-1].
+
+Also, the conditions: A[:j1] is a palindrome, and B[j2:] is a palindrome.
+
+This is possible in theory, leading to duplicates. For example:
+A = "ab", B = "ba", j1=0, j2=2.
+- Case 1 for A: [backward["ab"], i_A] = [i_B, i_A]
+- Case 2 for B: [i_B, backward["ba"]] = [i_B, i_A]
+
+But in case 2 for B, j2=2 and suffix B[2:]="" is empty, which we skip. So no duplicate!
+
+What about j1=1 for A and j2=1 for B?
+- Case 1 for A: prefix A[:1]="a" palindrome, suffix A[1:]="b" in backward? backward["b"]? Only if "b" exists.
+- Case 2 for B: suffix B[1:]="a" palindrome, prefix B[:1]="b" in backward? backward["b"]? Only if "b" exists.
+
+If "b" doesn't exist, neither fires. If "b" exists at index k:
+- Case 1 for A: Add [k, i_A]
+- Case 2 for B: Add [i_B, k]
+
+These are different pairs, so no duplicate.
+
+I think the approach of requiring non-empty suffix in case 2 is sufficient to avoid duplicates. Let me also verify that we don't miss any valid pairs.
+
+A valid pair [a, b] means words[a] + words[b] is a palindrome. Let words[a] = P, words[b] = Q. P + Q is a palindrome.
+
+This means P = Q[::-1][:len(P)] + (some prefix that makes the rest work)... Actually, let me think about it differently.
+
+P + Q is a palindrome means (P + Q) = (P + Q)[::-1] = Q[::-1] + P[::-1].
+
+So P + Q = Q[::-1] + P[::-1].
+
+If len(P) >= len(Q): P = Q[::-1] + R where R + Q = P[::-1]. Since P = Q[::-1] + R, P[::-1] = R[::-1] + Q. So R + Q = R[::-1] + Q, meaning R = R[::-1], i.e., R is a palindrome. And P = Q[::-1] + R where R is a palindrome suffix of P.
+
+This corresponds to case 1: suffix of P (which is R = P[j:] where j = len(P) - len(R)) is a palindrome, and P[:j] = Q[::-1], so Q = P[:j][::-1], meaning P[:j] is in backward.
+
+Wait, I'm getting confused. Let me re-derive.
+
+P + Q is a palindrome. Let's split P into two parts: P = P1 + P2 where len(P2) = len(Q) (assuming len(P) >= len(Q)).
+
+Then P + Q = P1 + P2 + Q. For this to be a palindrome:
+(P1 + P2 + Q) = (P1 + P2 + Q)[::-1] = Q[::-1] + P2[::-1] + P1[::-1]
+
+Since len(P2) = len(Q), we need P2 = Q[::-1] and P1 = P1[::-1] (P1 is a palindrome).
+
+So: P1 is a palindrome, and P2[::-1] = Q, meaning Q is in backward as backward[Q] = backward[P2[::-1]] = some index. Wait, backward maps reversed words to indices. backward[Q[::-1]] = index of Q. So P2 = Q[::-1] means backward[P2] = backward[Q[::-1]] = index of Q.
+
+Hmm, this is getting circular. Let me just verify the algorithm is correct by checking all cases.
+
+For P + Q to be a palindrome:
+Case A: len(P) >= len(Q). Split P = P1 + P2 where |P2| = |Q|. Then P2 = Q[::-1] and P1 is palindrome.
+  → In our algorithm, when processing P (word = P), j = len(P1), case 1: P[:j] = P1 is palindrome, P[j:] = P2, and P2 in backward means backward[P2] = index of Q (since Q = P2[::-1] and backward[Q[::-1]] = backward[P2] = index of Q). Add [backward[P2], i_P] = [i_Q, i_P]. ✓
+
+Case B: len(P) < len(Q). Split Q = Q1 + Q2 where |Q1| = |P|. Then P = Q1[::-1] and Q2 is palindrome.
+  → In our algorithm, when processing P (word = P), j = 0, case 2: P[0:] = P is palindrome? Not necessarily. Hmm.
+
+Wait, let me re-derive. P + Q is palindrome, len(P) < len(Q).
+
+P + Q = P + Q1 + Q2 where |Q1| = |P|.
+(P + Q1 + Q2)[::-1] = Q2[::-1] + Q1[::-1] + P[::-1]
+
+For P + Q1 + Q2 = Q2[::-1] + Q1[::-1] + P[::-1]:
+- P = Q2[::-1][:len(P)]... this is getting complicated.
+
+Let me try differently. P + Q is palindrome. Split Q = Q1 + Q2 where |P| = |Q1|.
+Then P + Q = P + Q1 + Q2.
+Reverse: Q2[::-1] + Q1[::-1] + P[::-1].
+For equality: P = Q2[::-1] + Q1[::-1][:len(P)-len(Q2[::-1])]... no this is messy.
+
+Actually, the simpler way: P + Q is palindrome. Let |P| = m, |Q| = n.
+
+If m >= n: The first n chars of (P+Q) reversed equal the last n chars. So P[:n][::-1] = Q and P[n:] is a palindrome.
+  → When processing P, j = n: case 1 checks P[:n] is palindrome? No, we need P[n:] is palindrome and P[:n][::-1] = Q, i.e., P[:n] in backward maps to Q's index.
+
+Hmm wait, I think I had the cases mixed up. Let me re-examine the algorithm's cases.
+
+Case 1: word[:j] is palindrome, word[j:] in backward. Pair: [backward[word[j:]], i].
+This means: other_word + word is palindrome, where other_word = word[j:][::-1].
+other_word + word = word[j:][::-1] + word[:j] + word[j:].
+For this to be palindrome: word[j:][::-1] is the reverse of word[:j] + word[j:]'s suffix... 
+
+Actually, let's just directly verify: other_word + word = word[j:][::-1] + word[:j] + word[j:].
+Reverse: word[j:][::-1] + word[:j][::-1] + word[j:].
+For palindrome: word[:j] + word[j:] = word[:j][::-1] + word[j:], which means word[:j] = word[:j][::-1], i.e., word[:j] is palindrome. ✓
+
+Case 2: word[j:] is palindrome, word[:j] in backward. Pair: [i, backward[word[:j]]].
+This means: word + other_word is palindrome, where other_word = word[:j][::-1].
+word + other_word = word[:j] + word[j:] + word[:j][::-1].
+Reverse: word[:j] + word[j:][::-1] + word[:j][::-1].
+For palindrome: word[j:] + word[:j][::-1] = word[j:][::-1] + word[:j][::-1], which means word[j:] = word[j:][::-1], i.e., word[j:] is palindrome. ✓
+
+OK so the cases are:
+- Case 1: other_word before word. other_word = word[j:][::-1]. Need word[:j] palindrome.
+- Case 2: other_word after word. other_word = word[:j][::-1]. Need word[j:] palindrome.
+
+Now, for P + Q palindrome:
+- If Q = P[:j][::-1] for some j, and P[j:] is palindrome → case 2 when processing P.
+- If P = Q[:k][::-1] for some k, and Q[k:] is palindrome → case 1 when processing Q (since other_word = Q[k:][::-1] = P, placed before Q).
+
+So every valid pair is found. The question is just about duplicates.
+
+Two ways to find the same pair [a, b] (meaning words[a] + words[b] is palindrome):
+1. Case 2 when processing words[a]: j such that words[a][:j][::-1] = words[b] and words[a][j:] is palindrome.
+2. Case 1 when processing words[b]: k such that words[b][k:][::-1] = words[a] and words[b][:k] is palindrome.
+
+For (1): words[b] = words[a][:j][::-1], so words[a][:j] = words[b][::-1]. And j = len(words[b]) (since words[a][:j] has length j = len(words[b])).
+For (2): words[a] = words[b][k:][::-1], so words[b][k:] = words[a][::-1] = words[b][:j] (from above). And k = len(words[b]) - len(words[b][k:]) = len(words[b]) - j. And words[b][:k] is palindrome.
+
+So both find the same pair. To avoid duplicates, we can restrict one of them.
+
+The standard approach: in case 2, require suffix (word[j:]) to be non-empty. This means j < len(word). Then when j = len(word), case 2 doesn't fire. The j = len(word) case in case 2 would be: word[len(word):] = "" is palindrome, word[:len(word)] = word in backward. This finds pairs where the other word is the full reverse. But this is also found by case 1 j=0 when processing the other word.
+
+Wait, case 1 j=0 when processing the other word Q: word[:0]="" is palindrome, word[0:]=Q in backward. backward[Q] = index of Q[::-1] = index of P. So [backward[Q], i_Q] = [i_P, i_Q]. And case 2 j=len(P) when processing P: [i_P, backward[P]] = [i_P, i_Q]. Same pair!
+
+So by requiring non-empty suffix in case 2, we skip case 2 j=len(P) when processing P, and the pair is only found by case 1 j=0 when processing Q. No duplicate. ✓
+
+But we also need to make sure case 1 j=0 doesn't create duplicates. Case 1 j=0 when processing P: [backward[P], i_P]. And case 2 j=len(Q) when processing Q: [i_Q, backward[Q]] = [i_Q, i_P]. These are the same pair! But we're skipping case 2 j=len(Q) (since suffix would be empty). So no duplicate from this direction either. ✓
+
+What about case 1 j=0 for P and case 1 j=0 for Q?
+- Case 1 j=0 for P: [backward[P], i_P] = [i_Q, i_P] (assuming Q = P[::-1])
+- Case 1 j=0 for Q: [backward[Q], i_Q] = [i_P, i_Q]
+These are different pairs ([i_Q, i_P] vs [i_P, i_Q]). Both are valid (P+Q palindrome and Q+P palindrome when P and Q are reverses). No duplicate. ✓
+
+Great, so the approach of requiring non-empty suffix in case 2 avoids all duplicates.
+
+Now let me write the corrected code:
+
+```python
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            for j in range(len(word) + 1):
+                # Case 1: prefix is palindrome, check if reverse of suffix exists
+                if word[:j] == word[:j][::-1] and word[j:] in backward and backward[word[j:]] != i:
+                    res.append([backward[word[j:]], i])
+                # Case 2: suffix is palindrome (and non-empty), check if reverse of prefix exists
+                if word[j:] and word[j:] == word[j:][::-1] and word[:j] in backward and backward[word[:j]] != i:
+                    res.append([i, backward[word[:j]]])
+                    
+        return res
+```
+
+Wait, but the original code had a separate check for the empty string case. With my approach, is the empty string case handled?
+
+If word is a palindrome and "" exists:
+- j=len(word), case 1: prefix=word is palindrome, suffix="" in backward? If "" exists, backward[""]=i_empty. Add [i_empty, i_word]. ✓
+- j=0, case 2: suffix=word is non-empty and palindrome, prefix="" in backward? backward[""]=i_empty. Add [i_word, i_empty]. ✓
+
+Both orderings are found. No need for separate empty string handling. ✓
+
+What about the original first check `if word in backward and backward[word] != i`? This is subsumed by case 1 j=0 (prefix="" is always palindrome, suffix=word in backward). So we don't need it separately.
+
+Let me also verify: the original code's first check adds [i, backward[word]], which is word + word[::-1]. This is case 2 j=len(word) with suffix="" being palindrome. But we're skipping empty suffix in case 2. However, this pair is also found by case 1 j=0 when processing word[::-1].
+
+Wait, [i, backward[word]] means words[i] + words[backward[word]] = word + word[::-1]. For this to be a palindrome, we need word + word[::-1] to be a palindrome, which it always is! So this is always valid when backward[word] != i.
+
+And it's found by case 1 j=0 when processing word[::-1] (which is at index backward[word]): prefix="" palindrome, suffix=word[::-1] in backward? backward[word[::-1]] = i (since backward maps reversed words). Add [i, backward[word]]. Wait, that's [i, i_word_reverse]. Hmm, let me be more careful.
+
+Let word be at index i, and word[::-1] be at index k. backward[word[::-1]] = i (set when processing word). backward[word] = k (set when processing word[::-1]).
+
+Case 1 j=0 when processing word[::-1] at index k: prefix="" palindrome, suffix=word[::-1] in backward? backward[word[::-1]] = i. != k? Yes (assuming i != k). Add [i, k]. This means words[i] + words[k] = word + word[::-1]. ✓
+
+And the original first check when processing word at index i: word in backward? backward[word] = k. != i? Yes. Add [i, k]. Same pair! ✓
+
+So the original first check is redundant with case 1 j=0. Good.
+
+Now, the original code also has the explicit empty string check. With my approach, this is handled by case 1 j=len(word) and case 2 j=0. So it's also redundant.
+
+Therefore, my corrected code doesn't need the separate checks. Let me finalize:
+
+```python
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            for j in range(len(word) + 1):
+                if word[:j] == word[:j][::-1] and word[j:] in backward and backward[word[j:]] != i:
+                    res.append([backward[word[j:]], i])
+                if word[j:] and word[j:] == word[j:][::-1] and word[:j] in backward and backward[word[:j]] != i:
+                    res.append([i, backward[word[:j]]])
+                    
+        return res
+```
+
+Hmm wait, but I want to make sure I'm not changing the structure too much from the original. The original had the separate checks and the inner loop from 0 to len(word)-1. Let me see if I can make minimal changes to fix the bugs.
+
+The two bugs are:
+1. `word[:j] == word[j::-1]` → should be `word[:j] == word[:j][::-1]`
+2. `word[j:] == word[:j-1:-1]` → should be `word[j:] == word[j:][::-1]`
+
+But fixing just these two bugs would introduce duplicates (as I analyzed above). The original code's bugs accidentally prevented some duplicates by making the j=0 case not trigger.
+
+Let me check: with the original buggy code, when j=0:
+- Case 1: word[:0]="" == word[0::-1]=word[0] (first char)? Only if word is empty. So for non-empty words, case 1 at j=0 doesn't fire. ✓ (no duplicate with the first check)
+- Case 2: word[:0]="" in backward? If "" exists. word[0:] == word[:-1:-1]? word[:-1:-1] = "" (as I computed earlier). So word[0:] == ""? Only if word is empty. So case 2 at j=0 doesn't fire for non-empty words. ✓ (no duplicate with the empty string check)
+
+So the bugs accidentally prevented duplicates at j=0. If I fix the bugs, I need to also handle the duplicate issue.
+
+The simplest fix that maintains the original structure:
+
+1. Fix the palindrome checks
+2. Start the loop from j=1 instead of j=0 to avoid duplicates with the separate checks
+3. But then we need to also handle j=len(word) for case 1 (to find the empty string pair)
+
+Wait, the original loop goes from 0 to len(word)-1. If I start from 1, I miss j=0 but I also miss j=len(word) (which was never in the range). The empty string case is handled separately.
+
+Let me re-examine: with the original structure (separate first check, separate empty string check, and loop from j=0 to len(word)-1):
+
+If I fix the bugs and start the loop from j=1:
+- Case 1 at j=1 to len(word)-1: word[:j] is palindrome, word[j:] in backward. This finds pairs where a non-empty prefix is palindrome and the reverse of the suffix exists. ✓
+- Case 2 at j=1 to len(word)-1: word[j:] is palindrome, word[:j] in backward. This finds pairs where a non-empty (and non-full) suffix is palindrome and the reverse of the prefix exists. ✓
+
+But what about j=len(word) for case 1? word[:len(word)] = word is palindrome, word[len(word):] = "" in backward. This finds the empty string + palindrome word pair. This is handled by the separate empty string check. ✓
+
+And j=0 for case 2? word[0:] = word is palindrome, word[:0] = "" in backward. This finds the palindrome word + empty string pair. Also handled by the separate empty string check. ✓
+
+So starting from j=1 and keeping the separate checks should work. But I also need to make sure the separate empty string check is correct.
+
+Original empty string check:
+```python
+if word != "" and "" in backward and word == word[::-1]:
+    res.append([i, backward[""]])
+    res.append([backward[""], i])
+```
+
+This adds both [i, backward[""]] and [backward[""], i] when word is a palindrome and "" exists. But wait, [i, backward[""]] means word + "" = word is palindrome ✓. [backward[""], i] means "" + word = word is palindrome ✓. Both are correct.
+
+But could there be duplicates? The first check `if word in backward and backward[word] != i` would also fire if word is a palindrome and there's another identical word. For example, words = ["a", "a"]. backward = {"a": 1} (the second "a" overwrites). Then for i=0: "a" in backward? Yes, backward["a"]=1. != 0? Yes. Add [0, 1]. For i=1: "a" in backward? Yes, backward["a"]=1. != 1? No. Skip. So we get [0, 1]. ✓
+
+What about words = ["a", "a", ""]? backward = {"a": 1, "": 2}. For i=0: "a" in backward, backward["a"]=1 != 0. Add [0, 1]. Also, "a" != "" and "" in backward and "a" is palindrome. Add [0, 2] and [2, 0]. For i=1: "a" in backward, backward["a"]=1 != 1? No. Skip. "a" != "" and "" in backward and "a" is palindrome. Add [1, 2] and [2, 1]. For i=2: "" in backward, backward[""]=2 != 2? No. Skip. "" != ""? No. Skip.
+
+Result: [[0,1], [0,2], [2,0], [1,2], [2,1]]. Let me verify:
+- "a"+"a"="aa" palindrome ✓
+- "a"+""="a" palindrome ✓
+- ""+"a"="a" palindrome ✓
+- "a"+""="a" palindrome ✓ (duplicate with [0,2])
+- ""+"a"="a" palindrome ✓ (duplicate with [2,0])
+
+So we have duplicates [0,2]/[1,2] and [2,0]/[2,1]. This is because both "a" words are palindromes and pair with "". This is actually correct behavior - each index pair is unique. [0,2] and [1,2] are different pairs (different indices). So no actual duplicates.
+
+OK so the original empty string check seems fine.
+
+Now, let me also think about whether the first check `if word in backward and backward[word] != i` can produce duplicates with the loop. If I start the loop from j=1, then case 1 at j=1+ doesn't overlap with the first check (which is about the full word reverse). And case 2 at j=1+ doesn't overlap either. ✓
+
+But wait, what about case 2 at some j where word[:j][::-1] = word (i.e., the prefix reversed equals the full word)? This would mean word[:j] = word[::-1], so j = len(word) and word[:j] = word. But j only goes up to len(word)-1, so this doesn't happen.
+
+What about case 1 at some j where word[j:][::-1] = word? This means word[j:] = word[::-1], so j = 0. But we're starting from j=1, so this doesn't happen. ✓
+
+Great. So the fix is:
+1. Fix `word[:j] == word[j::-1]` to `word[:j] == word[:j][::-1]`
+2. Fix `word[j:] == word[:j-1:-1]` to `word[j:] == word[j:][::-1]`
+3. Start the loop from j=1 instead of j=0 to avoid duplicates
+
+But wait, starting from j=1 means we miss some valid pairs from the loop. Let me check.
+
+Case 1 at j=0: word[:0]="" is palindrome, word[0:] in backward. This finds pairs where the reverse of the full word exists. This is already handled by the first check. ✓
+
+Case 2 at j=0: word[0:] is palindrome, word[:0]="" in backward. This finds pairs where the word is a palindrome and "" exists. This is already handled by the empty string check. ✓
+
+So starting from j=1 doesn't miss any pairs. ✓
+
+Actually wait, I need to double-check case 1 more carefully. The first check adds [i, backward[word]], which is the pair (word, word[::-1]). Case 1 at j=0 would add [backward[word], i], which is (word[::-1], word). These are different pairs!
+
+Oh no, so the first check and case 1 at j=0 find different pairs. The first check finds word + word[::-1], and case 1 at j=0 finds word[::-1] + word. Both are valid palindromes.
+
+If I skip j=0 in case 1, I miss the pair [backward[word], i] = (word[::-1], word). Where is this found otherwise?
+
+When processing word[::-1] (at index backward[word]):
+- First check: word[::-1] in backward? backward[word[::-1]] = i. != backward[word]? Yes (assuming they're different). Add [backward[word], i]. Wait, backward[word] is the index of word[::-1], and backward[word[::-1]] is the index of word. So this adds [backward[word[::-1]], backward[word]] = [i, backward[word]]. Hmm, that's [i, backward[word]], not [backward[word], i].
+
+Wait, let me be more careful. Let word be at index p, and word[::-1] be at index q.
+- backward[word[::-1]] = p (set when processing word at index p)
+- backward[word] = q (set when processing word[::-1] at index q)
+
+First check when processing word at index p: word in backward? backward[word] = q. != p? Yes. Add [p, q]. This means words[p] + words[q] = word + word[::-1]. ✓
+
+First check when processing word[::-1] at index q: word[::-1] in backward? backward[word[::-1]] = p. != q? Yes. Add [q, p]. This means words[q] + words[p] = word[::-1] + word. ✓
+
+So the first check when processing both words gives both [p, q] and [q, p]. Great, so we don't need case 1 at j=0. ✓
+
+Similarly, the empty string check adds both orderings, so we don't need case 2 at j=0. ✓
+
+So the fix is:
+1. Fix the palindrome checks
+2. Start the loop from j=1
+
+Let me also check: do we need j to go up to len(word) for any case? 
+
+Case 1 at j=len(word): word[:len(word)] = word is palindrome, word[len(word):] = "" in backward. This finds the empty string case. Already handled by the separate empty string check. ✓
+
+Case 2 at j=len(word): word[len(word):] = "" is palindrome (but empty), word[:len(word)] = word in backward. This finds the full reverse case. Already handled by the first check. ✓
+
+So j from 1 to len(word)-1 is sufficient. This is what the original loop does (with the fix of starting from 1).
+
+Wait, actually the original loop is `for j in range(len(word))` which goes from 0 to len(word)-1. If I change it to start from 1, it goes from 1 to len(word)-1. But I also need j=len(word) for case 1 (to handle the empty string + palindrome case). Hmm, but that's handled by the separate empty string check.
+
+Actually, let me reconsider. The separate empty string check handles:
+- [i, backward[""]] when word is a palindrome (word + "" is palindrome)
+- [backward[""], i] when word is a palindrome ("" + word is palindrome)
+
+Case 1 at j=len(word) would add [backward[""], i] when word is a palindrome and "" exists. This is the same as the second part of the empty string check. ✓
+
+Case 2 at j=len(word) would add [i, backward[word]] when "" is palindrome (it is) and word in backward. This is the same as the first check. ✓
+
+So with the separate checks, we don't need j=len(word). The range 1 to len(word)-1 is sufficient.
+
+But wait, what about case 1 at j=len(word) when word is NOT a palindrome? Then word[:len(word)] = word is not a palindrome, so case 1 doesn't fire. And the empty string check also doesn't fire (since word is not a palindrome). So we correctly don't add any pair. ✓
+
+What about when word is a palindrome and "" doesn't exist? Case 1 at j=len(word): word[len(word):] = "" not in backward. Doesn't fire. Empty string check: "" not in backward. Doesn't fire. ✓
+
+OK I'm now confident the fix is:
+1. Fix `word[:j] == word[j::-1]` → `word[:j] == word[:j][::-1]`
+2. Fix `word[j:] == word[:j-1:-1]` → `word[j:] == word[j:][::-1]`
+3. Change `for j in range(len(word))` → `for j in range(1, len(word))`
+
+Wait, but I should also check: does changing the range to start from 1 miss any case that the original buggy code was correctly handling?
+
+With the original buggy code, j=0:
+- Case 1: word[:0]="" == word[0::-1]=first_char? Only true if word is empty. For non-empty words, this is false. So case 1 at j=0 never fires for non-empty words.
+- Case 2: word[:0]="" in backward? Maybe. word[0:] == word[:-1:-1]? word[:-1:-1]="" for non-empty words. So word[0:] == ""? Only if word is empty. So case 2 at j=0 never fires for non-empty words.
+
+So the original buggy code effectively starts from j=1 anyway (for non-empty words). My fix makes this explicit.
+
+But what about empty words? If word is "", then len(word)=0 and the loop doesn't execute. The empty string case is handled by the separate checks. ✓
+
+Actually, wait. For word="", the first check: "" in backward and backward[""] != i? If there's another empty string, yes. Otherwise, backward[""] = i (self). And the empty string check: word != ""? No. Skip.
+
+So for word="", only the first check applies. If there's another empty string at index k, we add [i, k]. And when processing that other empty string, we add [k, i]. So we get both [i, k] and [k, i]. "" + "" = "" which is a palindrome. ✓
+
+Now, what if word="" and there's a palindrome word "aba"? The first check for "": "" in backward? backward[""] = i_empty. != i_empty? No. Skip. The empty string check: "" != ""? No. Skip. So we don't find the pair from the empty string's perspective.
+
+But from "aba"'s perspective: the empty string check fires (assuming "" exists in backward). Add [i_aba, i_empty] and [i_empty, i_aba]. ✓
+
+Great, everything checks out.
+
+Let me also consider: what if there are duplicate words? Like words = ["ab", "ab"]. backward = {"ba": 1} (second one overwrites). For i=0: "ab" in backward? backward["ab"]? No, backward has "ba"→1. "ab" not in backward. Skip first check. For i=1: "ab" in backward? No. Skip.
+
+Hmm, but "ab" + "ab" = "abab" is not a palindrome, so this is correct.
+
+What about words = ["ab", "ba", "ba"]? backward = {"ba": 0, "ab": 2} (second "ba" overwrites first for key "ab"). Wait: 
+- i=0, word="ab": backward["ba"] = 0
+- i=1, word="ba": backward["ab"] = 1
+- i=2, word="ba": backward["ab"] = 2 (overwrites)
+
+backward = {"ba": 0, "ab": 2}
+
+For i=0, word="ab": "ab" in backward? backward["ab"]=2. != 0? Yes. Add [0, 2]. "ab" is not a palindrome, skip empty string check. Loop j=1: word[:1]="a" palindrome, word[1:]="b" in backward? backward["b"]? No. word[1:]="b" palindrome, word[:1]="a" in backward? backward["a"]? No.
+
+For i=1, word="ba": "ba" in backward? backward["ba"]=0. != 1? Yes. Add [1, 0]. Loop j=1: word[:1]="b" palindrome, word[1:]="a" in backward? backward["a"]? No. word[1:]="a" palindrome, word[:1]="b" in backward? backward["b"]? No.
+
+For i=2, word="ba": "ba" in backward? backward["ba"]=0. != 2? Yes. Add [2, 0]. Loop j=1: same as above, no additional pairs.
+
+Result: [[0, 2], [1, 0], [2, 0]].
+
+Verify: "ab"+"ba"="abba" palindrome ✓, "ba"+"ab"="baab" palindrome ✓, "ba"+"ab"="baab" palindrome ✓ (but [2,0] means words[2]+words[0]="ba"+"ab"="baab" ✓).
+
+But we're missing [0, 1]! "ab"+"ba"="abba" palindrome ✓. This is because backward["ab"]=2, not 1. The second "ba" overwrote the first "ba"'s entry in backward.
+
+This is a known issue with this approach - if there are duplicate words, only the last one's index is stored. This is actually a bug in the original code too, not something I introduced. The problem statement says "unique words" typically, so this might not be an issue.
+
+Actually, looking at the LeetCode problem, it says words[i] consists of lowercase English letters, and 0 <= words[i].length <= 300. It doesn't say words are unique. So there could be duplicates.
+
+But this is a pre-existing issue in the original code, not something I need to fix. The question asks me to fix the bugs, not redesign the algorithm.
+
+OK, let me finalize the fix. The changes are:
+1. `word[:j] == word[j::-1]` → `word[:j] == word[:j][::-1]`
+2. `word[j:] == word[:j-1:-1]` → `word[j:] == word[j:][::-1]`
+3. `for j in range(len(word))` → `for j in range(1, len(word))`
+
+Wait, I need to double-check change 3 more carefully. Are there any cases where j=0 in the loop produces valid, non-duplicate results with the fixed palindrome checks?
+
+With fixed checks, j=0:
+- Case 1: word[:0]="" == ""[::-1]="". True. word[0:] in backward and backward[word[0:]] != i. This adds [backward[word], i]. This is the same as the first check when processing word[::-1]. So it's a duplicate.
+- Case 2: word[0:] non-empty (since we're in the loop, word is non-empty). word[0:] == word[0:][::-1]? Word is a palindrome. word[:0]="" in backward? If "" exists. backward[""] != i. This adds [i, backward[""]]. This is the same as the empty string check. So it's a duplicate.
+
+Both cases at j=0 produce duplicates with the separate checks. So starting from j=1 is correct.
+
+But actually, I realize there might be an issue. The first check adds [i, backward[word]], and case 1 at j=0 adds [backward[word], i]. These are different pairs (different order). The first check finds word + word[::-1], and case 1 at j=0 finds word[::-1] + word.
+
+When processing word[::-1] (at index q), the first check adds [q, backward[word[::-1]]] = [q, p] = [q, p]. This is word[::-1] + word, same as case 1 j=0 for word. So yes, it's a duplicate.
+
+OK so starting from j=1 is correct and avoids duplicates.
+
+But wait, I want to also make sure we're not missing the case where j=len(word)-1 and we need to check the last character.
+
+For word = "abcd", j=3 (len(word)-1=3):
+- Case 1: word[:3]="abc" palindrome? No. Skip.
+- Case 2: word[3:]="d" palindrome? Yes. word[:3]="abc" in backward? backward["cba"]? If "cba" exists. Add [i, backward["cba"]].
+
+This is correct. "abcd" + "cba" = "abcdcba" palindrome ✓.
+
+What about j=len(word) for case 1? word[:4]="abcd" palindrome? No. word[4:]="" in backward? If "" exists. This would add [backward[""], i] if "abcd" were a palindrome. But it's not, so it doesn't fire.
+
+For word = "aba", j=3 (len(word)):
+- Case 1: word[:3]="aba" palindrome? Yes. word[3:]="" in backward? If "" exists. Add [backward[""], i]. This is the empty string case.
+
+But with j going up to len(word)-1=2, we miss this. However, the separate empty string check handles it. ✓
+
+OK I'm confident now. Let me write the final code.
+
+Actually, hold on. Let me reconsider whether I should keep the original structure or simplify it. The original has:
+1. Full reverse check
+2. Empty string check
+3. Loop from j=0 to len(word)-1
+
+My fix changes it to:
+1. Full reverse check
+2. Empty string check
+3. Loop from j=1 to len(word)-1 with fixed palindrome checks
+
+This is minimal and preserves the original structure. Let me write it.
+
+```python
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            
+            if word in backward and backward[word] != i:
+                res.append([i, backward[word]])
+                
+            if word != "" and "" in backward and word == word[::-1]:
+                res.append([i, backward[""]])
+                res.append([backward[""], i])
+                
+            for j in range(1, len(word)):
+                if word[j:] in backward and word[:j] == word[:j][::-1]:
+                    res.append([backward[word[j:]], i])
+                if word[:j] in backward and word[j:] == word[j:][::-1]:
+                    res.append([i, backward[word[:j]]])
+                    
+        return res
+```
+
+Wait, I should double-check this with a test case.
+
+Test: words = ["abcd", "dcba", "lls", "s", "sssll"]
+Expected: [[0,1],[1,0],[3,2],[2,4]]
+
+backward = {"dcba": 0, "abcd": 1, "sll": 2, "s": 3, "llsss": 4}
+
+Processing "abcd" (i=0):
+- "abcd" in backward? backward["abcd"]=1. != 0? Yes. Add [0, 1]. ✓
+- "abcd" != "" and "" in backward? No. Skip.
+- Loop j=1 to 3:
+  - j=1: word[1:]="bcd" in backward? No. word[:1]="a" palindrome, word[1:]="bcd" in backward? No. word[:1]="a" in backward? backward["a"]? No. word[1:]="bcd" palindrome? No.
+  - j=2: word[2:]="cd" in backward? No. word[:2]="ab" palindrome? No. word[:2]="ab" in backward? No. word[2:]="cd" palindrome? No.
+  - j=3: word[3:]="d" in backward? No. word[:3]="abc" palindrome? No. word[:3]="abc" in backward? No. word[3:]="d" palindrome? Yes. word[:3]="abc" in backward? backward["cba"]? No.
+
+Processing "dcba" (i=1):
+- "dcba" in backward? backward["dcba"]=0. != 1? Yes. Add [1, 0]. ✓
+- Loop j=1 to 3:
+  - j=1: word[1:]="cba" in backward? No. word[:1]="d" palindrome? Yes. word[1:]="cba" in backward? No. word[:1]="d" in backward? backward["d"]? No.
+  - j=2: word[2:]="ba" in backward? No. word[:2]="dc" palindrome? No. word[:2]="dc" in backward? backward["cd"]? No. word[2:]="ba" palindrome? No.
+  - j=3: word[3:]="a" in backward? No. word[:3]="dcb" palindrome? No. word[:3]="dcb" in backward? backward["bcd"]? No. word[3:]="a" palindrome? Yes. word[:3]="dcb" in backward? No.
+
+Processing "lls" (i=2):
+- "lls" in backward? backward["lls"]? No (backward has "sll"). Skip.
+- Loop j=1 to 2:
+  - j=1: word[1:]="ls" in backward? No. word[:1]="l" palindrome? Yes. word[1:]="ls" in backward? No. word[:1]="l" in backward? backward["l"]? No. word[1:]="ls" palindrome? No.
+  - j=2: word[2:]="s" in backward? backward["s"]=3. != 2? Yes. word[:2]="ll" palindrome? Yes. Add [3, 2]. ✓ (s + lls = slls palindrome)
+    word[:2]="ll" in backward? backward["ll"]? No. word[2:]="s" palindrome? Yes. word[:2]="ll" in backward? No.
+
+Processing "s" (i=3):
+- "s" in backward? backward["s"]=3. != 3? No. Skip.
+- Loop: len("s")=1, range(1,1) is empty. Skip.
+
+Processing "sssll" (i=4):
+- "sssll" in backward? backward["sssll"]? No (backward has "llsss"). Skip.
+- Loop j=1 to 4:
+  - j=1: word[1:]="ssll" in backward? No. word[:1]="s" palindrome? Yes. word[1:]="ssll" in backward? No. word[:1]="s" in backward? backward["s"]=3. != 4? Yes. word[1:]="ssll" palindrome? No.
+  - j=2: word[2:]="sll" in backward? backward["sll"]=2. != 4? Yes. word[:2]="ss" palindrome? Yes. Add [2, 4]. ✓ (lls + sssll = llssssll palindrome)
+    word[:2]="ss" in backward? backward["ss"]? No. word[2:]="sll" palindrome? No.
+  - j=3: word[3:]="ll" in backward? backward["ll"]? No. word[:3]="sss" palindrome? Yes. word[3:]="ll" in backward? No. word[:3]="sss" in backward? backward["sss"]? No. word[3:]="ll" palindrome? Yes. word[:3]="sss" in backward? No.
+  - j=4: word[4:]="l" in backward? backward["l"]? No. word[:4]="sssl" palindrome? No. word[:4]="sssl" in backward? No. word[4:]="l" palindrome? Yes. word[:4]="sssl" in backward? No.
+
+Result: [[0,1],[1,0],[3,2],[2,4]]. ✓ Matches expected!
+
+Let me also test with words = ["a", ""]
+Expected: [[0,1],[1,0]]
+
+backward = {"a": 0, "": 1}
+
+Processing "a" (i=0):
+- "a" in backward? backward["a"]=0. != 0? No. Skip.
+- "a" != "" and "" in backward and "a" == "a"[::-1]? Yes. Add [0, 1] and [1, 0]. ✓
+- Loop: range(1, 1) empty.
+
+Processing "" (i=1):
+- "" in backward? backward[""]=1. != 1? No. Skip.
+- "" != ""? No. Skip.
+- Loop: range(1, 0) empty.
+
+Result: [[0,1],[1,0]]. ✓
+
+Let me test with words = ["a", "b", "c"]
+Expected: [] (no palindromes)
+
+backward = {"a": 0, "b": 1, "c": 2}
+
+Processing each word: none is in backward (except self), none is palindrome with empty string, loop finds nothing. Result: []. ✓
+
+Let me test with words = ["ab", "ba"]
+Expected: [[0,1],[1,0]]
+
+backward = {"ba": 0, "ab": 1}
+
+Processing "ab" (i=0):
+- "ab" in backward? backward["ab"]=1. != 0? Yes. Add [0, 1]. ✓
+- Loop j=1: word[1:]="b" in backward? backward["b"]? No. word[:1]="a" palindrome? Yes. word[1:]="b" in backward? No. word[:1]="a" in backward? backward["a"]? No. word[1:]="b" palindrome? Yes. word[:1]="a" in backward? No.
+
+Processing "ba" (i=1):
+- "ba" in backward? backward["ba"]=0. != 1? Yes. Add [1, 0]. ✓
+- Loop j=1: word[1:]="a" in backward? backward["a"]? No. word[:1]="b" palindrome? Yes. word[1:]="a" in backward? No. word[:1]="b" in backward? backward["b"]? No. word[1:]="a" palindrome? Yes. word[:1]="b" in backward? No.
+
+Result: [[0,1],[1,0]]. ✓
+
+One more test: words = ["a", "abc", "aba"]
+Expected: [[0,2],[2,0]] (a+aba=abaa? No. aba+a=abaa? No. Hmm.)
+
+Wait, let me reconsider. "a"+"aba"="aaba" not palindrome. "aba"+"a"="abaa" not palindrome. "a"+"abc"="aabc" not palindrome. "abc"+"a"="abca" not palindrome. "abc"+"aba"="abcaba" not palindrome. "aba"+"abc"="abaabc" not palindrome.
+
+So expected is []. But wait, what about "a" and "aba"? "a" is at index 0, "aba" is at index 2. backward = {"a": 0, "cba": 1, "aba": 2}.
+
+Processing "a" (i=0):
+- "a" in backward? backward["a"]=0. != 0? No. Skip.
+- "a" != "" and "" in backward? No. Skip.
+- Loop: range(1,1) empty.
+
+Processing "abc" (i=1):
+- "abc" in backward? backward["abc"]? No. Skip.
+- Loop j=1: word[1:]="bc" in backward? No. word[:1]="a" palindrome? Yes. word[1:]="bc" in backward? No. word[:1]="a" in backward? backward["a"]=0. != 1? Yes. word[1:]="bc" palindrome? No.
+  j=2: word[2:]="c" in backward? No. word[:2]="ab" palindrome? No. word[:2]="ab" in backward? backward["ba"]? No. word[2:]="c" palindrome? Yes. word[:2]="ab" in backward? No.
+
+Processing "aba" (i=2):
+- "aba" in backward? backward["aba"]=2. != 2? No. Skip.
+- "aba" != "" and "" in backward? No. Skip.
+- Loop j=1: word[1:]="ba" in backward? No. word[:1]="a" palindrome? Yes. word[1:]="ba" in backward? No. word[:1]="a" in backward? backward["a"]=0. != 2? Yes. word[1:]="ba" palindrome? No.
+  j=2: word[2:]="a" in backward? backward["a"]=0. != 2? Yes. word[:2]="ab" palindrome? No. word[:2]="ab" in backward? No. word[2:]="a" palindrome? Yes. word[:2]="ab" in backward? No.
+
+Result: []. ✓
+
+Hmm wait, but "a" + "aba" should not be a palindrome, and indeed it's not. What about "aba" + ""? There's no empty string. OK, result is correct.
+
+Let me try one more: words = ["abcd", "dcba", "lls", "s", "sssll", ""]
+This adds an empty string to the previous test.
+
+backward = {"dcba": 0, "abcd": 1, "sll": 2, "s": 3, "llsss": 4, "": 5}
+
+Processing "abcd" (i=0):
+- "abcd" in backward? backward["abcd"]=1. Add [0, 1].
+- "abcd" != "" and "" in backward and "abcd" == "dcba"? No. Skip.
+- Loop j=1 to 3: no matches (as before).
+
+Processing "dcba" (i=1):
+- "dcba" in backward? backward["dcba"]=0. Add [1, 0].
+- "dcba" != "" and "" in backward and "dcba" == "abcd"? No. Skip.
+- Loop: no matches.
+
+Processing "lls" (i=2):
+- "lls" in backward? No. Skip.
+- "lls" != "" and "" in backward and "lls" == "sll"? No. Skip.
+- Loop j=1 to 2:
+  - j=2: word[2:]="s" in backward? backward["s"]=3. word[:2]="ll" palindrome? Yes. Add [3, 2].
+
+Processing "s" (i=3):
+- "s" in backward? backward["s"]=3. != 3? No. Skip.
+- "s" != "" and "" in backward and "s" == "s"? Yes! Add [3, 5] and [5, 3].
+- Loop: range(1,1) empty.
+
+Processing "sssll" (i=4):
+- "sssll" in backward? No. Skip.
+- "sssll" != "" and "" in backward and "sssll" == "llsss"? No. Skip.
+- Loop j=1 to 4:
+  - j=2: word[2:]="sll" in backward? backward["sll"]=2. word[:2]="ss" palindrome? Yes. Add [2, 4].
+
+Processing "" (i=5):
+- "" in backward? backward[""]=5. != 5? No. Skip.
+- "" != ""? No. Skip.
+- Loop: range(1,0) empty.
+
+Result: [[0,1],[1,0],[3,2],[3,5],[5,3],[2,4]].
+
+Let me verify the new pairs:
+- "s" + "" = "s" palindrome ✓
+- "" + "s" = "s" palindrome ✓
+
+Looks correct!
+
+Now let me also verify there are no duplicates. Each pair appears once. ✓
+
+I'm satisfied with the fix. Let me write the final code.
+
+Actually, one more thing. I want to make sure the `backward[word[:j]] != i` and `backward[word[j:]] != i` checks are needed. In the original code, these checks are not present in the loop. Let me check if they're needed.
+
+Consider word = "aa" and it's the only word. backward = {"aa": 0}.
+Loop j=1: word[1:]="a" in backward? backward["a"]? No. word[:1]="a" in backward? backward["a"]? No.
+
+OK, no issue here. But what about word = "aba" and it's the only word? backward = {"aba": 0}.
+Loop j=1: word[1:]="ba" in backward? No. word[:1]="a" in backward? No.
+j=2: word[2:]="a" in backward? No. word[:2]="ab" in backward? No.
+
+Still no issue. What about word = "aa" and words = ["aa"]? backward = {"aa": 0}.
+Loop j=1: word[1:]="a" in backward? No. word[:1]="a" in backward? No.
+
+What about words = ["a", "a"]? backward = {"a": 1}.
+Processing "a" (i=0): "a" in backward? backward["a"]=1. != 0? Yes. Add [0, 1].
+Processing "a" (i=1): "a" in backward? backward["a"]=1. != 1? No. Skip.
+Result: [[0, 1]]. "a"+"a"="aa" palindrome ✓.
+
+What about words = ["aba", "a"]? backward = {"aba": 0, "a": 1}.
+Processing "aba" (i=0): "aba" in backward? backward["aba"]=0. != 0? No. Skip.
+"aba" != "" and "" in backward? No.
+Loop j=1: word[1:]="ba" in backward? No. word[:1]="a" in backward? backward["a"]=1. != 0? Yes. word[1:]="ba" palindrome? No.
+j=2: word[2:]="a" in backward? backward["a"]=1. != 0? Yes. word[:2]="ab" palindrome? No. word[:2]="ab" in backward? No. word[2:]="a" palindrome? Yes. word[:2]="ab" in backward? No.
+
+Processing "a" (i=1): "a" in backward? backward["a"]=1. != 1? No. Skip.
+Loop: range(1,1) empty.
+
+Result: []. But "aba" + "a" = "abaa" not palindrome. "a" + "aba" = "aaba" not palindrome. Correct! ✓
+
+What about words = ["a", "aba"]? backward = {"a": 0, "aba": 1}.
+Processing "a" (i=0): "a" in backward? backward["a"]=0. != 0? No. Skip.
+Loop: range(1,1) empty.
+
+Processing "aba" (i=1): "aba" in backward? backward["aba"]=1. != 1? No. Skip.
+Loop j=1: word[1:]="ba" in backward? No. word[:1]="a" in backward? backward["a"]=0. != 1? Yes. word[1:]="ba" palindrome? No.
+j=2: word[2:]="a" in backward? backward["a"]=0. != 1? Yes. word[:2]="ab" palindrome? No. word[:2]="ab" in backward? No. word[2:]="a" palindrome? Yes. word[:2]="ab" in backward? No.
+
+Result: []. Same as before. ✓
+
+Now, do I need the `!= i` checks in the loop? Let me think of a case where it matters.
+
+words = ["ab", "ba", "a"]. backward = {"ba": 0, "ab": 1, "a": 2}.
+Processing "ab" (i=0): "ab" in backward? backward["ab"]=1. Add [0, 1].
+Loop j=1: word[1:]="b" in backward? No. word[:1]="a" in backward? backward["a"]=2. != 0? Yes. word[1:]="b" palindrome? No.
+
+Processing "ba" (i=1): "ba" in backward? backward["ba"]=0. Add [1, 0].
+Loop j=1: word[1:]="a" in backward? backward["a"]=2. != 1? Yes. word[:1]="b" palindrome? Yes. Add [2, 1]. (a + ba = aba palindrome ✓)
+word[:1]="b" in backward? No. word[1:]="a" palindrome? Yes. word[:1]="b" in backward? No.
+
+Processing "a" (i=2): "a" in backward? backward["a"]=2. != 2? No. Skip.
+Loop: range(1,1) empty.
+
+Result: [[0,1],[1,0],[2,1]]. ✓
+
+Now, what if there's a word that could pair with itself? Like words = ["aa"]. backward = {"aa": 0}.
+Processing "aa" (i=0): "aa" in backward? backward["aa"]=0. != 0? No. Skip.
+Loop j=1: word[1:]="a" in backward? backward["a"]? No. word[:1]="a" in backward? No.
+
+Result: []. But "aa" + "aa" = "aaaa" is a palindrome! However, we'd need two different indices, and there's only one. So [] is correct. ✓
+
+What about words = ["aa", "aa"]? backward = {"aa": 1} (overwritten).
+Processing "aa" (i=0): "aa" in backward? backward["aa"]=1. != 0? Yes. Add [0, 1].
+Processing "aa" (i=1): "aa" in backward? backward["aa"]=1. != 1? No. Skip.
+Result: [[0, 1]]. "aa"+"aa"="aaaa" palindrome ✓.
+
+What about words = ["aba", "a", "ba"]? backward = {"aba": 0, "a": 1, "ab": 2}.
+Processing "aba" (i=0): "aba" in backward? backward["aba"]=0. != 0? No. Skip.
+Loop j=1: word[1:]="ba" in backward? No. word[:1]="a" in backward? backward["a"]=1. != 0? Yes. word[1:]="ba" palindrome? No.
+j=2: word[2:]="a" in backward? backward["a"]=1. != 0? Yes. word[:2]="ab" palindrome? No. word[:2]="ab" in backward? backward["ab"]=2. != 0? Yes. word[2:]="a" palindrome? Yes. Add [0, 2]. (aba + ba = ababa palindrome? ababa[::-1] = ababa. Yes! ✓)
+
+Wait, but that's [0, 2] meaning words[0] + words[2] = "aba" + "ba" = "ababa". Is "ababa" a palindrome? Yes! ✓
+
+But hold on, I need to check: word[:2]="ab" in backward? backward["ab"]=2. And word[2:]="a" is a palindrome. So we add [i, backward[word[:j]]] = [0, 2]. This means "aba" + "ba" = "ababa". ✓
+
+Processing "a" (i=1): "a" in backward? backward["a"]=1. != 1? No. Skip.
+Loop: range(1,1) empty.
+
+Processing "ba" (i=2): "ba" in backward? No. Skip.
+Loop j=1: word[1:]="a" in backward? backward["a"]=1. != 2? Yes. word[:1]="b" palindrome? Yes. Add [1, 2]. (a + ba = aba palindrome ✓)
+word[:1]="b" in backward? No. word[1:]="a" palindrome? Yes. word[:1]="b" in backward? No.
+
+Result: [[0, 2], [1, 2]]. ✓
+
+Great, the algorithm works correctly.
+
+Now, back to the question of whether `backward[word[j:]] != i` and `backward[word[:j]] != i` checks are needed in the loop. 
+
+Consider a word that is a palindrome, like "aba". backward["aba"] = i_aba. In the loop:
+j=2: word[2:]="a" in backward? backward["a"] might be some other index. word[:2]="ab" palindrome? No.
+j=1: word[1:]="ba" in backward? Maybe. word[:1]="a" in backward? backward["a"] might be some other index.
+
+I don't think self-pairing can happen in the loop because we're checking substrings, not the full word. But let me think of a pathological case.
+
+words = ["a", "a"]. backward = {"a": 1}.
+Processing "a" (i=0): No loop (range(1,1) empty).
+Processing "a" (i=1): No loop.
+
+words = ["aba"]. backward = {"aba": 0}.
+Loop j=1: word[1:]="ba" in backward? No. word[:1]="a" in backward? No.
+j=2: word[2:]="a" in backward? No. word[:2]="ab" in backward? No.
+
+No self-pairing possible in the loop for a single word. What about:
+
+words = ["a", "ba"]. backward = {"a": 0, "ab": 1}.
+Processing "a" (i=0): No loop.
+Processing "ba" (i=1): "ba" in backward? No.
+Loop j=1: word[1:]="a" in backward? backward["a"]=0. != 1? Yes. word[:1]="b" palindrome? Yes. Add [0, 1]. (a + ba = aba ✓)
+word[:1]="b" in backward? No. word[1:]="a" palindrome? Yes. word[:1]="b" in backward? No.
+
+Result: [[0, 1]]. ✓
+
+What about words = ["a", "a", "ba"]? backward = {"a": 1, "ab": 2}.
+Processing "a" (i=0): "a" in backward? backward["a"]=1. != 0? Yes. Add [0, 1]. No loop.
+Processing "a" (i=1): "a" in backward? backward["a"]=1. != 1? No. Skip. No loop.
+Processing "ba" (i=2): "ba" in backward? No.
+Loop j=1: word[1:]="a" in backward? backward["a"]=1. != 2? Yes. word[:1]="b" palindrome? Yes. Add [1, 2]. (a + ba = aba ✓)
+
+Result: [[0, 1], [1, 2]]. But we're missing [0, 2]! "a" + "ba" = "aba" is also a palindrome. This is because backward["a"]=1 (overwritten by the second "a"), so we can't find the first "a".
+
+This is the known issue with duplicate words. Not a bug I need to fix.
+
+OK, I'm now confident in my fix. Let me also consider: should I add `backward[word[j:]] != i` and `backward[word[:j]] != i` checks? In the original code, these checks are not in the loop. Let me see if they're needed.
+
+Can `backward[word[j:]] == i` happen? This means the reverse of `word[j:]` is `words[i] = word`. So `word[j:][::-1] = word`, meaning `word[j:] = word[::-1]`. This is possible. For example, word = "abcba", j=2: word[2:] = "cba", word[::-1] = "abcba". "cba" != "abcba". Not equal.
+
+What about word = "abba", j=2: word[2:] = "ba", word[::-1] = "abba". Not equal.
+
+word = "aa", j=1: word[1:] = "a", word[::-1] = "aa". Not equal.
+
+Hmm, can word[j:] = word[::-1] for some j? This means the suffix of word equals the reverse of word. For word = "ab", j=0: word[0:] = "ab", word[::-1] = "ba". Not equal. j=1: word[1:] = "b", word[::-1] = "ba". Not equal.
+
+For word = "aab", j=1: word[1:] = "ab", word[::-1] = "baa". Not equal.
+
+I think it's hard for word[j:] = word[::-1] to happen, but it's possible in theory. For example, word = "a", j=0: word[0:] = "a", word[::-1] = "a". Equal! But j starts from 1 in our loop, so this doesn't apply.
+
+For j >= 1, word[j:] has length len(word)-j < len(word), while word[::-1] has length len(word). So they can't be equal unless j=0. Since our loop starts from j=1, `backward[word[j:]] == i` can't happen (because word[j:] != word[::-1] for j >= 1, so backward[word[j:]] != i).
+
+Wait, that's not quite right. backward[word[j:]] = some index k where words[k][::-1] = word[j:]. This doesn't require word[j:] = word[::-1]. backward[word[j:]] == i would mean words[i][::-1] = word[j:], i.e., word[::-1] = word[j:]. For j >= 1, len(word[j:]) < len(word), so word[::-1] (which has the same length as word) can't equal word[j:]. So backward[word[j:]] != i for j >= 1. ✓
+
+Similarly, backward[word[:j]] == i would mean word[::-1] = word[:j]. For j >= 1 and j < len(word), len(word[:j]) < len(word), so word[::-1] can't equal word[:j]. ✓
+
+So the `!= i` checks are not needed in the loop when j ranges from 1 to len(word)-1. The original code doesn't have them, and they're not needed. ✓
+
+Great, my final fix is:
+
+```python
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            
+            if word in backward and backward[word] != i:
+                res.append([i, backward[word]])
+                
+            if word != "" and "" in backward and word == word[::-1]:
+                res.append([i, backward[""]])
+                res.append([backward[""], i])
+                
+            for j in range(1, len(word)):
+                if word[j:] in backward and word[:j] == word[:j][::-1]:
+                    res.append([backward[word[j:]], i])
+                if word[:j] in backward and word[j:] == word[j:][::-1]:
+                    res.append([i, backward[word[:j]]])
+                    
+        return res
+```
+
+Wait, I want to triple-check the empty string case one more time.
+
+words = ["", "a"]:
+backward = {"": 0, "a": 1}
+
+Processing "" (i=0): "" in backward? backward[""]=0. != 0? No. Skip.
+"" != ""? No. Skip.
+Loop: range(1, 0) empty.
+
+Processing "a" (i=1): "a" in backward? backward["a"]=1. != 1? No. Skip.
+"a" != "" and "" in backward and "a" == "a"? Yes. Add [1, 0] and [0, 1].
+Loop: range(1, 1) empty.
+
+Result: [[1, 0], [0, 1]]. "a" + "" = "a" palindrome ✓, "" + "a" = "a" palindrome ✓. ✓
+
+words = ["", ""]:
+backward = {"": 1}
+
+Processing "" (i=0): "" in backward? backward[""]=1. != 0? Yes. Add [0, 1].
+"" != ""? No. Skip.
+Loop: range(1, 0) empty.
+
+Processing "" (i=1): "" in backward? backward[""]=1. != 1? No. Skip.
+"" != ""? No. Skip.
+Loop: range(1, 0) empty.
+
+Result: [[0, 1]]. "" + "" = "" palindrome ✓. ✓
+
+But we're missing [1, 0]! "" + "" = "" is also a palindrome from the other direction. But [0, 1] and [1, 0] represent different index pairs. [0, 1] means words[0] + words[1] = "" + "" = "". [1, 0] means words[1] + words[0] = "" + "" = "". Both are palindromes.
+
+When processing i=0: backward[""]=1, != 0, add [0, 1]. ✓
+When processing i=1: backward[""]=1, != 1? No. Skip. ✗
+
+So we miss [1, 0]. This is because backward[""] was overwritten to 1, and when processing i=1, the self-check fails.
+
+This is the same duplicate word issue. The original code has this problem too. It's a pre-existing issue. Not something I need to fix.
+
+Actually wait, let me re-examine. The problem says the input can have duplicate words? Let me check the LeetCode problem statement. The problem says "words[i] consists of lowercase English letters." It doesn't explicitly say words are unique. But the typical test cases don't have duplicates.
+
+Regardless, this is a pre-existing issue in the original code, not introduced by my fix. My fix only addresses the two palindrome check bugs and the loop range.
+
+Let me finalize the code:
+
+```python
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            
+            if word in backward and backward[word] != i:
+                res.append([i, backward[word]])
+                
+            if word != "" and "" in backward and word == word[::-1]:
+                res.append([i, backward[""]])
+                res.append([backward[""], i])
+                
+            for j in range(1, len(word)):
+                if word[j:] in backward and word[:j] == word[:j][::-1]:
+                    res.append([backward[word[j:]], i])
+                if word[:j] in backward and word[j:] == word[j:][::-1]:
+                    res.append([i, backward[word[:j]]])
+                    
+        return res
+```
+
+This looks correct. The three changes from the original:
+1. `word[:j] == word[j::-1]` → `word[:j] == word[:j][::-1]` (fix palindrome check for prefix)
+2. `word[j:] == word[:j-1:-1]` → `word[j:] == word[j:][::-1]` (fix palindrome check for suffix)
+3. `range(len(word))` → `range(1, len(word))` (avoid duplicates with the separate checks)
+</think>
+
+=== RAW ANSWER ===
+Looking at the code, I can identify two bugs in the palindrome checks within the loop, plus a duplicate issue that fixing them would introduce:
+
+1. **Bug 1**: `word[:j] == word[j::-1]` — `word[j::-1]` reverses `word[:j+1]` (includes character at index j), but we need to check if `word[:j]` is a palindrome, which requires `word[:j] == word[:j][::-1]`.
+
+2. **Bug 2**: `word[j:] == word[:j-1:-1]` — This slicing breaks at j=0 (`word[:-1:-1]` = `""`), and is meant to check if `word[j:]` is a palindrome. Should be `word[j:] == word[j:][::-1]`.
+
+3. **Duplicate issue**: With the corrected checks, j=0 would produce pairs already handled by the separate full-reverse and empty-string checks. The original buggy checks accidentally prevented j=0 from firing. Fix: start loop from j=1.
+
+Verification: With `range(1, len(word))`, case 1 at j=0 (full reverse pair `[backward[word], i]`) is already found by the first check when processing the reversed word. Case 2 at j=0 (palindrome + empty string `[i, backward[""]]`) is already handled by the explicit empty string check. No valid pairs are missed.
+
+```python
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            
+            if word in backward and backward[word] != i:
+                res.append([i, backward[word]])
+                
+            if word != "" and "" in backward and word == word[::-1]:
+                res.append([i, backward[""]])
+                res.append([backward[""], i])
+                
+            for j in range(1, len(word)):
+                if word[j:] in backward and word[:j] == word[:j][::-1]:
+                    res.append([backward[word[j:]], i])
+                if word[:j] in backward and word[j:] == word[j:][::-1]:
+                    res.append([i, backward[word[:j]]])
+                    
+        return res
+```
+
+=== FIXED CODE ===
+class Solution:
+    def palindromePairs(self, words: List[str]) -> List[List[int]]:
+        backward, res = {}, []
+        for i, word in enumerate(words):
+            backward[word[::-1]] = i
+
+        for i, word in enumerate(words):
+            
+            if word in backward and backward[word] != i:
+                res.append([i, backward[word]])
+                
+            if word != "" and "" in backward and word == word[::-1]:
+                res.append([i, backward[""]])
+                res.append([backward[""], i])
+                
+            for j in range(1, len(word)):
+                if word[j:] in backward and word[:j] == word[:j][::-1]:
+                    res.append([backward[word[j:]], i])
+                if word[:j] in backward and word[j:] == word[j:][::-1]:
+                    res.append([i, backward[word[:j]]])
+                    
+        return res

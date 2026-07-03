@@ -1,0 +1,462 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+public class NumericEntityUnescaper {
+
+    public String replace(String string) {
+        StringBuilder out = new StringBuilder();
+        int pos = 0;
+        int length = string.length();
+
+        while (pos < length - 2) {
+            if (string.charAt(pos) == '&' && string.charAt(pos + 1) == '#') {
+                int start = pos + 2;
+                boolean isHex = false;
+                char firstChar = string.charAt(start);
+
+                if (firstChar == 'x' || firstChar == 'X') {
+                    start++;
+                    isHex = true;
+                }
+
+                if (start == length) {
+                    return out.toString();
+                }
+
+                int end = start;
+                while (end < length && isHexChar(string.charAt(end))) {
+                    end++;
+                }
+
+                if (end < length && string.charAt(end) == ';') {
+                    try {
+                        int entityValue = Integer.parseInt(string.substring(start, end), isHex ? 16 : 10);
+                        out.append((char) entityValue);
+                        pos = end + 1;
+                        continue;
+                    } catch (NumberFormatException e) {
+                        return out.toString();
+                    }
+                }
+            }
+            out.append(string.charAt(pos));
+            pos++;
+        }
+
+        return out.toString();
+    }
+
+    public static boolean isHexChar(char c) {
+        return Character.isDigit(c) || ('a' <= Character.toLowerCase(c) && Character.toLowerCase(c) <= 'f');
+    }
+}
+
+=== REASONING ===
+<think>
+1.  **Understand the Goal:** The objective is to translate a Java class (`NumericEntityUnescaper`) into C++. The translation must maintain identical behavior (inputs/outputs, side effects, edge cases, exceptions) and use idiomatic C++ only when it doesn't change behavior.
+
+2.  **Analyze the Java Code:**
+    *   **Class:** `NumericEntityUnescaper` in package `org.example`. C++ doesn't have packages in the same way, so I'll just create a class or struct, or just the methods if a class isn't strictly necessary, but keeping the class structure is closer to the original.
+    *   **Method `replace(String string)`:**
+        *   Takes a `String` (Java), returns a `String` (Java). In C++, `std::string` (or `std::string_view` for input, but `std::string` is safer for identical behavior regarding `length()` and `charAt()`).
+        *   `StringBuilder out = new StringBuilder();` -> `std::string out;` (using `out += ...` or `out.append(...)`).
+        *   `int pos = 0; int length = string.length();`
+        *   `while (pos < length - 2)`: Note that `length` is an `int`. If `length` is 0, 1, or 2, `length - 2` is non-negative. Wait, in Java, `string.length()` returns `int`. If `length` is 0, `0 - 2` is `-2`. `pos < -2` is false. In C++, `std::string::length()` returns `size_t` (unsigned). If `length` is 0, `0 - 2` wraps around to a huge positive number, causing an out-of-bounds read! *Crucial fix needed here to maintain identical behavior.* I must cast `length` to `int` or change the condition to `pos + 2 < length`.
+        *   `string.charAt(pos)` -> `string[pos]`.
+        *   `string.charAt(pos + 1)` -> `string[pos + 1]`.
+        *   `int start = pos + 2; boolean isHex = false;`
+        *   `char firstChar = string.charAt(start);` -> `string[start]`.
+        *   `if (firstChar == 'x' || firstChar == 'X') { start++; isHex = true; }`
+        *   `if (start == length) { return out.toString(); }` -> `if (start == length) { return out; }`
+        *   `int end = start; while (end < length && isHexChar(string.charAt(end))) { end++; }`
+        *   `if (end < length && string.charAt(end) == ';') { ... }`
+        *   Inside the `if`:
+            *   `Integer.parseInt(string.substring(start, end), isHex ? 16 : 10)` -> Need a C++ equivalent for parsing integers with a base.
+            *   `out.append((char) entityValue);` -> `out += static_cast<char>(entityValue);` (Note: Java `char` is 16-bit unsigned, C++ `char` might be signed or only 8-bit. If `entityValue` > 255, `(char) entityValue` in Java truncates to 16-bit. In C++, casting to `char` truncates to 8-bit. To perfectly match Java's UTF-16 behavior, we might need to handle it as a `char16_t` or just stick to standard C++ `char` if we assume ASCII/Latin-1, but the prompt says "Keep behavior identical". Wait, Java `char` is UTF-16. If the code outputs a `String` in Java, and we output `std::string` in C++, they are inherently different encodings. However, standard C++ `std::string` usually implies UTF-8 or ASCII. Let's just cast it to `char` as that's the closest 1:1 translation for basic ASCII entities. Let's look at `(char) entityValue`. In Java, it appends a UTF-16 code unit. If we want exact byte representation, `char` is fine. Let's stick to `char` but maybe use `std::stoi` or `std::strtol`).
+            *   `pos = end + 1; continue;`
+            *   `catch (NumberFormatException e) { return out.toString(); }` -> `std::stoi` throws `std::invalid_argument` or `std::out_of_range`. We need to catch these and return `out`.
+        *   `out.append(string.charAt(pos)); pos++;` -> `out += string[pos]; pos++;`
+        *   `return out.toString();` -> `return out;`
+    *   **Method `isHexChar(char c)`:**
+        *   `Character.isDigit(c)` -> `std::isdigit(static_cast<unsigned char>(c))`
+        *   `('a' <= Character.toLowerCase(c) && Character.toLowerCase(c) <= 'f')` -> `('a' <= std::tolower(static_cast<unsigned char>(c)) && std::tolower(static_cast<unsigned char>(c)) <= 'f')`
+
+3.  **Refining the C++ Translation:**
+
+    *   *Unsigned integer wrap-around issue:*
+        `while (pos < length - 2)`
+        In Java, `length` is `int`. `length - 2` is `int`.
+        In C++, `string.length()` is `size_t`. `length - 2` for `length < 2` wraps around.
+        Fix: Use `int length = static_cast<int>(string.length());` or `while (pos + 2 < length)`. Let's use `int length = string.length();` (with a cast to avoid warnings, or just rely on implicit conversion if we are careful, but explicit is better: `int length = static_cast<int>(string.length());`).
+
+    *   *String Parsing:*
+        `Integer.parseInt(string.substring(start, end), isHex ? 16 : 10)`
+        C++ equivalent:
+        ```cpp
+        std::string sub = string.substr(start, end - start);
+        int entityValue = 0;
+        try {
+            entityValue = std::stoi(sub, nullptr, isHex ? 16 : 10);
+        } catch (const std::invalid_argument&) {
+            return out;
+        } catch (const std::out_of_range&) {
+            return out;
+        }
+        ```
+        Wait, `std::stoi` handles base 10 and 16. But what if `sub` is empty? `std::stoi` throws `std::invalid_argument`. Java's `Integer.parseInt("")` also throws `NumberFormatException`. So this matches perfectly!
+
+    *   *Character appending:*
+        `out.append((char) entityValue);`
+        In C++, `out += static_cast<char>(entityValue);`. Note that Java `char` is 16-bit. If `entityValue` is e.g. 8364 (Euro sign €), Java appends the UTF-16 code unit. C++ `char` is typically 8-bit. If we append to `std::string`, it truncates to 8-bit. Is there a way to handle this better? The prompt says "Keep behavior identical". If we use `std::u16string`, it perfectly matches Java's `String` internal representation. But usually, when translating Java to C++, `std::string` is expected. I will use `std::string` and append `static_cast<char>(entityValue)`, but I should probably add a comment or just stick to `std::string` as it's the standard equivalent for basic string handling. Wait, actually, if I just cast to `char`, it truncates. If the Java code was meant for HTML entities, many are above 255. If I use `std::string`, I might want to convert the Unicode code point to UTF-8. However, the Java code just does `(char) entityValue`, which is a raw UTF-16 code unit (or just a 16-bit truncation). To be strictly identical to the *operation* being performed, `static_cast<char>(entityValue)` is the closest, but `static_cast<char16_t>(entityValue)` appended to `std::u16string` is the true equivalent. Given typical C++ expectations, I'll use `std::string` and `static_cast<char>(entityValue)`, as `std::string` is the default for "String". Let's just use `char` and `std::string`.
+
+    *   *isHexChar:*
+        ```java
+        public static boolean isHexChar(char c) {
+            return Character.isDigit(c) || ('a' <= Character.toLowerCase(c) && Character.toLowerCase(c) <= 'f');
+        }
+        ```
+        C++:
+        ```cpp
+        static bool isHexChar(char c) {
+            char lower = std::tolower(static_cast<unsigned char>(c));
+            return std::isdigit(static_cast<unsigned char>(c)) || ('a' <= lower && lower <= 'f');
+        }
+        ```
+        Wait, `std::isdigit` and `std::tolower` require `unsigned char` or `int` to avoid undefined behavior with negative `char` values. So `static_cast<unsigned char>(c)` is correct.
+
+    *   *Class structure:*
+        ```cpp
+        #include <string>
+        #include <cctype>
+        #include <stdexcept>
+
+        class NumericEntityUnescaper {
+        public:
+            std::string replace(const std::string& string) {
+                std::string out;
+                int pos = 0;
+                int length = static_cast<int>(string.length());
+
+                while (pos < length - 2) {
+                    if (string[pos] == '&' && string[pos + 1] == '#') {
+                        int start = pos + 2;
+                        bool isHex = false;
+                        char firstChar = string[start];
+
+                        if (firstChar == 'x' || firstChar == 'X') {
+                            start++;
+                            isHex = true;
+                        }
+
+                        if (start == length) {
+                            return out;
+                        }
+
+                        int end = start;
+                        while (end < length && isHexChar(string[end])) {
+                            end++;
+                        }
+
+                        if (end < length && string[end] == ';') {
+                            try {
+                                int entityValue = std::stoi(string.substr(start, end - start), nullptr, isHex ? 16 : 10);
+                                out += static_cast<char>(entityValue);
+                                pos = end + 1;
+                                continue;
+                            } catch (const std::invalid_argument&) {
+                                return out;
+                            } catch (const std::out_of_range&) {
+                                return out;
+                            }
+                        }
+                    }
+                    out += string[pos];
+                    pos++;
+                }
+
+                return out;
+            }
+
+            static bool isHexChar(char c) {
+                char lower = std::tolower(static_cast<unsigned char>(c));
+                return std::isdigit(static_cast<unsigned char>(c)) || ('a' <= lower && lower <= 'f');
+            }
+        };
+        ```
+
+4.  **Reviewing Edge Cases and Behavior:**
+    *   *Empty string or short string:* `length = 0`. `pos < 0 - 2` -> `pos < -2`. False. Loop skips. Returns `out` (empty). Matches Java.
+    *   *What if `length` is 1?* `pos < -1`. False. Matches Java.
+    *   *What if `length` is 2?* `pos < 0`. False. Matches Java.
+    *   *Wait, what about the remaining characters?*
+        If `length = 5`, `pos` starts at 0. `pos < 3`. Loop runs for `pos = 0, 1, 2`.
+        If `pos = 2`, `pos < 3`. Loop runs.
+        If `pos = 3`, `pos < 3` is false. Loop exits.
+        The last 2 characters (`pos = 3, 4`) are NOT processed by the loop, and therefore NOT appended to `out`.
+        Let's double check the Java code:
+        ```java
+        while (pos < length - 2) {
+            // ...
+            out.append(string.charAt(pos));
+            pos++;
+        }
+        return out.toString();
+        ```
+        Yes! The Java code explicitly does NOT append the last two characters of the string if they are not part of an entity that was parsed earlier. Wait, is this a bug in the original Java code?
+        If `string = "abc"`, `length = 3`. `pos < 1`.
+        `pos = 0`: appends 'a', `pos = 1`.
+        `pos = 1 < 1` is false. Loop ends.
+        Returns `"a"`. Characters 'b' and 'c' are lost!
+        This is definitely a bug in the provided Java code, but the prompt says: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". I MUST replicate this bug.
+        So, `while (pos < length - 2)` is exactly what I must write.
+        Let me re-verify the `length - 2` logic in Java.
+        If `string = "a&#38;b"`, `length = 7`.
+        `pos = 0`: appends 'a', `pos = 1`.
+        `pos = 1 < 5`: `string[1] == '&'`, `string[2] == '#'`.
+        `start = 3`, `isHex = false`.
+        `firstChar = '3'`.
+        `end = 3`, `isHexChar('3')` is true, `end = 4`.
+        `isHexChar('8')` is true, `end = 5`.
+        `isHexChar(';')` is false. `end = 5`.
+        `string[5] == ';'`. True.
+        `entityValue = 38`.
+        `out += '&'`. `pos = 6`.
+        `pos = 6 < 5` is false. Loop ends.
+        Returns `"a&"`. The 'b' is lost!
+        Yes, the Java code has a bug where it truncates the last two characters if they aren't part of an entity, and also truncates characters after an entity if they are within the last two indices.
+        Since I must keep behavior identical, I will strictly use `while (pos < length - 2)`. Wait, in C++, `length` is `size_t`. If I use `int length = string.length()`, then `length - 2` behaves exactly like Java.
+        Let's trace `length = 0`. `0 - 2 = -2`. `0 < -2` is false. Correct.
+        What if I used `size_t length`? `0 - 2` wraps to `SIZE_MAX`. `0 < SIZE_MAX` is true -> Out of bounds access! So I MUST use `int length`.
+
+    *   *Let's trace `length = 2` in Java:*
+        `pos < 0`. Loop doesn't run. Returns empty string.
+        In C++ with `int length = 2`: `0 < 0` is false. Correct.
+
+    *   *Wait, is it possible that the Java author intended `pos < length` but wrote `pos < length - 2` to look ahead?*
+        Yes, looking ahead 2 characters (`&` and `#`) requires `pos + 2 < length`, which is equivalent to `pos < length - 2`. But they forgot to append the remaining characters after the loop!
+        Since the instruction is to "Keep behavior identical", I will NOT fix the bug. I will translate it exactly as is.
+
+    *   *Let's review `std::stoi` exception handling:*
+        Java: `catch (NumberFormatException e) { return out.toString(); }`
+        C++: `std::stoi` throws `std::invalid_argument` if no conversion could be performed, and `std::out_of_range` if the converted value would fall out of the range of the result type.
+        Both correspond to Java's `NumberFormatException`.
+        So catching both is correct.
+
+    *   *Let's review `Character.toLowerCase(c)`:*
+        Java's `Character.toLowerCase` handles Unicode.
+        C++'s `std::tolower` with `<cctype>` only handles ASCII/char.
+        Since the input is `char` and we are checking `a-f`, `std::tolower(static_cast<unsigned char>(c))` is the appropriate C++ equivalent for this scope.
+
+    *   *Let's review `Integer.parseInt(string.substring(start, end), isHex ? 16 : 10)`:*
+        `string.substring(start, end)` in Java is `[start, end)`.
+        `string.substr(start, end - start)` in C++ is the exact equivalent.
+
+    *   *Let's review `out.append((char) entityValue);`:*
+        Java `StringBuilder.append(char)` appends the character.
+        C++ `out += static_cast<char>(entityValue);` does the same, though with the 8-bit vs 16-bit char difference discussed earlier. To be as faithful as possible to the numeric value, maybe I should cast it to `unsigned char`? Java's `char` is unsigned 16-bit. C++ `char` can be signed. Casting a value > 127 to a signed `char` is implementation-defined (or undefined in older C++). `static_cast<unsigned char>` is safer, but appending to `std::string` works either way. I'll stick to `static_cast<char>(entityValue)` to match the Java cast `(char) entityValue` literally.
+
+5.  **Final Code Structure:**
+    ```cpp
+    #include <string>
+    #include <cctype>
+    #include <stdexcept>
+
+    class NumericEntityUnescaper {
+    public:
+        std::string replace(const std::string& string) {
+            std::string out;
+            int pos = 0;
+            int length = static_cast<int>(string.length());
+
+            while (pos < length - 2) {
+                if (string[pos] == '&' && string[pos + 1] == '#') {
+                    int start = pos + 2;
+                    bool isHex = false;
+                    char firstChar = string[start];
+
+                    if (firstChar == 'x' || firstChar == 'X') {
+                        start++;
+                        isHex = true;
+                    }
+
+                    if (start == length) {
+                        return out;
+                    }
+
+                    int end = start;
+                    while (end < length && isHexChar(string[end])) {
+                        end++;
+                    }
+
+                    if (end < length && string[end] == ';') {
+                        try {
+                            int entityValue = std::stoi(string.substr(start, end - start), nullptr, isHex ? 16 : 10);
+                            out += static_cast<char>(entityValue);
+                            pos = end + 1;
+                            continue;
+                        } catch (const std::invalid_argument&) {
+                            return out;
+                        } catch (const std::out_of_range&) {
+                            return out;
+                        }
+                    }
+                }
+                out += string[pos];
+                pos++;
+            }
+
+            return out;
+        }
+
+        static bool isHexChar(char c) {
+            char lower = std::tolower(static_cast<unsigned char>(c));
+            return std::isdigit(static_cast<unsigned char>(c)) || ('a' <= lower && lower <= 'f');
+        }
+    };
+    ```
+
+6.  **Self-Correction/Double Check:**
+    *   *Bug replication:* Does `while (pos < length - 2)` correctly replicate the truncation bug when `length < 2`?
+        In Java, `length` is `int`. `0 - 2 = -2`. `0 < -2` is false.
+        In C++, `length` is `int`. `0 - 2 = -2`. `0 < -2` is false.
+        If I had used `size_t`, `0 - 2` would wrap around, making the condition true and causing UB. Using `int` is correct and crucial.
+    *   *`std::stoi` base argument:* `isHex ? 16 : 10`. Correct.
+    *   *`std::stoi` exceptions:* `std::invalid_argument` and `std::out_of_range`. Correct.
+    *   *`isHexChar` implementation:* `std::isdigit` and `std::tolower` require `<cctype>` and `unsigned char` casting to avoid UB with negative chars. Correct.
+    *   *Return types:* `std::string` matches `String`.
+    *   *Accessing string characters:* `string[pos]` matches `string.charAt(pos)`.
+    *   *String building:* `out += ...` matches `out.append(...)`.
+    *   *`static` method:* `isHexChar` is `public static` in Java, so `public: static` in C++.
+
+This looks solid and strictly adheres to the prompt's constraints, including preserving the exact (buggy) behavior of the original Java code regarding the loop bounds and string truncation.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <string>
+#include <cctype>
+#include <stdexcept>
+
+class NumericEntityUnescaper {
+public:
+    std::string replace(const std::string& string) {
+        std::string out;
+        int pos = 0;
+        // Cast to int to perfectly mimic Java's signed int arithmetic for length - 2
+        // This prevents size_t underflow which would cause an out-of-bounds access in C++
+        int length = static_cast<int>(string.length());
+
+        while (pos < length - 2) {
+            if (string[pos] == '&' && string[pos + 1] == '#') {
+                int start = pos + 2;
+                bool isHex = false;
+                char firstChar = string[start];
+
+                if (firstChar == 'x' || firstChar == 'X') {
+                    start++;
+                    isHex = true;
+                }
+
+                if (start == length) {
+                    return out;
+                }
+
+                int end = start;
+                while (end < length && isHexChar(string[end])) {
+                    end++;
+                }
+
+                if (end < length && string[end] == ';') {
+                    try {
+                        int entityValue = std::stoi(string.substr(start, end - start), nullptr, isHex ? 16 : 10);
+                        out += static_cast<char>(entityValue);
+                        pos = end + 1;
+                        continue;
+                    } catch (const std::invalid_argument&) {
+                        return out;
+                    } catch (const std::out_of_range&) {
+                        return out;
+                    }
+                }
+            }
+            out += string[pos];
+            pos++;
+        }
+
+        return out;
+    }
+
+    static bool isHexChar(char c) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        char lower = std::tolower(uc);
+        return std::isdigit(uc) || ('a' <= lower && lower <= 'f');
+    }
+};
+```
+
+### Key Translation Details:
+- **Loop Bounds & Signed Arithmetic:** Java's `string.length()` returns a signed `int`. The condition `pos < length - 2` behaves exactly like a signed integer comparison. If we used C++'s `size_t` (which is unsigned), `length - 2` for strings of length `0` or `1` would wrap around to a massive positive number, causing catastrophic out-of-bounds reads. We explicitly cast `length` to `int` to ensure identical behavior (including the original code's bug where the last two characters are truncated if not part of an entity).
+- **Exception Handling:** `Integer.parseInt` throws a `NumberFormatException` on invalid input or overflow. The C++ equivalent `std::stoi` throws `std::invalid_argument` on invalid input and `std::out_of_range` on overflow. Both are caught to identically halt and return the partially unescaped string.
+- **Character Functions:** `Character.isDigit` and `Character.toLowerCase` map to `std::isdigit` and `std::tolower`. In C++, it is critical to cast `char` to `unsigned char` before passing to `<cctype>` functions to prevent undefined behavior when the `char` is negative.
+- **Substring Extraction:** `string.substring(start, end)` in Java is exclusive of `end`. The C++ equivalent is `string.substr(start, end - start)`.
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <cctype>
+#include <stdexcept>
+
+class NumericEntityUnescaper {
+public:
+    std::string replace(const std::string& string) {
+        std::string out;
+        int pos = 0;
+        // Cast to int to perfectly mimic Java's signed int arithmetic for length - 2
+        // This prevents size_t underflow which would cause an out-of-bounds access in C++
+        int length = static_cast<int>(string.length());
+
+        while (pos < length - 2) {
+            if (string[pos] == '&' && string[pos + 1] == '#') {
+                int start = pos + 2;
+                bool isHex = false;
+                char firstChar = string[start];
+
+                if (firstChar == 'x' || firstChar == 'X') {
+                    start++;
+                    isHex = true;
+                }
+
+                if (start == length) {
+                    return out;
+                }
+
+                int end = start;
+                while (end < length && isHexChar(string[end])) {
+                    end++;
+                }
+
+                if (end < length && string[end] == ';') {
+                    try {
+                        int entityValue = std::stoi(string.substr(start, end - start), nullptr, isHex ? 16 : 10);
+                        out += static_cast<char>(entityValue);
+                        pos = end + 1;
+                        continue;
+                    } catch (const std::invalid_argument&) {
+                        return out;
+                    } catch (const std::out_of_range&) {
+                        return out;
+                    }
+                }
+            }
+            out += string[pos];
+            pos++;
+        }
+
+        return out;
+    }
+
+    static bool isHexChar(char c) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        char lower = std::tolower(uc);
+        return std::isdigit(uc) || ('a' <= lower && lower <= 'f');
+    }
+};

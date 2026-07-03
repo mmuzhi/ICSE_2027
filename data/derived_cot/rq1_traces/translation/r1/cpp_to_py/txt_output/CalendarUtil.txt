@@ -1,0 +1,826 @@
+=== SOURCE CODE (cpp) ===
+
+#include <ctime>
+#include <vector>
+#include <utility>
+#include <iostream>
+#include <iomanip>
+
+#include <chrono>
+#include <string>
+#include <vector>
+#include <map>
+
+class CalendarUtil {
+public:
+    struct Event {
+        std::chrono::system_clock::time_point date;
+        std::chrono::system_clock::time_point start_time;
+        std::chrono::system_clock::time_point end_time;
+        std::string description;
+
+        bool operator==(const Event& other) const {
+            return date == other.date &&
+                start_time == other.start_time &&
+                end_time == other.end_time &&
+                description == other.description;
+        }
+    };
+
+    void add_event(const Event& event);
+    void remove_event(const Event& event);
+    std::vector<Event> get_events(const std::chrono::system_clock::time_point& date);
+    bool is_available(const std::chrono::system_clock::time_point& start_time,
+        const std::chrono::system_clock::time_point& end_time);
+    std::vector<std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>> get_available_slots(const std::chrono::system_clock::time_point& date);
+    std::vector<Event> get_upcoming_events(size_t num_events);
+    std::vector<Event> events;
+};
+
+std::chrono::system_clock::time_point time_from_timestamp(time_t timestamp);
+
+void CalendarUtil::add_event(const Event& event) {
+    events.push_back(event);
+}
+
+void CalendarUtil::remove_event(const Event& event) {
+    auto it = std::find(events.begin(), events.end(), event);
+    if (it != events.end()) {
+        events.erase(it);
+    }
+}
+
+std::vector<CalendarUtil::Event> CalendarUtil::get_events(const std::chrono::system_clock::time_point& date) {
+    std::vector<Event> events_on_date;
+    auto date_tm = std::chrono::system_clock::to_time_t(date);
+    std::tm date_tm_struct;
+    localtime_s(&date_tm_struct, &date_tm);
+    for (const auto& event : events) {
+        auto event_date_tm = std::chrono::system_clock::to_time_t(event.date);
+        std::tm event_date_tm_struct;
+        localtime_s(&event_date_tm_struct, &event_date_tm);
+        if (date_tm_struct.tm_year == event_date_tm_struct.tm_year &&
+            date_tm_struct.tm_mon == event_date_tm_struct.tm_mon &&
+            date_tm_struct.tm_mday == event_date_tm_struct.tm_mday) {
+            events_on_date.push_back(event);
+        }
+    }
+    return events_on_date;
+}
+
+bool CalendarUtil::is_available(const std::chrono::system_clock::time_point& start_time,
+    const std::chrono::system_clock::time_point& end_time) {
+    for (const auto& event : events) {
+        if (start_time < event.end_time && end_time > event.start_time) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>> CalendarUtil::get_available_slots(const std::chrono::system_clock::time_point& date) {
+    std::vector<std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>> available_slots;
+    auto start_time = date;
+    auto end_time = date + std::chrono::hours(24) - std::chrono::seconds(1);
+
+    while (start_time < end_time) {
+        auto slot_end_time = start_time + std::chrono::hours(1);
+        if (is_available(start_time, slot_end_time)) {
+            available_slots.emplace_back(start_time, slot_end_time);
+        }
+        start_time = slot_end_time;
+    }
+
+    return available_slots;
+}
+
+std::vector<CalendarUtil::Event> CalendarUtil::get_upcoming_events(size_t num_events) {
+    auto now = std::chrono::system_clock::now();
+    std::vector<Event> upcoming_events;
+    for (const auto& event : events) {
+        if (event.start_time >= now) {
+            upcoming_events.push_back(event);
+            if (upcoming_events.size() == num_events) {
+                break;
+            }
+        }
+    }
+    return upcoming_events;
+}
+
+std::chrono::system_clock::time_point time_from_timestamp(time_t timestamp) {
+    std::tm tm;
+    localtime_s(&tm, &timestamp);
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to translate the C++ code to Python.
+ Since Python does not have the same type system, we have to make some adjustments.
+ We'll use the `datetime` module for handling dates and times.
+
+ Important points:
+ - The C++ code uses `std::chrono::system_clock::time_point` which we can represent as `datetime.datetime` in Python.
+ - The `Event` struct becomes a class in Python. We can use a dataclass for simplicity and to have the equality operator.
+ - The `CalendarUtil` class becomes a Python class with similar methods.
+ - We note that the original code uses `localtime_s` (Windows) to convert time_t to tm. In Python, we can use `time.localtime` or `datetime.datetime.fromtimestamp`.
+ - The function `time_from_timestamp` is implemented similarly using `datetime.fromtimestamp`.
+
+ However, note that the original `get_events` method filters events by the same day (year, month, day). We can do the same by comparing the date part.
+
+ Steps:
+ 1. Define the Event class with fields: date, start_time, end_time, description.
+    - We note that in the C++ code, `date` is a time_point representing the day (without time) and `start_time` and `end_time` are time_points for the event time on that day?
+    But looking at the usage in `get_events`, it compares only the date (day) part. However, note that the `is_available` method uses the full time_points.
+
+    Actually, the original Event has:
+        date: time_point (which is converted to tm and then compared by year, month, day) -> so this is the day of the event?
+        start_time: time_point (the start time of the event)
+        end_time: time_point (the end time of the event)
+
+    But note: when adding an event, the `date` field is set to the day (without time) and then the start_time and end_time are set to the specific times?
+
+    However, in the `get_events` function, the comparison is done by the day (ignoring time). So we can assume that the `date` field in the Event is set to midnight of the day?
+
+    But the `get_available_slots` function uses a date (which is a day) and then sets start_time to that day and end_time to the next day minus one second.
+
+    How to represent in Python?
+    We can store:
+        - The date as a datetime object but at midnight (representing the day)
+        - The start_time and end_time as datetime objects that include the time.
+
+    However, note the original code in `is_available` compares the event's start_time and end_time (which are full timestamps) with the slot.
+
+    So we'll keep:
+        - date: datetime (at 00:00:00) representing the day? Actually, the original code does not require the date to be midnight? 
+          But when comparing in `get_events`, it only compares the day, month, year.
+
+    We can change: In Python, we can store the event's date as a date object? But then note: the Event struct in C++ uses time_point (which is a point in time). 
+    However, the function `get_events` takes a time_point and then converts to tm to get year, month, day.
+
+    Alternatively, we can store everything as datetime and then when comparing for the same day, we compare the date part.
+
+ 2. We'll represent time points as `datetime` objects.
+
+ 3. For the `CalendarUtil` class:
+    - events: list of Event objects.
+
+ 4. Methods:
+    - add_event: append to the list.
+    - remove_event: remove by value (we need to define __eq__ for Event so that we can use list.remove? But note: list.remove removes the first occurrence. Alternatively, we can iterate and remove. But the C++ code uses std::find and then erase one occurrence. So we do the same: remove the first matching event.
+
+    However, note: the original Event has an operator== that compares all fields. We'll define __eq__ for our Event class.
+
+ 5. get_events: takes a datetime (representing a day). We return all events that fall on that day (by comparing year, month, day).
+
+ 6. is_available: checks if the given time range (start_time, end_time) does not conflict with any event.
+
+ 7. get_available_slots: for a given day (as datetime), it returns a list of available one-hour slots.
+
+ 8. get_upcoming_events: returns up to `num_events` events that start at or after the current time.
+
+ 9. time_from_timestamp: converts a timestamp (seconds since epoch) to a datetime.
+
+ Implementation details:
+
+  - We'll use the `datetime` module.
+  - For `get_events`: we'll convert the input `date` (which is a datetime) to a date object? Actually, we can compare the year, month, day of the event's date (which is stored as a datetime) and the input date. But note: the original code uses the same time_point for the event's date and the input date. However, the event's date might be set to midnight? 
+
+    How was the event's date set? The original code doesn't show. But when we get the events for a day, we compare the day, month, year of the event's date and the input date.
+
+    In Python, we can do:
+        if event.date.date() == input_date.date():
+    However, note: the input_date is a datetime. But the original function takes a time_point which represents a day? Actually, the original function takes a time_point and then converts to tm to get the day. So we can do the same: convert both to the same day in the local time.
+
+    But note: the original uses `localtime_s` which is the local time. So we must use local time for the day.
+
+    However, the input `date` might be at any time of the day? We only care about the day part in the local time.
+
+    So in Python, we can convert both the event's date and the input date to the local time and then extract the date (year, month, day).
+
+    Alternatively, we can use: `event.date.replace(hour=0, minute=0, second=0, microsecond=0)`? But note: the event's date might already be set to midnight? We don't know.
+
+    Actually, the original code sets the event's date field independently. We don't know how it is set. But the comparison is done by breaking down the time_point to tm (local time) and comparing year, month, day.
+
+    We'll do: 
+        event_date_local = event.date.astimezone().date()   # but note: the time_point in C++ is system_clock which is UTC? But then converted to local time.
+
+    Actually, the system_clock is system time (which is UTC on Unix, but might be local on some systems? Actually, it's UTC). Then we convert to local time using localtime_s.
+
+    So in Python, we have to convert the datetime (which is timezone naive) to local time? 
+
+    However, the original code uses `localtime_s` which converts to the local time of the system. In Python, we can use:
+
+        import time
+        local_time = time.localtime(timestamp)
+
+    But our datetimes are stored as naive. We have two options:
+
+        Option 1: Store all datetimes as UTC and then convert to local time for day extraction.
+        Option 2: Store all datetimes in local time.
+
+    Since the original code uses local time for the day comparison, we have to do the same.
+
+    How was the time_point created? The function `time_from_timestamp` uses `localtime_s` and then `mktime` which converts the local time to time_t (UTC). Then we create a time_point from that time_t. So the time_point is UTC? But then when we convert back to local time in `get_events`, we get the local time representation.
+
+    This is confusing. Actually, the `time_from_timestamp` function takes a timestamp (which is UTC) and then converts it to local time struct, then converts that struct to time_t (which is UTC) by `mktime`? That is incorrect? Because `mktime` interprets the tm struct as local time and returns UTC time_t.
+
+    Actually, the function `time_from_timestamp` does:
+
+        time_t timestamp (UTC) -> localtime_s (converts to local time) -> then mktime (converts the local time to UTC time_t) -> then creates a time_point from that UTC time_t.
+
+    This is equivalent to the original timestamp? Not exactly: because if the local time has DST, then the conversion might be off? Actually, the function is just converting a UTC timestamp to a time_point by first breaking it down in local time and then reassembling? That seems redundant and might be a bug? 
+
+    But note: the purpose of `time_from_timestamp` is not clear from the code snippet. It might be intended to create a time_point for the same day in local time? 
+
+    However, we are not required to change behavior. We have to mimic.
+
+    Since the original code uses `localtime_s` and `mktime` in `get_events`, we must do the same: convert the datetime to local time and extract the day.
+
+    How to do in Python?
+
+        We can convert a naive datetime (which we assume is UTC) to the local time? But note: Python's datetime from timestamp returns local time if we use `datetime.fromtimestamp(timestamp)`? Or UTC if we use `utcfromtimestamp`.
+
+    Actually, the original system_clock is UTC. Then we convert to local time for the day. So in Python, we can:
+
+        For a datetime `dt` (which is UTC), we can convert to local time using:
+            local_dt = dt.astimezone()   # but this requires dt to be timezone aware.
+
+    Alternatively, we can use:
+
+        from datetime import datetime, timezone
+        import time
+
+        # For a UTC time `dt_utc` (naive), we can convert to local naive datetime?
+        # But without timezone, we cannot use astimezone.
+
+    So we have two options: 
+        1. Make our datetimes timezone aware (UTC) and then convert to local time when needed.
+        2. Store as naive UTC and then when converting to local time, use `time.localtime` and then build a datetime.
+
+    However, the original code does not store timezone information. It uses system_clock (UTC) and then converts to local time for display.
+
+    We'll store the datetimes as UTC (naive) and then when we need to get the local day, we convert to local time.
+
+    How to get the local day from a UTC time?
+
+        We can use:
+            utc_dt = ...   # our stored datetime (naive, assumed UTC)
+            timestamp = utc_dt.timestamp()   # gives seconds since epoch in UTC
+            local_tm = time.localtime(timestamp)   # gives the local time struct
+            local_date = datetime(local_tm.tm_year, local_tm.tm_mon, local_tm.tm_mday)
+
+    But note: the original code compares the year, month, day of the event's date and the input date. Both are time_points (UTC) that are converted to local time.
+
+    So in Python, we can write a helper function:
+
+        def to_local_date(dt_utc):
+            # dt_utc: naive datetime in UTC
+            timestamp = dt_utc.timestamp()
+            local_tm = time.localtime(timestamp)
+            return (local_tm.tm_year, local_tm.tm_mon, local_tm.tm_mday)
+
+    Then in `get_events` we compare the local date of the event and the local date of the input date.
+
+ 10. But note: the original `get_events` function takes a `time_point` (which is UTC) and then converts it to local time. We do the same.
+
+ 11. However, storing naive UTC might be error-prone because when we create a datetime from a timestamp, we get UTC. But when we display, we convert to local time.
+
+ 12. Alternatively, we can store the datetimes as naive and in UTC, and when we need to do day comparison (in local time) we convert to the local day.
+
+ 13. But note: the `get_available_slots` function uses the input `date` (a day) and then sets the start_time to that day (in UTC?) and then adds 24 hours? Actually, the original:
+
+        auto start_time = date;
+        auto end_time = date + std::chrono::hours(24) - std::chrono::seconds(1);
+
+    This is for the entire day? But note: the `date` is a time_point (UTC) representing a day? But how was that day set? It was set by the caller? And the caller might have set it to midnight UTC? But then when we add 24 hours, we get the next day at midnight. Then subtract one second: the last second of the day.
+
+    However, the day in local time might be 23 hours? (if DST changes) but the original code does not account for that.
+
+    Actually, the original code does not handle timezones explicitly. We are going to assume that the input `date` for `get_available_slots` is set to midnight UTC of the day? But then the day in local time might be the previous day? 
+
+    Given the complexity and the fact that the original code uses `localtime_s` for day extraction but UTC for the time_points, we might have to reconsider.
+
+    How about we change the representation: store the event's date as a date object? But then the event's start_time and end_time are datetimes (UTC). 
+
+    But note: the event's date field in the original code is a time_point (so it's a datetime). And it is set independently. We don't know how. But in `get_events` we only use the day part in local time.
+
+    We can store the event's date as a datetime (UTC) and then when we need the local day, we convert.
+
+    Given the complexity, and to keep the translation straightforward, we will:
+
+        - Represent all time_points as naive UTC datetimes (using `datetime.utcfromtimestamp` or `datetime.fromtimestamp(timestamp, tz=timezone.utc)` but then drop timezone to be naive).
+
+        - For any comparison of day (like in `get_events`), convert the UTC time to the local time and extract the year, month, day.
+
+    Steps for `get_events`:
+
+        - Convert the input `date` (a naive UTC datetime) to local time and get the year, month, day.
+        - For each event, convert the event's `date` (naive UTC) to local time and get the year, month, day.
+        - Compare.
+
+    We'll write a helper function:
+
+        def get_local_ymd(utc_dt):
+            # Convert a naive UTC datetime to local time and return (year, month, day)
+            timestamp = utc_dt.timestamp()
+            local_tm = time.localtime(timestamp)
+            return (local_tm.tm_year, local_tm.tm_mon, local_tm.tm_mday)
+
+    Then:
+
+        input_ymd = get_local_ymd(date)
+        for event in events:
+            event_ymd = get_local_ymd(event.date)
+            if input_ymd == event_ymd:
+                ...
+
+ 14. For `is_available`: we compare the time ranges in UTC? Yes, because the events' start_time and end_time are stored in UTC and the input start_time and end_time are also UTC.
+
+ 15. For `get_available_slots`: the input `date` is a naive UTC datetime. We assume it represents the start of the day in UTC? But note: the original code does:
+
+        auto start_time = date;
+        auto end_time = date + std::chrono::hours(24) - std::chrono::seconds(1);
+
+    Then it checks for one-hour slots from start_time to end_time.
+
+    But what if the day in local time is not 24 hours? (like DST change). The original code doesn't handle that. So we'll do the same: 24 hours.
+
+ 16. For `get_upcoming_events`: we get the current time in UTC: `datetime.utcnow()`.
+
+ 17. The function `time_from_timestamp`: 
+        Original: takes a time_t (UTC), converts to local time tm, then converts back to time_t (with mktime) and then to time_point.
+
+        Why not just use the original time_t? 
+
+        Actually, the function might be intended to normalize the time to the beginning of the day? But note: it doesn't change the time_t? Because mktime with the same tm values should give the same time_t? 
+
+        But wait: the function `localtime_s` breaks the time_t into a tm struct in local time. Then `mktime` converts that tm struct back to time_t. This should be the same as the original time_t? 
+
+        Actually, no: because `localtime_s` and `mktime` account for DST. But if the original time_t is in a time that is ambiguous due to DST, then `mktime` might adjust? 
+
+        However, the function is named `time_from_timestamp` and it does:
+
+            time_point = system_clock::from_time_t(mktime(localtime(timestamp)))
+
+        This is equivalent to the original timestamp? Not necessarily: because `mktime` expects a local time tm and then converts to UTC time_t. Since the input timestamp is UTC, then `localtime` converts it to local time. Then `mktime` converts that local time back to UTC time_t. This is the same as the original? 
+
+        Actually, yes: because UTC time_t is fixed. The local time representation of a UTC time_t is fixed. And then converting that local time back to UTC time_t should be the same.
+
+        So we can simply do: `datetime.utcfromtimestamp(timestamp)`.
+
+        But note: the original does a round-trip. Why? Maybe to normalize? 
+
+        Since the behavior is the same, we can do:
+
+            return datetime.utcfromtimestamp(timestamp)
+
+        However, let me test:
+
+            timestamp = time.time()
+            dt1 = datetime.utcfromtimestamp(timestamp)
+            # Then round trip: 
+            local_tm = time.localtime(timestamp)
+            timestamp2 = time.mktime(local_tm)   # but note: mktime returns the local time as seconds since epoch? And then we convert to UTC?
+
+            Actually, time.mktime(local_tm) returns the UTC timestamp corresponding to that local time.
+
+            But the original timestamp is the UTC timestamp. And the local_tm is the local time representation of that UTC timestamp. Then mktime(local_tm) should be the same as the original timestamp? 
+
+            Yes.
+
+        So we can do: 
+
+            return datetime.utcfromtimestamp(timestamp)
+
+ 18. But note: the original function `time_from_timestamp` returns a time_point. We return a naive UTC datetime.
+
+ 19. Implementation:
+
+    Steps:
+
+        import datetime
+        import time
+
+        class Event:
+            __slots__ = ('date', 'start_time', 'end_time', 'description')
+            def __init__(self, date, start_time, end_time, description):
+                self.date = date        # naive UTC datetime, intended to represent the day (but stored as datetime)
+                self.start_time = start_time   # naive UTC datetime
+                self.end_time = end_time       # naive UTC datetime
+                self.description = description
+
+            def __eq__(self, other):
+                return (self.date == other.date and 
+                        self.start_time == other.start_time and 
+                        self.end_time == other.end_time and 
+                        self.description == other.description)
+
+        class CalendarUtil:
+            def __init__(self):
+                self.events = []
+
+            def add_event(self, event):
+                self.events.append(event)
+
+            def remove_event(self, event):
+                if event in self.events:
+                    self.events.remove(event)
+
+            def get_events(self, date):
+                # date: naive UTC datetime
+                # Convert to local time and get year, month, day
+                input_ymd = self._get_local_ymd(date)
+                events_on_date = []
+                for event in self.events:
+                    event_ymd = self._get_local_ymd(event.date)
+                    if input_ymd == event_ymd:
+                        events_on_date.append(event)
+                return events_on_date
+
+            def _get_local_ymd(self, utc_dt):
+                # Convert a naive UTC datetime to local time and return (year, month, day)
+                timestamp = utc_dt.timestamp()
+                local_tm = time.localtime(timestamp)
+                return (local_tm.tm_year, local_tm.tm_mon, local_tm.tm_mday)
+
+            def is_available(self, start_time, end_time):
+                for event in self.events:
+                    # Check for overlap: 
+                    if start_time < event.end_time and end_time > event.start_time:
+                        return False
+                return True
+
+            def get_available_slots(self, date):
+                # date: naive UTC datetime
+                # The day in UTC: we consider the entire day as [date, date+24h-1s]
+                start_time_utc = date
+                end_time_utc = date + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)
+
+                available_slots = []
+                current = start_time_utc
+                one_hour = datetime.timedelta(hours=1)
+
+                while current < end_time_utc:
+                    slot_end = current + one_hour
+                    # If slot_end exceeds end_time_utc, then clip?
+                    if slot_end > end_time_utc:
+                        slot_end = end_time_utc
+                    # But the original code uses exactly one-hour slots? Actually, it breaks the day into one-hour slots, and the last slot might be less than one hour? 
+                    # But note: the original code does:
+                    #   slot_end_time = start_time + std::chrono::hours(1);
+                    #   if (is_available(start_time, slot_end_time)) ...
+                    #   then start_time = slot_end_time
+                    # So the last slot might be less than one hour? Actually, no: because the day is 24 hours. But 24*1 hour slots exactly? Then the last slot ends at the end_time_utc.
+
+                    # However, we do the same: break the day into consecutive one-hour slots.
+
+                    if self.is_available(current, slot_end):
+                        available_slots.append((current, slot_end))
+                    current = slot_end
+
+                return available_slots
+
+            def get_upcoming_events(self, num_events):
+                now = datetime.datetime.utcnow()
+                upcoming = []
+                # We need to sort by start_time? The original code does not sort, it just iterates and picks events that are upcoming until it has num_events.
+                # But the original does not sort, so the order might be arbitrary? We'll do the same: the order of events in the list.
+                for event in self.events:
+                    if event.start_time >= now:
+                        upcoming.append(event)
+                        if len(upcoming) == num_events:
+                            break
+                return upcoming
+
+        def time_from_timestamp(timestamp):
+            return datetime.datetime.utcfromtimestamp(timestamp)
+
+ 20. However, note: the original `get_available_slots` does not clip the last slot to the end of the day? It uses:
+
+        slot_end_time = start_time + std::chrono::hours(1);
+
+    And then checks if that slot is available. Then sets start_time to slot_end_time.
+
+    This will break the day into slots of exactly one hour, and the last slot might exceed the day? Actually, the day is 24 hours, so 24 slots of one hour.
+
+    But note: the end_time_utc is defined as date + 24 hours - 1 second. So the last slot must end at date + 24 hours - 1 second? 
+
+    The original code does:
+
+        end_time = date + std::chrono::hours(24) - std::chrono::seconds(1);
+
+    Then the while loop runs while start_time < end_time.
+
+    The last slot: 
+        current = date + 23 hours
+        slot_end = current + 1 hour = date + 24 hours -> which is beyond end_time.
+
+    Then the condition `if (is_available(current, slot_end))` would be for the slot [date+23h, date+24h) but our end_time_utc is date+24h-1s.
+
+    So we should adjust: the slot_end for the last slot should be end_time_utc? 
+
+    But the original code does not adjust. It uses the entire one-hour slot? However, the slot_end might be beyond the end_time_utc? 
+
+    Then in `is_available`, we check the event's end_time (which is within the day?) and the slot_end is beyond the day? 
+
+    Actually, the events are stored with their own end_time, which might be beyond the day? But the events for that day are defined by the event's date (which is the day in local time) but the event's end_time might be the next day? 
+
+    The original code does not constrain events to the day? So we must check the entire event.
+
+    But the slot is for the day? The function `get_available_slots` is for a given day. So we are only concerned with the part of the event that falls on that day? 
+
+    Actually, the `is_available` method checks the entire event. So if an event spans two days, then it will block the last hour of the day.
+
+    Therefore, we must not clip the slot_end? 
+
+    However, the day is defined as [date, date+24h-1s]. So the slot_end should not exceed the day? 
+
+    But the original code does not clip. It uses the entire one-hour slot even if it goes beyond the day? 
+
+    Actually, the condition in the while loop: `start_time < end_time`. For the last slot, we set current = date+23h, then slot_end = date+24h. Then we check the slot [date+23h, date+24h). But note: our end_time_utc is date+24h-1s. So the slot_end (date+24h) is beyond the day? 
+
+    Then the next start_time becomes slot_end = date+24h, which is >= end_time_utc, so the loop ends.
+
+    But the slot [date+23h, date+24h) is partially beyond the day? 
+
+    However, the `is_available` method checks the entire slot. If there's an event that starts at date+23h30 and ends at date+24h30, then it would block the slot? 
+
+    And the slot is available only if the entire hour is free? 
+
+    The original design: the slot is one hour. The day has 24 one-hour slots. The last slot is the 23rd hour? 
+
+    Actually, the day has 24 hours, so we have 24 slots? 
+
+    Example: 
+        date: 2020-01-01 00:00:00 UTC
+        end_time: 2020-01-01 23:59:59 UTC
+
+        Slots:
+          00:00:00 - 01:00:00
+          01:00:00 - 02:00:00
+          ...
+          23:00:00 - 24:00:00 (which is 2020-01-02 00:00:00)
+
+        But the last slot ends at 2020-01-02 00:00:00, which is beyond the day? 
+
+    How did the original code handle this? It defined the day as [date, date+24h-1s]. So the last slot ends at date+24h, which is not included in the day? 
+
+    Therefore, we should adjust: the slot_end for the last slot should be min(slot_end, end_time_utc+1) ? 
+
+    But note: the `is_available` method checks [start_time, end_time) meaning that the end_time is exclusive? Actually, the condition is:
+
+        if (start_time < event.end_time && end_time > event.start_time)
+
+    So the slot [23:00, 24:00) overlaps with an event if the event has any time in [23:00, 24:00). But the day ends at 23:59:59. So the event might end at 24:00:00? 
+
+    Actually, the event's end_time is stored as a time_point. We don't know how it was set.
+
+    Since the original code does not clip the slot, we won't clip either.
+
+    But note: the slot_end might be beyond the end_time_utc? Then the slot [current, slot_end) goes beyond the day? 
+
+    The function `get_available_slots` is for the given day. It should not return slots that extend beyond the day? 
+
+    Therefore, we change: we break the day into slots that are entirely within the day? Or we allow slots that start within the day? 
+
+    The original code does not clip, so we'll do the same.
+
+    However, the condition in the while loop: `start_time < end_time`. The last slot starts at date+23h (which is < end_time_utc = date+24h-1s). Then we compute slot_end = start_time+1h = date+24h. Then we check the slot [date+23h, date+24h). Then we add the slot if available. Then we set start_time = date+24h, and then the loop condition fails.
+
+    So we return that last slot? Even though it extends beyond the day? 
+
+    This might be intentional: the day is considered to have 24 slots of one hour, and the last slot ends at the next day? 
+
+    But the function is called `get_available_slots` for the date. It should return slots that are entirely in the day? 
+
+    Given the ambiguity, we stick to the original code.
+
+ 21. Let's adjust the slot generation: we break the day into 24 one-hour slots, regardless of the fact that the last hour goes beyond the defined day (by one second? actually, the day is defined as 24*3600-1 seconds). But the slot is one hour (3600 seconds). So the last slot is [date+23h, date+24h) and the day ends at date+24h-1s, so the slot extends beyond by one second? 
+
+    Actually, the day ends at date+24h-1s, and the slot ends at date+24h, which is one second beyond. 
+
+    But the `is_available` method will check events that overlap with [start_time, end_time). So if an event ends at date+24h, then it will block the slot? 
+
+    However, the event's date (the day) might be the next day? But the event would be stored with the next day? So it wouldn't be included in the events for the current day? 
+
+    But the `is_available` method doesn't care about the event's date field. It only uses the event's start_time and end_time. 
+
+    Therefore, an event that starts at date+23h30 and ends at date+24h30 would block the last slot? 
+
+    So the function returns slots that might extend beyond the day? 
+
+    This is the behavior of the original code.
+
+ 22. We'll implement as described.
+
+ 23. Edge: what if the event list is large? We are doing linear scans. Same as original.
+
+ 24. We'll code accordingly.
+
+ 25. Note: Python's `time.localtime` returns a time.struct_time. We use tm_year, tm_mon, tm_mday.
+
+ 26. Let's code accordingly.
+
+ 27. We assume that the system's local time is the same as the one used in the original C++ code.
+
+ 28. We note that the original code uses `localtime_s` which is a Windows-safe function. We use `time.localtime` which is thread-safe? In Python, `time.localtime` uses a local static? But in Python, we have the GIL. It should be safe.
+
+ 29. We'll write the code accordingly.
+
+ 30. One more thing: the original `get_available_slots` returns a vector of pairs. We return a list of tuples.
+
+ 31. We also note: the original `get_available_slots` does not merge consecutive slots? It returns one-hour slots.
+
+ Let's code accordingly.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ class that manages calendar events into Python while maintaining identical behavior. The solution involves handling date and time operations, event management, and availability checks in Python.
+
+### Approach
+1. **Event Representation**: The `Event` class in Python mirrors the C++ struct, storing event details (date, start time, end time, description) as naive UTC datetime objects. The `__eq__` method ensures events can be compared for equality.
+2. **Calendar Operations**: The `CalendarUtil` class manages events with methods to add, remove, and retrieve events. Key functionalities include:
+   - **Adding/Removing Events**: Direct list operations are used.
+   - **Retrieving Events by Date**: Events are filtered based on the local date derived from their UTC datetime.
+   - **Checking Availability**: Overlap between event times and a given time range is checked.
+   - **Finding Available Slots**: The day is divided into 1-hour slots, checking each for availability.
+   - **Retrieving Upcoming Events**: Events starting from the current UTC time are returned, limited by a specified count.
+3. **Time Conversion**: The `time_from_timestamp` function converts a Unix timestamp to a naive UTC datetime object.
+
+### Solution Code
+```python
+import datetime
+import time
+
+class Event:
+    def __init__(self, date, start_time, end_time, description):
+        self.date = date
+        self.start_time = start_time
+        self.end_time = end_time
+        self.description = description
+
+    def __eq__(self, other):
+        if not isinstance(other, Event):
+            return NotImplemented
+        return (self.date == other.date and
+                self.start_time == other.start_time and
+                self.end_time == other.end_time and
+                self.description == other.description)
+
+class CalendarUtil:
+    def __init__(self):
+        self.events = []
+
+    def add_event(self, event):
+        self.events.append(event)
+
+    def remove_event(self, event):
+        if event in self.events:
+            self.events.remove(event)
+
+    def get_events(self, date):
+        def get_local_ymd(utc_dt):
+            timestamp = utc_dt.timestamp()
+            local_tm = time.localtime(timestamp)
+            return (local_tm.tm_year, local_tm.tm_mon, local_tm.tm_mday)
+        
+        input_ymd = get_local_ymd(date)
+        events_on_date = []
+        for event in self.events:
+            event_ymd = get_local_ymd(event.date)
+            if input_ymd == event_ymd:
+                events_on_date.append(event)
+        return events_on_date
+
+    def is_available(self, start_time, end_time):
+        for event in self.events:
+            if start_time < event.end_time and end_time > event.start_time:
+                return False
+        return True
+
+    def get_available_slots(self, date):
+        start_time_utc = date
+        end_time_utc = date + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)
+        
+        available_slots = []
+        current = start_time_utc
+        one_hour = datetime.timedelta(hours=1)
+        
+        while current < end_time_utc:
+            slot_end = current + one_hour
+            if self.is_available(current, slot_end):
+                available_slots.append((current, slot_end))
+            current = slot_end
+            
+        return available_slots
+
+    def get_upcoming_events(self, num_events):
+        now = datetime.datetime.utcnow()
+        upcoming_events = []
+        for event in self.events:
+            if event.start_time >= now:
+                upcoming_events.append(event)
+                if len(upcoming_events) == num_events:
+                    break
+        return upcoming_events
+
+def time_from_timestamp(timestamp):
+    return datetime.datetime.utcfromtimestamp(timestamp)
+```
+
+### Explanation
+1. **Event Class**: Represents a calendar event with date, start time, end time, and description. The `__eq__` method allows comparison of events based on all attributes.
+2. **CalendarUtil Class**:
+   - **add_event/remove_event**: Directly appends or removes events from the list.
+   - **get_events**: Filters events occurring on a specific date by converting UTC times to local dates.
+   - **is_available**: Checks if a given time range overlaps with any existing events.
+   - **get_available_slots**: Divides the day into 1-hour slots and checks each for availability.
+   - **get_upcoming_events**: Returns events starting from the current UTC time, limited by a specified count.
+3. **time_from_timestamp**: Converts a Unix timestamp to a naive UTC datetime object for consistent time handling.
+
+This solution ensures that the Python implementation behaves identically to the original C++ code, handling events, availability checks, and time conversions accurately.
+
+=== TRANSLATED CODE (py) ===
+import datetime
+import time
+
+class Event:
+    def __init__(self, date, start_time, end_time, description):
+        self.date = date
+        self.start_time = start_time
+        self.end_time = end_time
+        self.description = description
+
+    def __eq__(self, other):
+        if not isinstance(other, Event):
+            return NotImplemented
+        return (self.date == other.date and
+                self.start_time == other.start_time and
+                self.end_time == other.end_time and
+                self.description == other.description)
+
+class CalendarUtil:
+    def __init__(self):
+        self.events = []
+
+    def add_event(self, event):
+        self.events.append(event)
+
+    def remove_event(self, event):
+        if event in self.events:
+            self.events.remove(event)
+
+    def get_events(self, date):
+        def get_local_ymd(utc_dt):
+            timestamp = utc_dt.timestamp()
+            local_tm = time.localtime(timestamp)
+            return (local_tm.tm_year, local_tm.tm_mon, local_tm.tm_mday)
+        
+        input_ymd = get_local_ymd(date)
+        events_on_date = []
+        for event in self.events:
+            event_ymd = get_local_ymd(event.date)
+            if input_ymd == event_ymd:
+                events_on_date.append(event)
+        return events_on_date
+
+    def is_available(self, start_time, end_time):
+        for event in self.events:
+            if start_time < event.end_time and end_time > event.start_time:
+                return False
+        return True
+
+    def get_available_slots(self, date):
+        start_time_utc = date
+        end_time_utc = date + datetime.timedelta(days=1) - datetime.timedelta(seconds=1)
+        
+        available_slots = []
+        current = start_time_utc
+        one_hour = datetime.timedelta(hours=1)
+        
+        while current < end_time_utc:
+            slot_end = current + one_hour
+            if self.is_available(current, slot_end):
+                available_slots.append((current, slot_end))
+            current = slot_end
+            
+        return available_slots
+
+    def get_upcoming_events(self, num_events):
+        now = datetime.datetime.utcnow()
+        upcoming_events = []
+        for event in self.events:
+            if event.start_time >= now:
+                upcoming_events.append(event)
+                if len(upcoming_events) == num_events:
+                    break
+        return upcoming_events
+
+def time_from_timestamp(timestamp):
+    return datetime.datetime.utcfromtimestamp(timestamp)

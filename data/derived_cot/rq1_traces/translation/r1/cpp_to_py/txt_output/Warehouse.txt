@@ -1,0 +1,1237 @@
+=== SOURCE CODE (cpp) ===
+#include <map>
+#include <string>
+
+class Warehouse {
+public:
+    Warehouse();
+
+    void add_product(int product_id, const std::string& name, int quantity);
+    void update_product_quantity(int product_id, int quantity);
+    int get_product_quantity(int product_id) const;
+    bool create_order(int order_id, int product_id, int quantity);
+    bool change_order_status(int order_id, const std::string& status);
+    std::string track_order(int order_id) const;
+
+    
+    const std::map<int, std::map<std::string, std::string>>& orders() const;
+    const std::map<int, std::map<std::string, std::string>>& inventory() const;
+
+private:
+    std::map<int, std::map<std::string, std::string>> inventory_;
+    std::map<int, std::map<std::string, std::string>> orders_;
+};
+Warehouse::Warehouse() {}
+
+void Warehouse::add_product(int product_id, const std::string& name, int quantity) {
+    auto& product = inventory_[product_id];
+    if (product.empty()) {
+        product["name"] = name;
+        product["quantity"] = std::to_string(quantity);
+    }
+    else {
+        int current_quantity = std::stoi(product["quantity"]);
+        product["quantity"] = std::to_string(current_quantity + quantity);
+    }
+}
+
+void Warehouse::update_product_quantity(int product_id, int quantity) {
+    auto it = inventory_.find(product_id);
+    if (it != inventory_.end()) {
+        int current_quantity = std::stoi(it->second["quantity"]);
+        it->second["quantity"] = std::to_string(current_quantity + quantity);
+    }
+}
+
+int Warehouse::get_product_quantity(int product_id) const {
+    auto it = inventory_.find(product_id);
+    if (it != inventory_.end()) {
+        return std::stoi(it->second.at("quantity"));
+    }
+    return false;  
+}
+
+bool Warehouse::create_order(int order_id, int product_id, int quantity) {
+    int available_quantity = get_product_quantity(product_id);
+    if (available_quantity >= quantity) {
+        update_product_quantity(product_id, -quantity);
+        orders_[order_id] = {
+            {"product_id", std::to_string(product_id)},
+            {"quantity", std::to_string(quantity)},
+            {"status", "Shipped"}
+        };
+        return true;
+    }
+    return false;
+}
+
+bool Warehouse::change_order_status(int order_id, const std::string& status) {
+    auto it = orders_.find(order_id);
+    if (it != orders_.end()) {
+        it->second["status"] = status;
+        return true;
+    }
+    return false;
+}
+
+std::string Warehouse::track_order(int order_id) const {
+    auto it = orders_.find(order_id);
+    if (it != orders_.end()) {
+        return it->second.at("status");
+    }
+    return "";  
+}
+
+const std::map<int, std::map<std::string, std::string>>& Warehouse::orders() const {
+    return orders_;
+}
+
+const std::map<int, std::map<std::string, std::string>>& Warehouse::inventory() const {
+    return inventory_;
+}
+
+
+=== REASONING ===
+<think>
+
+We are translating a C++ class `Warehouse` to Python.
+ The class has two main data structures: `inventory_` and `orders_`, both are maps (dictionaries in Python) that map an integer ID to another map (dictionary) of string keys and string values.
+
+ Important points:
+ - The C++ code uses `std::map` which is ordered. In Python, we can use `dict` but note that in Python versions < 3.7, dicts are unordered. However, since the problem requires identical behavior and we are not relying on order in the C++ code, we can use `dict` and assume order is not critical for the operations. But note: in C++ the maps are ordered by key, so if we need to preserve that, we might have to use `collections.OrderedDict`? However, the C++ code does not require the order for any operation (only lookups by key). So we can use normal dicts.
+
+ However, note that the C++ code returns a const reference to the entire map. In Python, we return a reference to the dictionary. But we must be cautious because in Python, the caller could modify the inner dictionaries. To mimic the const reference, we might return a deep copy? But that would change behavior (because the C++ returns a reference and the caller can see updates). Actually, the C++ returns a const reference, meaning the caller cannot modify the map. In Python, we don't have const. So we have two options:
+   1. Return a reference and document that the caller should not modify. But the caller can modify and break our invariants.
+   2. Return a shallow copy? But then if the inner dictionaries are modified in the class, the copy won't reflect that.
+
+ Alternatively, we can return a read-only view. However, the problem says "Keep behavior identical". The C++ code allows the caller to see the current state via the reference, and any update to the warehouse will be reflected in the reference? Actually, the reference is to the private member. So if we return the same dictionary, then any update to the warehouse will be visible to the caller. But the caller cannot change the map (because it's const). In Python, we can return the dictionary and hope the caller doesn't change it? But that would be unenforced.
+
+ However, looking at the C++ code, the public methods that return the maps are:
+
+   const std::map<int, std::map<std::string, std::string>>& orders() const;
+   const std::map<int, std::map<std::string, std::string>>& inventory() const;
+
+ Since they return a reference to const, the caller cannot modify the map. In Python, we can return a copy to prevent modification? But note: the C++ code returns the actual map, so if the internal state changes, the returned reference reflects that. So we must return the actual dictionaries? But then the caller can change the inner dictionaries? 
+
+ Let me see: in C++, the inner map is also const? Actually, no: the return type is `const std::map<int, ...>&` meaning the map cannot be modified (no insertion/deletion), but the inner map is `std::map<std::string, std::string>` and we are returning a const reference to it? Actually, the inner map is not const. Wait: the inner map is stored as non-const in the class. But the returned reference is a const reference to the entire map. So the caller cannot change the outer map (add/remove keys) but the inner map? The inner map is returned as a const reference? Actually, no: the type is `const std::map<int, std::map<string, string>>&` meaning the outer map is const, but the inner map is the same as stored? And the inner map is not const? So the caller can modify the inner map? 
+
+ However, in C++ the inner map is returned as a `const` object because the entire outer map is const. Actually, the `operator[]` of a const map returns a const reference to the inner map. So the inner map cannot be modified.
+
+ Therefore, in Python, we should return a view that disallows modification of the outer and inner dictionaries? That is complex.
+
+ Alternatively, we can return a copy of the entire structure? But that would be expensive and changes in the warehouse wouldn't be reflected.
+
+ How about we return a shallow copy of the outer dictionary, but the inner dictionaries are the same objects? Then the caller cannot change the outer dictionary (add/remove orders) but can change the inner dictionaries? And that would break the const-ness.
+
+ Since the problem says "Keep behavior identical", we must prevent the caller from modifying the internal state. We can:
+
+   Option 1: Return a deep copy. Then the caller gets a snapshot. But the C++ returns a reference that reflects live updates? So we must return the live data? 
+
+   Option 2: Return a read-only proxy. We can create a class that wraps the dictionary and only allows read operations. But that is a lot of work.
+
+   Option 3: Since the problem says "identical", and the C++ code allows the caller to see the live data but not modify it, we can return the same dictionaries but document that the caller should not modify? But the caller might accidentally modify.
+
+ Alternatively, we can change the design: instead of returning the entire map, we don't implement these accessors? But the problem requires identical behavior.
+
+ Let me check: the C++ code has these two public methods:
+
+   const std::map<int, std::map<std::string, std::string>>& orders() const;
+   const std::map<int, std::map<std::string, std::string>>& inventory() const;
+
+ They are used to get the entire state. In Python, we can return a read-only structure? Actually, we can return a dictionary that is a shallow copy of the outer dictionary, but the inner dictionaries are the same? Then the caller can modify the inner dictionaries? That would break the const-ness.
+
+ Alternatively, we can return a deep copy? Then the state is frozen. But note: the C++ code returns a reference that is updated when the warehouse changes. So if we return a deep copy, then the caller sees the state at the time of the call, but not subsequent changes. That is different.
+
+ So we must return the same dictionaries? But then we cannot prevent modification.
+
+ After re-examining the C++ code: the inner maps are stored as `std::map<std::string, std::string>`. When we return a const reference to the outer map, then the inner maps are also returned as const references. Therefore, the caller cannot modify the inner maps.
+
+ To mimic this in Python, we can:
+
+   - For the outer map: return a dictionary that is a copy of the keys, but the values are read-only views? But that's complex.
+
+   - Alternatively, we can return a copy of the outer dictionary where the values are copies of the inner dictionaries? Then the caller cannot modify the inner state? But then the live update is lost? 
+
+ Since the problem says "identical", and the C++ code returns a live view that is const, we have to choose between:
+
+   a) Returning a live view that is mutable? Then the behavior is not identical because the caller can change the state.
+
+   b) Returning a deep copy? Then the behavior is not identical because the state is not live.
+
+   c) Creating a read-only proxy.
+
+ Given the constraints, and since the problem says "Use idiomatic Python only when it doesn't change behavior", we might have to use a deep copy? But that changes the behavior (live vs snapshot).
+
+ Actually, the problem says: "Keep behavior identical". So if the C++ code returns a live view, we must return a live view? But in Python, we cannot enforce const.
+
+ Considering the trade-offs, I think the intended use of the returned value in the C++ code is for inspection only. Therefore, we can return a deep copy? But then the test might break if it relies on live updates? 
+
+ Alternatively, we can return the same dictionaries and hope that the caller does not modify? Since the problem does not specify whether the caller modifies, we must assume that the caller might try to modify? 
+
+ However, note that the original C++ code would not allow modification: if the caller tries to modify the inner map, it would be a compile error. In Python, we cannot prevent that at compile time.
+
+ After careful thought, I decide to return a deep copy for the following reasons:
+
+   - The C++ code returns a const reference to prevent modification. In Python, the only way to prevent modification is to return a copy.
+
+   - The problem says "Keep behavior identical", and if the caller modifies the returned structure, then the C++ code would be safe (because it's const) but the Python code would break the invariants. Therefore, to prevent that, we must copy.
+
+   - However, note that the C++ code returns a reference, so any changes to the warehouse after the call will be visible through the reference. But if we copy, then the returned copy is fixed. So we lose the live view.
+
+   - But the problem does not specify if the caller uses the returned reference to see live updates? It might be that the caller only uses it to get a snapshot.
+
+ Given the ambiguity, I note that the problem says "identical behavior". Therefore, we must provide the live view? But then we cannot prevent modification? 
+
+ Actually, we can return a shallow copy of the outer dictionary? Then the inner dictionaries are shared. And if the warehouse updates the inner dictionaries (like updating the quantity) then the caller will see the update? But also, the caller can update the inner dictionaries? 
+
+ How about we do:
+
+   return {k: dict(v) for k, v in self.orders_.items()}   # but then the inner is a copy? So the inner is copied? Then the caller has a copy of the inner? Then the live update is lost? 
+
+ This is complex.
+
+ Let me look again: the C++ code has two maps: `inventory_` and `orders_`. The methods `orders()` and `inventory()` return const references to these maps.
+
+ In the C++ code, the inner maps are not copied? So if the class updates the quantity of a product, then the caller that holds the reference will see the updated quantity? 
+
+ Therefore, we must return the same dictionaries? But then the caller can change the inner dictionaries? 
+
+ Since the problem does not specify whether the caller modifies, but the C++ code prevents modification at compile time, we must simulate the prevention of modification? 
+
+ However, Python doesn't have compile-time checks. Therefore, we must rely on runtime? 
+
+ Alternatively, we can return a read-only proxy? We can define a class that wraps a dictionary and only allows read operations? 
+
+ But the problem says "Use idiomatic Python only when it doesn't change behavior". We are allowed to change the behavior? No, we must keep identical.
+
+ Given the time, I decide to return the same dictionaries. Why? Because:
+
+   - The C++ code returns a reference that reflects live updates.
+
+   - The C++ code prevents modification by the caller because it is const. In Python, we don't have that, so we rely on the caller not to modify? 
+
+   - The problem does not specify that the caller will modify, so we assume the caller uses it for reading only? 
+
+ But to be safe, we can document that the returned dictionaries should not be modified? 
+
+ However, the problem says "identical behavior", and if the caller modifies the returned structure in the C++ code, it would be a compile error. In Python, it would be a runtime error? Actually, no: it would silently modify the internal state? 
+
+ Therefore, to prevent that, we must return a copy? 
+
+ But then the live update is lost? 
+
+ This is a dilemma.
+
+ I notice that in the C++ code, the methods `orders()` and `inventory()` are not used in the provided code. So perhaps the problem expects that we return the same structure? 
+
+ After re-reading the problem: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". The outputs must be identical? The returned value is a reference to the internal data structure? In Python, we return a reference to the same object? Then the caller can modify? That is a side effect that the C++ code does not allow? 
+
+ Therefore, to avoid the side effect (modification by the caller), we must return a copy? 
+
+ But then the live update is lost? 
+
+ How about we return a shallow copy of the outer map? Then the inner dictionaries are the same? Then:
+
+   - The caller cannot change the outer map (add/remove keys) because they have a copy.
+
+   - But the caller can change the inner dictionaries? 
+
+   - And the warehouse changes the inner dictionaries? So the caller sees the live inner state? 
+
+   - But the caller can also change the inner state? 
+
+ We don't want that.
+
+ Alternatively, we return a deep copy? Then the caller gets a snapshot? 
+
+ Given the above, I think the safe and behaviorally identical (in terms of preventing modification) is to return a deep copy? 
+
+ But note: the C++ code returns a reference that is live. So if the warehouse updates the quantity, then the reference held by the caller reflects that. If we return a deep copy, then the caller's copy does not update? 
+
+ Therefore, we have to choose between:
+
+   Option A: Return the actual dictionaries -> caller can modify the inner state (which is not allowed in C++).
+
+   Option B: Return a deep copy -> live update lost (which is present in C++).
+
+   Option C: Return a custom read-only view that allows reading but not writing? 
+
+ Since the problem does not specify the performance, we can go with Option C? 
+
+ How to implement Option C?
+
+   We can create a class `ReadOnlyDict` that wraps a dictionary and overrides the __setitem__ and __delitem__ to raise an exception? But that would be a runtime error, while in C++ it's a compile error? 
+
+   However, the problem says "exceptions" must be identical? The C++ code does not throw exceptions when the caller tries to write? It doesn't compile. So in Python, we could raise a runtime exception? But that would be a different behavior? 
+
+   Alternatively, we can return a `types.MappingProxyType` for the outer map? But that only makes the outer map read-only. The inner maps are still mutable? 
+
+   We want the inner maps to be read-only too? Then we can do:
+
+        return {k: types.MappingProxyType(v) for k, v in self.orders_.items()}
+
+   But note: the inner map `v` is a mutable dict. Then we wrap it in a read-only view. Then:
+
+        outer_map = MappingProxyType({ key: MappingProxyType(inner_dict) ... })
+
+   Then the caller cannot change the outer map nor the inner maps? 
+
+   But note: if the warehouse updates the inner_dict, then the read-only view will reflect the update? Because it is a view? 
+
+   Yes, because `MappingProxyType` is a read-only view of the original dict. So any update to the original dict is visible.
+
+   This seems to satisfy:
+
+        - The caller sees live updates (because the view is on the original dict).
+        - The caller cannot modify the outer map (because it's a MappingProxyType) nor the inner maps (because they are also wrapped).
+
+   However, the return type of the methods in C++ is `const std::map<int, std::map<...>>&` which is a map of maps. Our return in Python would be a dictionary mapping int to a read-only mapping? But the C++ inner type is a `std::map<...>` which is mutable in the class? But we return it as const? 
+
+   So we can return:
+
+        import types
+        ...
+        def orders(self):
+            # returns a read-only view of the entire orders_ map
+            # Each inner map is also wrapped in a read-only view.
+            return types.MappingProxyType({
+                k: types.MappingProxyType(v) for k, v in self.orders_.items()
+            })
+
+   But wait: the outer structure is now a read-only dictionary? And the inner ones too? 
+
+   However, note: the C++ code returns a const reference to a std::map. The std::map is mutable? But the reference is const. So the caller cannot change the map (add/remove) but can see the inner maps? And the inner maps are returned as const? 
+
+   Actually, in C++ the inner maps are returned as const references? Because the outer map is const, so the inner value is const? 
+
+   Therefore, we wrap both the outer and inner.
+
+   But note: the outer map we are returning is a new dictionary (the comprehension creates a new dict) and then we wrap it? But the inner is a view of the original inner dict? 
+
+   Actually, we are creating a new outer dict that maps keys to read-only views of the inner dicts. Then we wrap that outer dict as read-only? 
+
+   The problem: if the warehouse adds a new order, then this returned outer dictionary (which we built at the time of the call) will not have that new order? 
+
+   So we lose the live update on the outer structure? 
+
+   How about we create a custom class that provides a read-only view of the entire `orders_`? 
+
+   Alternatively, we can return a `types.MappingProxyType` for the outer map, but then the outer map is a proxy for `self.orders_`. But then the values of that map are the inner dicts? And we don't want the caller to modify the inner dicts? So we would have to wrap each inner dict as a read-only proxy? But then if we do:
+
+        outer_proxy = types.MappingProxyType(self.orders_)
+        # but then the values are mutable
+
+   And we cannot change the values to read-only without replacing them? 
+
+   We could maintain a cache of read-only views for the inner dicts? 
+
+   Given the complexity, and since the problem does not specify performance, I propose:
+
+        We return a deep copy? 
+
+   Why? Because it's simple and prevents modification. But it loses live updates? 
+
+   But note: the C++ code returns a reference that is live. However, the problem does not specify that the caller uses it for live updates? It might be that the caller only uses it to get a snapshot? 
+
+   Alternatively, we might not implement these two methods? But the problem says "identical".
+
+   After reading the problem again, it says "Translate the following C++ code to Python". It includes these two methods.
+
+   Considering the time, and to avoid overcomplicating, I decide to return a deep copy? 
+
+   But then the test might break if it expects live updates? 
+
+   Alternatively, we return a shallow copy of the outer dictionary and deep copies of the inner dictionaries? Then:
+
+        return copy.deepcopy(self.orders_)
+
+   Then the caller gets a snapshot? 
+
+   Given the ambiguity, I choose to return a deep copy? 
+
+   However, the problem says "Keep behavior identical", and the C++ code returns a live view. So we must return a live view? 
+
+   But then we cannot prevent modification? 
+
+   I think the best compromise is to return a read-only view for the outer map and read-only views for the inner maps? But then the outer map is not updated if we add new orders? 
+
+   How about we define a custom read-only class for the entire warehouse state? 
+
+   Due to the complexity, and since the problem does not specify the usage pattern, I decide to return a shallow copy of the outer dictionary and the same inner dictionaries? Then the caller can modify the inner dictionaries? 
+
+   But that breaks the const-ness? 
+
+   I notice that in the C++ code, the inner maps are stored as `std::map<std::string, std::string>`, and the class methods update these maps by replacing the values (like `product["quantity"] = ...`). So the class doesn't hold pointers to the inner maps? 
+
+   Actually, the class updates the inner maps by reference? 
+
+   In Python, if we return the same inner dictionaries, then the caller can change the quantity? And that would bypass the class's methods? 
+
+   That would be bad.
+
+   Therefore, to prevent that, we must return a deep copy? 
+
+   I think the best is to return a deep copy. It is safe, and the behavior is that the caller gets the state at the time of the call. In C++ the caller gets a live view, but if the caller is only reading and not storing the reference for a long time, then it's the same as a deep copy? 
+
+   However, if the caller in C++ stores the reference and then later reads after an update, they see the update. In Python, they wouldn't.
+
+   Given the trade-offs, and since the problem does not specify such a scenario, I choose to return a deep copy.
+
+   But note: the problem says "edge cases". This might be an edge case? 
+
+   Alternatively, we can return the same dictionaries and hope that the caller doesn't modify? And document it? 
+
+   Since the problem says "identical behavior", and the C++ code does not allow modification, we must prevent it. Therefore, we return a deep copy.
+
+   We'll do:
+
+        import copy
+
+        def orders(self):
+            return copy.deepcopy(self.orders_)
+
+        similarly for inventory.
+
+   However, deep copy might be expensive for large data? But the problem doesn't specify.
+
+   Given the above, I will use deepcopy.
+
+ But wait, there's an alternative: we can return a nested read-only proxy that is built on the fly and that reflects the current state? And we don't cache the inner proxies? 
+
+   We can create a class that provides a read-only view of the outer map, and when you access a key, it returns a read-only view of the inner map at that moment? 
+
+   Example:
+
+        class ReadOnlyNestedMap:
+            def __init__(self, data):
+                self.data = data
+
+            def __getitem__(self, key):
+                inner_dict = self.data[key]
+                return types.MappingProxyType(inner_dict)
+
+            def __iter__(self):
+                return iter(self.data)
+
+            ... and other methods to make it look like a mapping ...
+
+        Then in orders():
+            return ReadOnlyNestedMap(self.orders_)
+
+   But note: if the inner dict changes after we return the view, then the view reflects it? Because we are wrapping the inner dict on every access? Actually, no: we wrap it at the moment of __getitem__. And if the inner dict is updated by the warehouse, then the view will show the update? Because it's the same inner dict.
+
+   But what if the inner dict is removed? Then accessing that key would raise KeyError? Which is the same as the C++.
+
+   And the outer map: if we return a view that wraps self.orders_, then if a new key is added, it will be in the view? And if a key is removed, it will be gone.
+
+   And we can also implement __len__, __contains__, etc.
+
+   But to be complete, we can use `collections.abc.Mapping` to create a read-only mapping? 
+
+   Due to time, we might not need to implement the full Mapping interface? But the problem doesn't specify how it is used.
+
+   Alternatively, we can use:
+
+        def orders(self):
+            return types.MappingProxyType({
+                k: types.MappingProxyType(v) for k, v in self.orders_.items()
+            })
+
+   But then it is a snapshot of the outer keys? Because we build a new dict for the outer. The inner values are live? But the outer keys are fixed at the time of the call.
+
+   So if a new order is added, it won't appear in this view.
+
+   Therefore, to have a live outer view, we must not build a new dict? 
+
+   We can do:
+
+        def orders(self):
+            # We want to return a read-only view of the entire self.orders_ (which is a dict) and for each value, a read-only view of the inner dict.
+            # But we cannot change the values of self.orders_ to be read-only proxies? because then our own updates would be affected? 
+
+   Another idea: we can create a wrapper that doesn't copy the outer dict, but returns a read-only view of the outer dict and also wraps the inner dicts on the fly.
+
+   But then we have to create a custom class.
+
+   Given the time, I decide to do the following: since the problem does not specify the performance requirements, and to keep it simple, I will return a deep copy. This ensures that the caller cannot modify the internal state and gets the state at the time of the call. This might be acceptable.
+
+   But note: the C++ code returns a live view. However, if the problem's test cases only use the accessor once and then use other methods to update, then the deep copy will work. But if there is a test case that does:
+
+        const auto& orders = warehouse.orders();
+        // then create an order
+        // then look at orders and see that it now has the new order? 
+
+   Then our deep copy will fail.
+
+   How common is that? 
+
+   Considering that the provided C++ code does not have any usage of these accessors, and they are only there for inspection, I assume that the caller will call `orders()` and `inventory()` to get the current state. So a snapshot is acceptable.
+
+   But to be safe, I will use the nested read-only view that is built as a snapshot of the outer keys and live for the inner values? 
+
+   That is: we build a new outer dict that maps the same keys to read-only views of the inner dicts? Then the outer dict is fixed, but the inner dicts are live? 
+
+   Example:
+
+        def orders(self):
+            result = {}
+            for order_id, order_info in self.orders_.items():
+                # Make the inner dict read-only
+                result[order_id] = types.MappingProxyType(order_info)
+            return result
+
+   Then:
+        - The caller cannot change the outer dict (because it's a normal dict, and they get a copy? no, we return the result dict, which is mutable). 
+
+   We can make the outer dict read-only too? 
+
+        return types.MappingProxyType({order_id: types.MappingProxyType(order_info) for order_id, order_info in self.orders_.items()})
+
+   But then the outer is fixed and not live for new keys? 
+
+   So we lose the live update for the outer map? 
+
+   But the inner values are live? 
+
+   And if the outer map in the warehouse gets a new key, it won't appear in the result we returned.
+
+   Therefore, it's a snapshot of the outer keys, but the inner values are live? 
+
+   This is a hybrid.
+
+   How does the C++ work? 
+
+        warehouse.orders() returns a const reference to the orders_ map. If the warehouse adds a new order, then the reference will see it? 
+
+   So we need the outer map to be live as well.
+
+   Therefore, we must have a live view for the outer map and live view for the inner maps.
+
+   The solution: we create a read-only view for the outer map (using types.MappingProxyType(self.orders_)) but then the values are the mutable inner dicts. We want the values to be read-only. 
+
+   So we need to intercept the access to the values and wrap them in a read-only view. 
+
+   We can create a custom mapping class:
+
+        class ReadOnlyNestedMap:
+            def __init__(self, data):
+                self.data = data   # data is the original mutable dict
+
+            def __getitem__(self, key):
+                inner_dict = self.data[key]
+                return types.MappingProxyType(inner_dict)
+
+            def __len__(self):
+                return len(self.data)
+
+            def __iter__(self):
+                return iter(self.data)
+
+            def __contains__(self, key):
+                return key in self.data
+
+            # We don't implement __setitem__ or __delitem__
+
+        Then in orders():
+            return ReadOnlyNestedMap(self.orders_)
+
+   This class provides a read-only view of the outer map. When you access an item, it returns a read-only view of the inner dict.
+
+   And if the inner dict changes, the view reflects it? Yes.
+
+   And if a new key is added to self.orders_, then the ReadOnlyNestedMap will see it? Yes, because it uses self.data which is self.orders_.
+
+   And if a key is removed, it will be gone.
+
+   And the caller cannot change the outer map nor the inner maps? 
+
+   Yes.
+
+   Therefore, this satisfies the requirement.
+
+   Similarly for inventory.
+
+   We'll implement this helper class.
+
+   But note: the C++ code returns a std::map which is sorted by key. In Python, the dict is unordered (in versions <3.7) but since Python 3.7, dicts are ordered. However, the problem does not specify the Python version. But the order might be considered part of the behavior? 
+
+   The C++ std::map is sorted by key. In Python, if we use a dict, the order is insertion order? But our keys might not be inserted in sorted order? 
+
+   However, the C++ code returns the map sorted by key. In Python, we can return a sorted dictionary? But the problem says "Use idiomatic Python only when it doesn't change behavior".
+
+   The order of items might be considered behavior? 
+
+   But the problem does not specify. To be safe, we can return a collections.OrderedDict sorted by key? Or we can return a sorted list of key-value pairs? 
+
+   But the return type in C++ is a map, and in Python we are returning a mapping. The order should not matter for the operations? 
+
+   However, if the caller iterates, the order might be different.
+
+   Since the problem says "identical", we should return the items in sorted order by key? 
+
+   We can in the ReadOnlyNestedMap iterate in sorted order? 
+
+   But the __iter__ should yield keys in sorted order? 
+
+   We can do:
+
+        def __iter__(self):
+            return iter(sorted(self.data.keys()))
+
+   But then every time you iterate, it sorts? 
+
+   Or we can return a sorted list of keys? But then if the data changes, the sorted list might be outdated? 
+
+   Actually, we are iterating over self.data.keys(), and then sorting. So it will be the current keys sorted.
+
+   But note: the C++ std::map is always sorted. In Python, we are not storing sorted, but we can return the keys in sorted order when iterating.
+
+   This might be acceptable.
+
+   Alternatively, we can use an OrderedDict and insert in sorted order? But then it's fixed at the time of call? 
+
+   Given the complexity, and since the problem does not specify the order of iteration, I will assume that the order is not part of the behavior? 
+
+   But the C++ code is ordered, so to be identical, we should order.
+
+   Therefore, in the ReadOnlyNestedMap, we can:
+
+        def __iter__(self):
+            return iter(sorted(self.data.keys()))
+
+        def keys(self):
+            return sorted(self.data.keys())
+
+        def items(self):
+            for key in sorted(self.data.keys()):
+                yield (key, self[key])
+
+   And so on.
+
+   This will make the view appear sorted by key.
+
+   But note: the __getitem__ is O(1) but the iteration is O(n log n) each time? 
+
+   Alternatively, we could maintain a sorted list of keys? But that would be expensive on updates? 
+
+   Since the class ReadOnlyNestedMap is only for read and the warehouse may update the data, we have to compute sorted keys on every iteration.
+
+   Given the potential performance hit, and since the problem does not specify the size, I will do it for now.
+
+   But wait, the C++ code also has O(log n) for lookups and O(n) for iteration? And our Python code will have O(1) for lookups and O(n log n) for iteration? 
+
+   This is not identical complexity, but the problem doesn't specify performance.
+
+   We'll do the sorted iteration.
+
+   Alternatively, we can use a SortedDict from a third-party library? But the problem says "idiomatic Python only when it doesn't change behavior", and we are not supposed to introduce third-party libraries.
+
+   So we do the sorted keys on the fly.
+
+   Given the above, I will implement a helper class for read-only nested map that appears sorted by key.
+
+   But note: the inventory and orders are both of the same type.
+
+   However, to avoid overengineering, and since the problem might be small, I will do without the sorted order? 
+
+   The problem does not specify that the order matters for the test cases.
+
+   I will assume that the order of iteration is not part of the behavior? 
+
+   Therefore, we will not enforce sorted order in the Python version? 
+
+   But the C++ code is sorted. This might break if the caller relies on sorted order? 
+
+   Given the trade-offs, and since the problem says "edge cases", I think we should preserve the sorted order.
+
+   Therefore, we will create the ReadOnlyNestedMap with sorted iteration.
+
+   Let's implement it.
+
+   However, note: the problem is already complex. Given the time, I might be allowed to use a simpler approach? 
+
+   Considering the time, and since the problem does not specify the size, I will do the sorted iteration.
+
+   Steps for ReadOnlyNestedMap:
+
+        class ReadOnlyNestedMap:
+            def __init__(self, data):
+                self.data = data   # the original dictionary
+
+            def __getitem__(self, key):
+                # Return a read-only view of the inner dict
+                inner_dict = self.data[key]
+                return types.MappingProxyType(inner_dict)
+
+            def __len__(self):
+                return len(self.data)
+
+            def __iter__(self):
+                # Yield keys in sorted order (assuming keys are comparable)
+                for key in sorted(self.data.keys()):
+                    yield key
+
+            def __contains__(self, key):
+                return key in self.data
+
+            def keys(self):
+                return sorted(self.data.keys())
+
+            def items(self):
+                for key in sorted(self.data.keys()):
+                    yield (key, self[key])
+
+            def values(self):
+                for key in sorted(self.data.keys()):
+                    yield self[key]
+
+   This should be enough.
+
+   Then in the Warehouse class:
+
+        def orders(self):
+            return ReadOnlyNestedMap(self.orders_)
+
+        def inventory(self):
+            return ReadOnlyNestedMap(self.inventory_)
+
+   But note: the C++ code returns a const reference to a std::map, which has a type of `std::map<int, std::map<...>>`. Our ReadOnlyNestedMap is a custom type. Will that matter? 
+
+   The C++ caller can use the reference as a std::map. In Python, we return a mapping that has the methods we implemented.
+
+   This should be fine.
+
+   However, the problem might require the exact type? 
+
+   Given the dynamic nature of Python, as long as it quacks like a duck, it should be fine.
+
+   We'll use this approach.
+
+ But wait, there's an alternative: we can use `collections.OrderedDict` and keep the keys sorted? But then we would have to update it on every change? 
+
+   We are not going to change the ReadOnlyNestedMap when the warehouse changes, because we are using the live self.orders_ and self.inventory_. So the sorted is done on every iteration.
+
+   This is acceptable for small sizes.
+
+   Let's implement it.
+
+   However, note: the inner dicts are also std::map in C++, which are sorted by string keys. In Python, the dict is unsorted? But the C++ code doesn't iterate over the inner map? 
+
+   The inner map is accessed by key ("quantity", "status", etc.). So the order of the inner map does not matter.
+
+   Therefore, we only care about the outer map being sorted by int key.
+
+   So we only need to sort the outer keys.
+
+   We'll do the above.
+
+   But note: the ReadOnlyNestedMap is not a complete mapping. It doesn't have methods like get, etc. But in Python, these are provided by the collections.abc.Mapping. We can inherit from Mapping to get them for free.
+
+   Let's do:
+
+        from collections.abc import Mapping
+
+        class ReadOnlyNestedMap(Mapping):
+            def __init__(self, data):
+                self.data = data
+
+            def __getitem__(self, key):
+                inner_dict = self.data[key]
+                return types.MappingProxyType(inner_dict)
+
+            def __len__(self):
+                return len(self.data)
+
+            def __iter__(self):
+                return iter(sorted(self.data.keys()))
+
+   Then we get other methods (like get, items, etc.) from Mapping, but note that the `items` and `values` will use our __iter__ and __getitem__? 
+
+   Yes.
+
+   So this is efficient.
+
+   We'll use this.
+
+   But note: the sorted(self.data.keys()) might be expensive for large data? 
+
+   Given the problem doesn't specify size, we assume it's small.
+
+   Now, let's write the rest of the class.
+
+   We have to implement:
+
+        class Warehouse:
+            def __init__(self):
+                self.inventory_ = {}
+                self.orders_ = {}
+
+            def add_product(self, product_id, name, quantity):
+                # If the product_id is not in inventory, then we add with the given name and quantity.
+                # If it is, we add the quantity to the existing one.
+                if product_id not in self.inventory_:
+                    self.inventory_[product_id] = {
+                        'name': name,
+                        'quantity': quantity   # note: in C++ it's stored as string? but wait, the C++ code stores the quantity as string? 
+                    }
+                else:
+                    self.inventory_[product_id]['quantity'] += quantity
+
+   But wait: in the C++ code, the quantity is stored as a string? 
+
+   Look:
+
+        product["quantity"] = std::to_string(quantity);
+
+   and update:
+
+        int current_quantity = std::stoi(product["quantity"]);
+        product["quantity"] = std::to_string(current_quantity + quantity);
+
+   So in Python, should we store the quantity as a string? 
+
+   The problem says: identical behavior.
+
+   So we must store the quantity as a string? 
+
+   Why? Because if there is a non-integer string stored accidentally, the C++ code would throw an exception in std::stoi? 
+
+   But our add_product only adds integers? 
+
+   The update_product_quantity also only adds integers? 
+
+   And get_product_quantity returns an integer? 
+
+   But if we store as integer in Python, then we avoid the conversion? 
+
+   The problem says "identical behavior", so we must have the same representation. 
+
+   Therefore, we will store the quantity as a string.
+
+   Also, the name is stored as string, so that's fine.
+
+   So in add_product:
+
+        if product_id not in self.inventory_:
+            self.inventory_[product_id] = {
+                'name': name,
+                'quantity': str(quantity)
+            }
+        else:
+            current_quantity = int(self.inventory_[product_id]['quantity'])
+            new_quantity = current_quantity + quantity
+            self.inventory_[product_id]['quantity'] = str(new_quantity)
+
+   Similarly for update_product_quantity.
+
+   And get_product_quantity:
+
+        if product_id in self.inventory_:
+            return int(self.inventory_[product_id]['quantity'])
+        else:
+            # In C++, it returns false? But false is 0 in integer context? But the return type is int.
+            # Actually, the C++ code returns false? That is a compilation error? Let me check:
+
+        int Warehouse::get_product_quantity(int product_id) const {
+            auto it = inventory_.find(product_id);
+            if (it != inventory_.end()) {
+                return std::stoi(it->second.at("quantity"));
+            }
+            return false;   // This returns 0? because false converts to 0 in integer?
+        }
+
+   But wait: the function returns int, and false is converted to 0.
+
+   So in Python, we should return 0 for not found? 
+
+   However, the C++ code returns false -> which becomes 0.
+
+   So we return 0.
+
+   But note: in C++, if the product is not found, it returns false (which is 0). So we return 0.
+
+   So:
+
+        def get_product_quantity(self, product_id):
+            if product_id in self.inventory_:
+                return int(self.inventory_[product_id]['quantity'])
+            return 0
+
+   But wait, the C++ code does:
+
+        return false;
+
+   And false in C++ when converted to int is 0.
+
+   So it's 0.
+
+   Now, create_order:
+
+        def create_order(self, order_id, product_id, quantity):
+            available_quantity = self.get_product_quantity(product_id)
+            if available_quantity >= quantity:
+                # update_product_quantity(product_id, -quantity)
+                self.update_product_quantity(product_id, -quantity)
+                # orders_[order_id] = { ... }
+                self.orders_[order_id] = {
+                    'product_id': str(product_id),
+                    'quantity': str(quantity),
+                    'status': 'Shipped'
+                }
+                return True
+            return False
+
+   And change_order_status:
+
+        def change_order_status(self, order_id, status):
+            if order_id in self.orders_:
+                self.orders_[order_id]['status'] = status
+                return True
+            return False
+
+   And track_order:
+
+        def track_order(self, order_id):
+            if order_id in self.orders_:
+                return self.orders_[order_id]['status']
+            return ""
+
+   And then the accessors:
+
+        def orders(self):
+            return ReadOnlyNestedMap(self.orders_)
+
+        def inventory(self):
+            return ReadOnlyNestedMap(self.inventory_)
+
+   Now, we must implement the ReadOnlyNestedMap.
+
+   Let's do that.
+
+   We'll do:
+
+        import types
+        from collections.abc import Mapping
+
+        class ReadOnlyNestedMap(Mapping):
+            def __init__(self, data):
+                self._data = data
+
+            def __getitem__(self, key):
+                # If the key is in the data, return a read-only view of the inner dict.
+                inner_dict = self._data[key]
+                return types.MappingProxyType(inner_dict)
+
+            def __len__(self):
+                return len(self._data)
+
+            def __iter__(self):
+                # Yield keys in sorted order (assume keys are comparable)
+                # If the keys are not comparable, this may throw an error, but in C++ they are int, so in Python we assume int or comparable.
+                return iter(sorted(self._data.keys()))
+
+   Note: we are not handling non-comparable keys, but in our case the keys are int.
+
+   This should work.
+
+   Let's test with an example.
+
+   However, due to time, we assume it works.
+
+   But note: the inner dict may be modified by the warehouse after we return the read-only view? Yes, and the read-only view will reflect the change? Because it's a view of the same dict.
+
+   And the outer map may be modified (adding/removing keys) and our ReadOnlyNestedMap will see it because it uses self._data which is the same as the warehouse's.
+
+   Therefore, it is live.
+
+   And the caller cannot modify.
+
+   This satisfies the requirement.
+
+   Let's write the code accordingly.
+
+   Note: We must be cautious about the sorted: if there are negative keys, sorted will work.
+
+   Now, note: in the C++ code, the orders_ and inventory_ are maps with int keys. In Python, we are using int keys? Yes.
+
+   Therefore, we are good.
+
+   Summary of the Python code:
+
+        import types
+        from collections.abc import Mapping
+
+        class ReadOnlyNestedMap(Mapping):
+            ... as above ...
+
+        class Warehouse:
+            def __init__(self):
+                self.inventory_ = {}
+                self.orders_ = {}
+
+            def add_product(self, product_id, name, quantity):
+                if product_id in self.inventory_:
+                    current_quantity = int(self.inventory_[product_id]['quantity'])
+                    new_quantity = current_quantity + quantity
+                    self.inventory_[product_id]['quantity'] = str(new_quantity)
+                else:
+                    self.inventory_[product_id] = {
+                        'name': name,
+                        'quantity': str(quantity)
+                    }
+
+            def update_product_quantity(self, product_id, quantity):
+                if product_id in self.inventory_:
+                    current_quantity = int(self.inventory_[product_id]['quantity'])
+                    new_quantity = current_quantity + quantity
+                    self.inventory_[product_id]['quantity'] = str(new_quantity)
+
+            def get_product_quantity(self, product_id):
+                if product_id in self.inventory_:
+                    return int(self.inventory_[product_id]['quantity'])
+                return 0
+
+            def create_order(self, order_id, product_id, quantity):
+                available_quantity = self.get_product_quantity(product_id)
+                if available_quantity >= quantity:
+                    self.update_product_quantity(product_id, -quantity)
+                    self.orders_[order_id] = {
+                        'product_id': str(product_id),
+                        'quantity': str(quantity),
+                        'status': 'Shipped'
+                    }
+                    return True
+                return False
+
+            def change_order_status(self, order_id, status):
+                if order_id in self.orders_:
+                    self.orders_[order_id]['status'] = status
+                    return True
+                return False
+
+            def track_order(self, order_id):
+                if order_id in self.orders_:
+                    return self.orders_[order_id]['status']
+                return ""
+
+            def orders(self):
+                return ReadOnlyNestedMap(self.orders_)
+
+            def inventory(self):
+                return ReadOnlyNestedMap(self.inventory_)
+
+   But wait: in the C++ update_product_quantity, it only updates if the product exists. Our Python version does the same.
+
+   One more thing: the C++ create_order uses the method update_product_quantity to deduct the quantity. And update_product_quantity does a find and then updates. Our Python version calls update_product_quantity, which will work.
+
+   We are done.
+
+   Let me double-check the return of get_product_quantity: in C++ it returns 0 for not found? Yes.
+
+   And for track_order, it returns an empty string for not found? Yes.
+
+   The create_order sets the status to "Shipped" initially? Yes.
+
+   And the orders_ and inventory_ are stored with the same structure.
+
+   We are good.
+
+   Note: the inner dictionaries in orders_ have keys: "product_id", "quantity", "status", and they are stored as strings? Yes, exactly as in C++.
+
+   Therefore, we have a faithful translation.
+
+   We'll write the code accordingly.
+
+   However, note: the C++ code for `add_product` uses:
+
+        auto& product = inventory_[product_id];
+        if (product.empty()) { ... }
+
+   In C++, if the product_id exists but the inner map is empty? That should not happen because when we add, we either create a non-empty map or update. So the condition `if (product.empty())` is equivalent to `if the product_id is new`? 
+
+   In our Python code, we do `if product_id not in self.inventory_` which is equivalent.
+
+   So we are safe.
+
+   Let's write the code.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ class `Warehouse` into Python while maintaining identical behavior. The `Warehouse` class manages inventory and orders using nested maps (dictionaries in Python). The key challenge is ensuring that the Python implementation behaves exactly like the C++ code, including handling inputs, outputs, side effects, edge cases, and exceptions.
+
+### Approach
+1. **Data Structures**: The C++ code uses `std::map` for both inventory and orders. In Python, we use dictionaries (`dict`) for similar functionality. However, to mimic the sorted order of keys in C++'s `std::map`, we ensure that any iteration over keys is done in sorted order.
+2. **Read-Only Views**: The C++ methods `orders()` and `inventory()` return const references to the internal maps. In Python, we return read-only views of these maps using a custom `ReadOnlyNestedMap` class. This class provides:
+   - A read-only interface to the outer map.
+   - Read-only views of the inner dictionaries.
+   - Keys iterated in sorted order to match C++'s `std::map` behavior.
+3. **String Handling**: The C++ code stores quantities as strings. To maintain identical behavior, we convert quantities to strings when storing and parse them back to integers when performing arithmetic operations.
+4. **Edge Cases**: Methods handle edge cases such as non-existent product IDs or order IDs by returning appropriate default values (e.g., 0 for quantities, empty string for order status).
+
+### Solution Code
+```python
+import types
+from collections.abc import Mapping
+
+class ReadOnlyNestedMap(Mapping):
+    def __init__(self, data):
+        self._data = data
+    
+    def __getitem__(self, key):
+        inner_dict = self._data[key]
+        return types.MappingProxyType(inner_dict)
+    
+    def __len__(self):
+        return len(self._data)
+    
+    def __iter__(self):
+        return iter(sorted(self._data.keys()))
+
+class Warehouse:
+    def __init__(self):
+        self.inventory_ = {}
+        self.orders_ = {}
+    
+    def add_product(self, product_id, name, quantity):
+        if product_id in self.inventory_:
+            current_quantity = int(self.inventory_[product_id]['quantity'])
+            new_quantity = current_quantity + quantity
+            self.inventory_[product_id]['quantity'] = str(new_quantity)
+        else:
+            self.inventory_[product_id] = {
+                'name': name,
+                'quantity': str(quantity)
+            }
+    
+    def update_product_quantity(self, product_id, quantity):
+        if product_id in self.inventory_:
+            current_quantity = int(self.inventory_[product_id]['quantity'])
+            new_quantity = current_quantity + quantity
+            self.inventory_[product_id]['quantity'] = str(new_quantity)
+    
+    def get_product_quantity(self, product_id):
+        if product_id in self.inventory_:
+            return int(self.inventory_[product_id]['quantity'])
+        return 0
+    
+    def create_order(self, order_id, product_id, quantity):
+        available_quantity = self.get_product_quantity(product_id)
+        if available_quantity >= quantity:
+            self.update_product_quantity(product_id, -quantity)
+            self.orders_[order_id] = {
+                'product_id': str(product_id),
+                'quantity': str(quantity),
+                'status': 'Shipped'
+            }
+            return True
+        return False
+    
+    def change_order_status(self, order_id, status):
+        if order_id in self.orders_:
+            self.orders_[order_id]['status'] = status
+            return True
+        return False
+    
+    def track_order(self, order_id):
+        if order_id in self.orders_:
+            return self.orders_[order_id]['status']
+        return ""
+    
+    def orders(self):
+        return ReadOnlyNestedMap(self.orders_)
+    
+    def inventory(self):
+        return ReadOnlyNestedMap(self.inventory_)
+```
+
+### Explanation
+1. **ReadOnlyNestedMap**: This custom class provides a read-only view of nested dictionaries. It ensures that:
+   - The outer dictionary cannot be modified.
+   - The inner dictionaries are also read-only.
+   - Keys are iterated in sorted order to match C++'s `std::map` behavior.
+2. **Warehouse Class**:
+   - **add_product**: Adds a new product to the inventory or updates the quantity if the product exists.
+   - **update_product_quantity**: Adjusts the quantity of an existing product.
+   - **get_product_quantity**: Returns the quantity of a product; 0 if the product doesn't exist.
+   - **create_order**: Creates an order if sufficient stock is available, deducting the ordered quantity from inventory.
+   - **change_order_status**: Updates the status of an existing order.
+   - **track_order**: Returns the status of an order; empty string if the order doesn't exist.
+   - **orders and inventory**: Return read-only views of orders and inventory, respectively, using `ReadOnlyNestedMap`.
+
+This implementation ensures that the Python version behaves identically to the original C++ code, handling all specified cases and maintaining data integrity through read-only views and proper type handling.
+
+=== TRANSLATED CODE (py) ===
+import types
+from collections.abc import Mapping
+
+class ReadOnlyNestedMap(Mapping):
+    def __init__(self, data):
+        self._data = data
+    
+    def __getitem__(self, key):
+        inner_dict = self._data[key]
+        return types.MappingProxyType(inner_dict)
+    
+    def __len__(self):
+        return len(self._data)
+    
+    def __iter__(self):
+        return iter(sorted(self._data.keys()))
+
+class Warehouse:
+    def __init__(self):
+        self.inventory_ = {}
+        self.orders_ = {}
+    
+    def add_product(self, product_id, name, quantity):
+        if product_id in self.inventory_:
+            current_quantity = int(self.inventory_[product_id]['quantity'])
+            new_quantity = current_quantity + quantity
+            self.inventory_[product_id]['quantity'] = str(new_quantity)
+        else:
+            self.inventory_[product_id] = {
+                'name': name,
+                'quantity': str(quantity)
+            }
+    
+    def update_product_quantity(self, product_id, quantity):
+        if product_id in self.inventory_:
+            current_quantity = int(self.inventory_[product_id]['quantity'])
+            new_quantity = current_quantity + quantity
+            self.inventory_[product_id]['quantity'] = str(new_quantity)
+    
+    def get_product_quantity(self, product_id):
+        if product_id in self.inventory_:
+            return int(self.inventory_[product_id]['quantity'])
+        return 0
+    
+    def create_order(self, order_id, product_id, quantity):
+        available_quantity = self.get_product_quantity(product_id)
+        if available_quantity >= quantity:
+            self.update_product_quantity(product_id, -quantity)
+            self.orders_[order_id] = {
+                'product_id': str(product_id),
+                'quantity': str(quantity),
+                'status': 'Shipped'
+            }
+            return True
+        return False
+    
+    def change_order_status(self, order_id, status):
+        if order_id in self.orders_:
+            self.orders_[order_id]['status'] = status
+            return True
+        return False
+    
+    def track_order(self, order_id):
+        if order_id in self.orders_:
+            return self.orders_[order_id]['status']
+        return ""
+    
+    def orders(self):
+        return ReadOnlyNestedMap(self.orders_)
+    
+    def inventory(self):
+        return ReadOnlyNestedMap(self.inventory_)

@@ -1,0 +1,342 @@
+=== SOURCE CODE (cpp) ===
+#include <string>
+#include <map>
+#include <algorithm>
+
+class URLHandler {
+public:
+    explicit URLHandler(const std::string& url);
+
+    std::string get_scheme() const;
+    std::string get_host() const;
+    std::string get_path() const;
+    std::map<std::string, std::string> get_query_params() const;
+    std::string get_fragment() const;
+
+private:
+    std::string url;
+};
+
+URLHandler::URLHandler(const std::string& url) : url(url) {}
+
+std::string URLHandler::get_scheme() const {
+    size_t scheme_end = url.find("://");
+    if (scheme_end != std::string::npos) {
+        return url.substr(0, scheme_end);
+    }
+    return "";
+}
+
+std::string URLHandler::get_host() const {
+    size_t scheme_end = url.find("://");
+    if (scheme_end != std::string::npos) {
+        std::string url_without_scheme = url.substr(scheme_end + 3);
+        size_t host_end = url_without_scheme.find("/");
+        if (host_end != std::string::npos) {
+            return url_without_scheme.substr(0, host_end);
+        }
+        return url_without_scheme;
+    }
+    return "";
+}
+
+std::string URLHandler::get_path() const {
+    size_t scheme_end = url.find("://");
+    if (scheme_end != std::string::npos) {
+        std::string url_without_scheme = url.substr(scheme_end + 3);
+        size_t host_end = url_without_scheme.find("/");
+        if (host_end != std::string::npos) {
+            return url_without_scheme.substr(host_end);
+        }
+    }
+    return "";
+}
+
+std::map<std::string, std::string> URLHandler::get_query_params() const {
+    std::map<std::string, std::string> params;
+    size_t query_start = url.find("?");
+    size_t fragment_start = url.find("#");
+    if (query_start != std::string::npos) {
+        std::string query_string = url.substr(query_start + 1, fragment_start - query_start - 1);
+        if (!query_string.empty()) {
+            size_t pos = 0;
+            std::string token;
+            while ((pos = query_string.find("&")) != std::string::npos) {
+                token = query_string.substr(0, pos);
+                size_t equal_pos = token.find("=");
+                if (equal_pos != std::string::npos) {
+                    std::string key = token.substr(0, equal_pos);
+                    std::string value = token.substr(equal_pos + 1);
+                    params[key] = value;
+                }
+                query_string.erase(0, pos + 1);
+            }
+            size_t equal_pos = query_string.find("=");
+            if (equal_pos != std::string::npos) {
+                std::string key = query_string.substr(0, equal_pos);
+                std::string value = query_string.substr(equal_pos + 1);
+                params[key] = value;
+            }
+        }
+    }
+    return params;
+}
+
+std::string URLHandler::get_fragment() const {
+    size_t fragment_start = url.find("#");
+    if (fragment_start != std::string::npos) {
+        return url.substr(fragment_start + 1);
+    }
+    return "";
+}
+
+
+=== REASONING ===
+<think>
+We need to translate this C++ URLHandler class to Python. Keep behavior identical. The C++ code parses a URL string and provides methods: get_scheme, get_host, get_path, get_query_params, get_fragment.
+
+Key points:
+- The C++ code uses std::string, std::map.
+- It finds "://" for scheme, then host (everything between scheme and next "/" or end), then path (everything after host starting with "/"). Note: host may include port? It doesn't handle port specially, just takes substring until "/". Also no handling of userinfo@ etc. Just simple parsing.
+- Query params: finds "?" and then "#" (fragment). Extracts substring between them. Splits by "&", then by "=". Note: it doesn't handle empty query string? It checks if query_string is not empty before looping. Also after loop, processes the remainder (if no trailing &). The C++ code erases tokens from query_string, then after loop processes whatever is left. This may handle cases like "?a=1&b=2" and also "?a=1&b=2&" (empty last param) but the C++ code ignores empty token? Actually, if last token is empty (after trailing &), the loop will process all &-separated tokens, then after loop, query_string will be empty (since last token was removed? Let's check: For "a=1&b=2&", pos finds first &, token="a=1", process, erase up to pos+1 (so "b=2&"). Next pos finds &, token="b=2", process, erase up to pos+1 -> "". Then query_string becomes empty, so after loop, equal_pos find fails, nothing added. So empty last param ignored. That's fine.
+- Fragment: after "#", returns rest.
+- Edge cases: no scheme -> get_scheme returns "", get_host returns "", get_path returns "". But note: get_path only returns path if there is a scheme? Actually code: if scheme_end != npos, then it looks for host_end, if found, returns substring from host_end. If no scheme, returns "". So path also empty. For host, similarly.
+- For query params, if no "?", returns empty map. If there is "?" but no fragment, fragment_start = npos, then substr from query_start+1 to npos? In C++, string::substr(pos, count) with count = npos takes until end. So in Python, we'll handle similarly.
+
+We'll create a Python class URLHandler with same methods. Use string operations.
+
+Need to be careful: C++ map keys are sorted (std::map is ordered), but Python dict is insertion-ordered (since Python 3.7). The output of get_query_params should be a dict (or we could return an OrderedDict to match ordering? The C++ map is ordered by key (lexicographically), but the C++ code inserts in the order of appearance. Actually std::map is ordered by key, not insertion order. So if keys are inserted in order of appearance, the map will store them sorted by key. So the resulting map's iteration order is alphabetical. In Python, we should maintain that order. The C++ code does not sort explicitly; it just inserts. So the map will have keys in sorted order because std::map is a red-black tree ordered by key. So we need to simulate that: we should return a dict that, when iterated, gives keys in alphabetical order. In Python, we could use a dict and then sort keys when returning? But the C++ code returns a map; the user might iterate over it and get keys in sorted order. To be identical, we should return something that behaves like a map (ordered by key). We could return a collections.OrderedDict sorted by key, or just a regular dict but rely on Python's insertion order? That would not match C++. Better to return a dict with keys sorted. However, the C++ code for get_query_params creates a local map and returns by value. The caller can iterate over it, and it will be sorted by key. We should replicate that. So in Python, we can return a dict built by inserting in order, but then sort the keys? Actually, we can't change the dict's internal order after creation. We could create an OrderedDict and then sort the items? Wait, the C++ map's order is based on key comparison, not insertion order. So if we want identical behavior, we need to return a mapping that when iterated gives keys in alphabetical order. The simplest is to return a dict, but Python dicts since 3.7 maintain insertion order, which might not be alphabetical if the query string has keys not in alphabetical order. For example, query "b=2&a=1" -> C++ map will have {a:1, b:2} because a< b. Python dict will have {b:2, a:1}. So that's a difference. To be identical, we could collect the params and then sort them into a list of tuples and return an OrderedDict from that, or just return a dict that is sorted by key. But the return type in C++ is std::map, which is ordered. In Python, we can return a dict (which is not guaranteed to be ordered by key) or an OrderedDict (which can be made to have sorted keys). Since the problem says "Keep behavior identical", we need to ensure that iteration order matches. However, the user might not rely on order, but to be safe, we should replicate the order. The C++ map order is by key (lexicographical). So we should return a dict that when iterated gives keys in sorted order. Since Python dict iteration order is insertion order, we can create an OrderedDict after sorting the keys.
+
+But wait: The C++ map also allows indexing by key; that's fine. The return value is a copy; the caller can modify it? Not in the code, but it's a return by value, so they get a copy. In Python, returning a dict returns a reference to a dict, but if the caller modifies it, it modifies the returned dict (which is a separate object). That's fine.
+
+So to mimic sorted order, we can collect params in a dict, then at the end create a new dict with sorted keys? That would change the order. But we need the return object to be ordered by key. We could use an OrderedDict and insert in sorted order. Alternatively, we could use a dict and rely on Python's insertion order (which is not sorted). The problem says "Keep behavior identical" - if the C++ code's map iteration order is sorted, then Python's iteration order should be sorted too. I'll implement using a regular dict but then sort items and build an OrderedDict. However, Python's dict is now insertion order, but we can use sorted on items. Since the C++ map is sorted, the order of insertion doesn't matter; the final map is sorted. So we can insert params in any order (the order they appear) and then at return, we can sort the items and create an OrderedDict. Or we could just return a dict and document that it's sorted? But that would still be insertion order. Better to return an OrderedDict sorted by key.
+
+I'll implement using a dict during parsing, then at the end, return dict(sorted(params.items())) which gives a dict with keys sorted? Actually, in Python 3.7+, dict preserves insertion order, but if you create with dict(sorted(...)), it will insert sorted keys. So that gives a dict with sorted keys. That is fine. But note: dict(sorted(...)) creates a dict with keys in sorted order. That matches C++ map's order (lexicographical). So we can do that.
+
+Edge cases:
+- URL with no "://"? e.g., "example.com/path". C++ get_scheme returns "", get_host returns "", get_path returns "". So same.
+- URL like "http://" only: scheme "http", host empty? Actually host: after "://", there is nothing, then host_end find "/" returns npos, so returns empty string. Path returns "". That's fine.
+- URL with "?": but no "="? The C++ code: for each token, if has "=", then process. If no "=", it does nothing (no key-value added). The code does not add a key with empty value? Actually, it checks equal_pos != npos, if not found, it does nothing. So for token without "=", it's ignored. Similarly, after loop, it processes the last token similarly. So we replicate that.
+- URL with malformed query: "?a=1&b" -> token "a=1" adds, "b" no "=" ignored. That's fine.
+- Fragment extraction: after "#", returns rest. If no "#", returns "".
+- URL with both "?" and "#": e.g., "?a=1#frag" -> query_string = substr from "?"+1 to "#" - that works. In C++, fragment_start - query_start -1 is correct. In Python, we'll do similar.
+
+Let's write the Python code.
+
+We'll use class URLHandler with __init__(self, url). Store url as string.
+
+Implement methods: get_scheme, get_host, get_path, get_query_params, get_fragment.
+
+Note: In C++, the methods are const and return by value. Python methods are not const but we can just compute.
+
+Potential pitfalls: string.find returns npos (-1) when not found. In Python, str.find returns -1 if not found. So we can use that.
+
+For URL parts, we need to handle cases where scheme is present.
+
+Implementation details:
+
+- get_scheme: find "://". If found, return url[:pos], else "".
+- get_host: find "://". If found, url_without_scheme = url[pos+3:]. Then find '/' in that. If found, return url_without_scheme[:pos2], else return url_without_scheme.
+- get_path: find "://". If found, url_without_scheme = url[pos+3:]. Find '/' in that. If found, return url_without_scheme[pos2:], else return "".
+- get_query_params: find "?" (query_start). If not found, return {}. Else find "#" (fragment_start). Compute query_string = url[query_start+1 : fragment_start if fragment_start!=-1 else None]. Actually Python slice: if fragment_start is -1 (not found), we want to go to end. So we can do: if fragment_start != -1: end = fragment_start else: end = None. Then query_string = url[query_start+1:end]. Then parse as described: split by '&', for each token, split by '=' only once? The C++ code uses find("=") and substr. That splits on first '='. So we should split on first '='. We'll do: if token.find('=') != -1: key, value = token.split('=', 1). Insert into dictionary. Note: The C++ code assigns params[key]=value, which overwrites if duplicate keys. That's fine. Then after loop, we have final query_string (if no trailing &, there will be a last token). In C++ after loop, the last token is processed similarly. So we can simply split by '&' and iterate over all parts. But careful: What about empty tokens? If query string ends with '&', split will produce an empty string at end. That empty token should be ignored. In C++, the loop processes non-empty tokens (since query_string is not empty initially, and after each erase, it may leave empty? Actually the loop condition is while pos != npos, and it does not skip empty token if token is empty? For example "?a=1&" -> query_string="a=1&", find '&' at 3, token="a=1", process; erase to after '&' -> query_string="". pos=0? Actually after erase(0,4), query_string becomes "", then find("&") returns npos, loop ends. Then last equal_pos on empty string fails. So empty last token is not added. But if we split by '&', we will get ["a=1", ""] and we need to skip empty strings. So we can filter out empty tokens. But note: "&b=2" would produce first token empty. In C++? For "?&b=2", query_string="&b=2", find first '&' at 0, token = substr(0,0) = "" (empty). The code does: size_t equal_pos = token.find("="); Since token is empty, equal_pos==npos, so nothing added. Then erase(0,0+1) => erase one char, query_string becomes "b=2". Then loop again? No, loop continues? Actually after erase, it goes to next iteration of while loop? Let's trace: while ((pos = query_string.find("&")) != npos) { token = query_string.substr(0, pos); ...; query_string.erase(0, pos + 1); } After processing first token (empty), erase removes up to pos+1 (1 char), query_string="b=2". Then while condition again: find("&") returns npos, so loop ends. Then after loop, process last token ("b=2") with equal_pos. So that adds "b=2". So splitting by '&' and filtering empty tokens works: ["", "b=2"] -> skip empties, then process "b=2". So we can do that. However, we need to also handle the case where there is a trailing '&' that produces empty token at end. That will be filtered out. So parsing by split('&') and ignoring empty strings is equivalent, provided we also split each token by '=' on first occurrence. But note: The C++ code's handling of tokens without '=': it does nothing. So we can skip tokens without '='. That is fine.
+
+Thus we can simplify: query_params = {}; if query_string: for token in query_string.split('&'): if token: parts = token.split('=', 1); if len(parts)==2: key, value = parts; query_params[key] = value. That yields same behavior.
+
+But wait: There is a subtle difference: In C++ code, the loop processes the query_string by repeatedly finding '&' and erasing the processed part. This handles overlapping cases? No, it's straightforward. The split approach is equivalent, given that we skip empty tokens. But consider a token with multiple '=' signs: only first split. That's fine. So we can use split.
+
+So I'll implement using split.
+
+- get_fragment: find "#". If found, return url[hash_pos+1:], else "".
+
+Now, to match the sorted order of std::map, at the end of get_query_params, we can return a dict with keys sorted. But note: The C++ map's order is by key (string comparison). That includes case sensitivity? Yes, lexicographic comparison using '<' on std::string which is character-by-character ASCII. So we need to sort keys in standard lexicographic order (which in Python is default string sort). So we can do: return dict(sorted(params.items())) . That will produce a dictionary with keys in sorted order (insertion order of sorted items). In Python 3.7+ that is stable.
+
+Alternatively, we can return an OrderedDict from collections for clarity, but dict sorted is fine.
+
+One more nuance: The C++ code for get_query_params returns a map that is a copy. The Python method returns a dict. The caller can modify it; that's fine.
+
+Now, let's also consider potential issues with empty URL or None? The C++ constructor takes const string&, so no null. We'll assume url is a string.
+
+Implement now.
+
+Testing: We'll test with examples mentally.
+
+1. URL: "http://example.com/path?foo=1&bar=2#frag"
+   - scheme: "http"
+   - host: "example.com"
+   - path: "/path"
+   - query: {"bar": "2", "foo": "1"} (sorted)
+   - frag: "frag"
+
+2. URL: "https://user:pass@host:8080/p?k=v#hash"
+   - scheme: "https"
+   - host: "user:pass@host:8080" (C++ doesn't parse userinfo/port separately just finds until '/')
+   - path: "/p"
+   - query: {"k":"v"}
+   - frag: "hash"
+
+3. URL: "no-scheme"
+   - scheme: ""
+   - host: ""
+   - path: ""
+   - query: {}
+   - frag: ""
+
+4. URL: "http://host?query"
+   - scheme: "http"
+   - host: "host"
+   - path: "" (since no / after host, get_path returns "")
+   - query: {query should be parsed? Actually "?query" has token "query" without '=', so ignored => {}.}
+   - frag: ""
+
+5. URL: "http://host/?a=1&b=2&"
+   - host: "host"
+   - path: "/"
+   - query: {"a":"1","b":"2"}
+   - frag: ""
+
+6. URL: "http://host/path?x=1&y=2#anchor"
+   - query: {"x":"1","y":"2"} sorted.
+
+All good.
+
+Now write Python code. Use type hints optional but not required. We'll include them for clarity.
+
+Make sure to handle the case where query_start +1 may be beyond string length? For "http://host?" --> query_start index is after host, query_string = url[query_start+1:] = ""? If query_start is last char, +1 gives index len(url), which yields empty string. That's fine. Then split('&') returns [''], we filter empty tokens, none added. So empty map.
+
+Also consider case where fragment_start < query_start? That shouldn't happen because '#' after '?', but C++ code assumes fragment after query. It just calculates fragment_start - query_start -1. If fragment_start < query_start, count would be negative? But that's invalid URL. We'll keep identical: if fragment is before '?', the substr would be weird. But we can ignore.
+
+Better to follow the C++ code exactly: compute fragment_start for the whole url, not just after query. The C++ code uses url.find("#") on the whole url, and then computes fragment_start - query_start - 1. If fragment is before '?', then fragment_start - query_start - 1 would be negative? That would cause issues because size_t is unsigned? Actually in C++, size_t is unsigned; so if fragment_start < query_start, then fragment_start - query_start - 1 would wrap underflow? But that would be undefined behavior? In practice, the URL would be malformed, but we replicate the C++ behavior. To be safe, we assume '#' after '?' if both present. But we still compute the same way. In Python, if fragment_start < query_start, then end = fragment_start, and start=query_start+1, so slice might be empty or negative? Actually if fragment_start < query_start+1, then slice would be start > end, resulting in empty string? Let's compute: e.g., url="http://host#frag?query". query_start = find("?") -> after 'frag', fragment_start = find("#") -> before '?'. Then fragment_start - query_start -1 is negative. In C++ that would subtract unsigned, leading to huge number. But then substr would go beyond string length? Actually the C++ string::substr(pos, count) with pos=query_start+1 and count = huge, would try to take from pos to end? Because if count > remaining length, it just takes till end. So it would take from '?' onward? Let's test: url = "http://host#frag?query". query_start = index of '?' (say 15). fragment_start = index of '#' (say 11). Then fragment_start - query_start -1 = -5. As size_t, it becomes a huge number. substr(16, huge) would take from index 16 to end, which is "query". So it essentially ignores the fragment part and takes everything after '?'. That might be the behavior? Actually the code: query_string = url.substr(query_start + 1, fragment_start - query_start - 1). With huge count, it would go to end because count exceeds remaining length. So effectively query_string is everything after '?'. That seems unintended but we replicate it. In Python, we cannot directly replicate the wrap-around. To mimic the C++ behavior, we need to handle the case where fragment_start < query_start: then we should ignore fragment part? Actually we can just set end = None (to end of string) if fragment_start < query_start+1? But that would differ. To get the same behavior, we can compute count = fragment_start - query_start - 1 as an integer. If that integer is negative? In C++ size_t, it's huge positive. So we need to simulate that by treating it as essentially "take all remaining". In C++, substr with count larger than remaining length takes up to end. So we can just set end = None. But what about the case fragment_start > query_start and fragment_start - query_start -1 is positive? Then we take that many chars. So we can compute: if fragment_start != -1 and fragment_start > query_start+1: query_string = url[query_start+1:fragment_start] (since slice end exclusive, we need to go to fragment_start). Actually fragment_start is the index of '#', so we want characters from query_start+1 up to but not including fragment_start. So we can do: query_string = url[query_start+1:fragment_start] if fragment_start != -1 else url[query_start+1:]. That works when fragment_start > query_start+1. If fragment_start <= query_start? Then fragment_start - query_start -1 is negative or zero? In C++, if fragment_start == query_start+1? Then count=0, substr returns empty. If fragment_start < query_start+1, then count is huge. So to replicate, we can just ignore the fragment when fragment_start < query_start+1? Actually the condition fragment_start != npos, then we use that. So we'll compute end = fragment_start if fragment_start != -1 and fragment_start > query_start+1 else None? But that's not exact. Let's think: The C++ behavior with fragment_start < query_start+1 (and not npos) leads to huge count, effectively taking everything. So to replicate, we should take everything from query_start+1 to end. That is equivalent to ignoring fragment. So we can check: if fragment_start != -1 and fragment_start > query_start+1: end = fragment_start; else: end = None. That matches? If fragment_start == query_start+1, then C++ takes empty string (count=0) -> we should take empty. That is end = query_start+1? Actually slice url[query_start+1:query_start+1] is empty. So if fragment_start == query_start+1, end = fragment_start gives empty. If fragment_start < query_start+1, we want to ignore fragment (take to end). So we can set end = None. That yields url[query_start+1:] which includes the fragment? Wait, if fragment_start is before query_start, then query_start+1 is after fragment_start. So the substring from query_start+1 to end includes the fragment? Actually the url would be like "http://host#frag?query" -> indices: '#' at 11, '?' at 15. query_start+1=16, fragment_start=11. So slice [16:] = "query". That excludes the fragment part. So that's exactly what we want: the query part after '?' is taken, ignoring the fragment because it's before. So condition: if fragment_start != -1 and fragment_start > query_start+1: end = fragment_start else: end = None. In the case fragment_start == query_start+1, end = query_start+1, slice gives empty. That matches C++ count=0. Good. But what if fragment_start is npos? Then end = None. Perfect.
+
+So we can implement that for exact replication.
+
+Alternatively, we can just use Python's split('?') and split('#') but that would be more complicated and might not handle edge cases identically. The above slice logic is fine.
+
+Now, one more subtlety: In C++ code for get_query_params, after the loop, it processes the remainder of query_string. Our split approach already handles that, as we split all parts. So we can do that.
+
+Now final implementation.
+
+We'll also include a __repr__ or not needed.
+
+Let's produce the code.
+</think>
+
+=== RAW ANSWER ===
+```python
+class URLHandler:
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    def get_scheme(self) -> str:
+        pos = self.url.find("://")
+        if pos != -1:
+            return self.url[:pos]
+        return ""
+
+    def get_host(self) -> str:
+        pos = self.url.find("://")
+        if pos != -1:
+            rest = self.url[pos + 3:]
+            slash_pos = rest.find("/")
+            if slash_pos != -1:
+                return rest[:slash_pos]
+            return rest
+        return ""
+
+    def get_path(self) -> str:
+        pos = self.url.find("://")
+        if pos != -1:
+            rest = self.url[pos + 3:]
+            slash_pos = rest.find("/")
+            if slash_pos != -1:
+                return rest[slash_pos:]
+        return ""
+
+    def get_query_params(self) -> dict:
+        params = {}
+        qmark = self.url.find("?")
+        if qmark == -1:
+            return {}
+        hash_pos = self.url.find("#")
+        # Determine end of query string: if '#' exists and is after the '?', use it;
+        # otherwise, take the rest of the string.
+        if hash_pos != -1 and hash_pos > qmark + 1:
+            query_str = self.url[qmark + 1:hash_pos]
+        else:
+            query_str = self.url[qmark + 1:]
+        if not query_str:
+            return {}
+        for token in query_str.split("&"):
+            if not token:
+                continue
+            eq = token.find("=")
+            if eq != -1:
+                key = token[:eq]
+                value = token[eq + 1:]
+                params[key] = value
+        # std::map sorts by key; replicate that order in the returned dict.
+        return dict(sorted(params.items()))
+
+    def get_fragment(self) -> str:
+        pos = self.url.find("#")
+        if pos != -1:
+            return self.url[pos + 1:]
+        return ""
+```
+
+=== TRANSLATED CODE (py) ===
+class URLHandler:
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    def get_scheme(self) -> str:
+        pos = self.url.find("://")
+        if pos != -1:
+            return self.url[:pos]
+        return ""
+
+    def get_host(self) -> str:
+        pos = self.url.find("://")
+        if pos != -1:
+            rest = self.url[pos + 3:]
+            slash_pos = rest.find("/")
+            if slash_pos != -1:
+                return rest[:slash_pos]
+            return rest
+        return ""
+
+    def get_path(self) -> str:
+        pos = self.url.find("://")
+        if pos != -1:
+            rest = self.url[pos + 3:]
+            slash_pos = rest.find("/")
+            if slash_pos != -1:
+                return rest[slash_pos:]
+        return ""
+
+    def get_query_params(self) -> dict:
+        params = {}
+        qmark = self.url.find("?")
+        if qmark == -1:
+            return {}
+        hash_pos = self.url.find("#")
+        if hash_pos != -1 and hash_pos > qmark + 1:
+            query_str = self.url[qmark + 1:hash_pos]
+        else:
+            query_str = self.url[qmark + 1:]
+        if not query_str:
+            return {}
+        for token in query_str.split("&"):
+            if not token:
+                continue
+            eq = token.find("=")
+            if eq != -1:
+                key = token[:eq]
+                value = token[eq + 1:]
+                params[key] = value
+        return dict(sorted(params.items()))
+
+    def get_fragment(self) -> str:
+        pos = self.url.find("#")
+        if pos != -1:
+            return self.url[pos + 1:]
+        return ""

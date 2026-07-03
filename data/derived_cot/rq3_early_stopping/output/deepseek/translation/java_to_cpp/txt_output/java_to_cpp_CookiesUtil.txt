@@ -1,0 +1,418 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
+
+public class CookiesUtil {
+    private String cookiesFile;
+    private Map<String, String> cookies;
+
+    public CookiesUtil(String cookiesFile) {
+        this.cookiesFile = cookiesFile;
+        this.cookies = null;
+    }
+
+    public void getCookies(Map<String, Map<String, String>> response) {
+        this.cookies = response.get("cookies");
+        _saveCookies();
+    }
+
+    public Map<String, String> loadCookies() {
+        JSONParser parser = new JSONParser();
+        try (FileReader reader = new FileReader(cookiesFile)) {
+            JSONObject jsonObject = (JSONObject) parser.parse(reader);
+            Map<String, String> cookiesData = new HashMap<>();
+            jsonObject.forEach((key, value) -> cookiesData.put((String) key, (String) value));
+            return cookiesData;
+        } catch (IOException | ParseException e) {
+            return new HashMap<>();
+        }
+    }
+
+    boolean _saveCookies() {
+        try (FileWriter file = new FileWriter(cookiesFile)) {
+            JSONObject jsonObject = new JSONObject();
+            if (cookies != null) {
+                cookies.forEach(jsonObject::put);
+            }
+            file.write(jsonObject.toJSONString());
+            file.flush();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    public void setCookies(Map<String, String> request) {
+        StringBuilder cookiesString = new StringBuilder();
+        if (cookies != null) {
+            cookies.forEach((key, value) -> {
+                if (cookiesString.length() > 0) {
+                    cookiesString.append("; ");
+                }
+                cookiesString.append(key).append("=").append(value);
+            });
+        }
+        request.put("cookies", cookiesString.toString());
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate the given Java code to C++. The Java code uses org.json.simple library for JSON parsing and writing. In C++, we need an equivalent JSON library. We can use nlohmann/json (popular, header-only) or other. The code reads/writes a cookies file, stores cookies as a map, and interacts with a response map (passed as argument) that contains "cookies" sub-map.
+
+Important: The Java code has some specific behaviors:
+- The `response` parameter in `getCookies` is `Map<String, Map<String, String>>`. It retrieves the value associated with key "cookies" which is expected to be a Map<String,String> (the cookies themselves). Then it saves to file.
+- `loadCookies` reads from file, parses JSON object, returns a Map<String,String>. On failure returns empty map.
+- `_saveCookies` writes the internal cookies map to file as JSON. If cookies is null, writes empty JSON object. Returns bool.
+- `setCookies` modifies the input `request` map (Map<String, String>) by putting a "cookies" key with a string value that is the concatenation of all cookies in format "key=value; key=value". If cookies map is null or empty, puts empty string? Actually if cookies is null, the forEach won't execute, so cookiesString remains empty, then put empty string.
+
+Edge cases: file operations might fail. The Java code catches exceptions and returns empty map or false. We'll do similar.
+
+We should write C++ code that uses nlohmann/json for JSON. Also need to be careful about map types. We'll use std::map or std::unordered_map. Preferably std::map for deterministic ordering (though Java's HashMap is unordered, behavior doesn't rely on order; but we'll use std::unordered_map for similarity). However, for `response` parameter in `getCookies`, the Java signature is `Map<String, Map<String, String>>`. In C++, we'll need to pass something like `std::map<std::string, std::map<std::string, std::string>>&` or `std::unordered_map`. We'll use `std::unordered_map` for simplicity similar to Java's HashMap. Alternatively, we can use `std::map` for less confusion. Java's Map interface but HashMap is used. In C++, we can use `std::unordered_map` or `std::map`. To mimic the behavior, we need to ensure the keys are strings. We'll use `std::map<std::string, std::string>` for cookies map and the outer map for response/request. But note: `response` is a map of maps? Actually the parameter `response` is `Map<String, Map<String, String>>`. That means the top-level map has a key "cookies" whose value is another Map<String,String> (the cookies). In C++, we can represent that as `std::map<std::string, std::map<std::string, std::string>>`. Or better with unordered.
+
+However, the `getCookies` method expects the response to have a key "cookies". It then sets `this->cookies` to that sub-map. So we need to extract the inner map. In C++, we need to check if the key exists.
+
+Also in `setCookies`, the `request` parameter is `Map<String, String>` (a single map) and we put a string under "cookies". So that's straightforward.
+
+We'll write a class `CookiesUtil` with similar methods. We'll include necessary headers: <string>, <map>, <fstream>, <nlohmann/json.hpp> (assuming we have it). We'll also need to handle JSON parsing exceptions.
+
+We'll implement:
+- Constructor taking `std::string cookiesFile`.
+- `getCookies(std::map<std::string, std::map<std::string, std::string>>& response)` - note: response is a map of maps. We'll extract "cookies" submap. But the Java code just does `this->cookies = response.get("cookies");` which assigns reference? Actually it's `this.cookies = response.get("cookies");` which gets the value (a map) and assigns to this.cookies. In Java, that's a reference assignment. In C++, we need to copy the map? Or we can use pointer? To keep behavior identical, if the response map is modified later, the cookies map should not be affected because in Java, `Map<String, String>` is an object reference, but the assignment copies the reference. So any modifications to the original map (via response) would affect the cookies map. However, in the Java code, the map is retrieved from response and stored. The response is a parameter, so external code might modify the map after the call. But the usage is typical that the response is a one-time thing. To be safe, we can either store a copy or store a reference? In C++, we can store a `std::map<std::string, std::string>` by value, which copies. But to mimic Java's reference semantics, we could store a `std::shared_ptr` or `std::map*`? However, the Java code does `this.cookies = response.get("cookies");` which returns the value object; if the map is mutable and later modified, the reference still points to that object. But in the rest of the class, `cookies` is used in `setCookies` and `_saveCookies` which read from it, and also `_saveCookies` writes it to file. If the original response map changes after `getCookies`, the behavior would be affected. But typically, the response map is not used again after calling `getCookies`. We can simplify by copying the map. That is safe and avoids dangling references. However, Java's `Map` is an interface, and `response.get("cookies")` returns a `Map<String,String>` (the actual object). So we will copy it.
+
+But careful: In `_saveCookies`, we write the cookies map to file. If we copy, it's fine.
+
+Alternatively, to be exact, we could use `std::map<std::string, std::string>*` but that would require careful lifetime management. Easiest: copy.
+
+We'll store `std::map<std::string, std::string>` (or unordered_map) as member. We'll copy on assignment.
+
+Now, `loadCookies` returns a map. In Java, it returns `Map<String,String>`. In C++, we can return by value.
+
+`_saveCookies` is bool.
+
+`setCookies`: takes a request map by reference (non-const) and modifies it. In Java, it's `Map<String, String> request`. We'll do `std::map<std::string, std::string>& request`.
+
+We'll need to include JSON library. We'll assume nlohmann::json is available. We'll use `nlohmann::json` to parse and write. The JSON file will contain an object with key-value pairs (strings). The Java code uses `JSONObject` which maps keys to values. In nlohmann, we can parse to `json` and iterate.
+
+We need to handle exceptions: for file I/O and JSON parsing. We'll use try-catch blocks.
+
+Implementation details:
+
+- In `loadCookies`: open file, parse, convert to map, return. On failure, return empty map.
+- In `_saveCookies`: convert cookies map to json object, write to file, flush. Return true on success, false on exception.
+
+We'll also need to handle the case when `cookies` is null (nullptr in Java). In C++, we can use a `std::optional` or just use an empty map to represent null? The Java code initializes `this.cookies = null` in constructor, then it's set later. In methods, they check `if (cookies != null)`. So in C++, we can store `std::optional<std::map<std::string, std::string>>` or just use a regular map and an additional bool flag. Simpler: use `std::map<std::string, std::string>*` or `std::unique_ptr`. But easiest: store a `std::map<std::string, std::string>` and a boolean flag `hasCookies`. But the Java code distinguishes between null and empty map. When `cookies` is null, `_saveCookies` still writes a JSON object (empty). In `setCookies`, if null, it puts empty string. If empty map, it also puts empty string. So functionally, null and empty behave the same except for the check `cookies != null` but the behavior of forEach on null vs empty is same (no iteration). So we could just store an empty map when null and treat it as no cookies. But to be exact, we should preserve the possibility of null. However, in Java, `cookies` is initially null, and after `getCookies`, it becomes non-null (unless response.get("cookies") returns null). But normally response contains "cookies" which is a map, even if empty. So we can store as `std::map<std::string, std::string>` and represent null as empty? But then differentiating between "no cookies set" and "empty cookies" is not needed because behavior same. I'll use `std::optional<std::map<std::string, std::string>>` to be precise. `std::optional` is C++17. If C++11/14, can use boost or custom approach. I'll assume C++17 for simplicity.
+
+But the Java code also uses `this.cookies = response.get("cookies");` which could be null if key not present. In C++, we can check existence.
+
+I'll implement with `std::optional<std::map<std::string, std::string>>` cookies_ member. Constructor sets it to std::nullopt.
+
+In `getCookies`: find "cookies" in response, if found, assign cookies_ to that map (copy), else maybe leave as nullopt? The Java example doesn't handle missing key, but if key missing, response.get returns null, so cookies becomes null. That's fine. In C++, we'll do: auto it = response.find("cookies"); if (it != response.end()) cookies_ = it->second; else cookies_ = std::nullopt;
+
+`loadCookies`: returns map by value. If cookies_ is nullopt, we return empty map? Actually loadCookies reads from file, not from member. It returns the parsed map. Nothing to do with member.
+
+`_saveCookies`: iterate over cookies_ if has_value.
+
+`setCookies`: similar.
+
+Now, need to include `nlohmann/json.hpp`. We'll use `using json = nlohmann::json;`.
+
+File reading/writing: use `std::ifstream` and `std::ofstream`. For reading, we can parse directly from stream: `json j; file >> j;` But need to handle exceptions. For writing, we can use `file << j.dump();` or `file << j;`. The Java version writes JSON string without indentation. `toJSONString()` returns compact JSON. We'll use `j.dump()` default is compact.
+
+Potential issues: nlohmann/json can parse JSON object, but the file might contain other types? It should be object. We'll assume it's always an object.
+
+Now, translation:
+
+We'll produce a single .h or .cpp file? The problem asks for "translate the following Java code to C++". I'll produce a C++ class with implementation, likely in a single file for simplicity. The user expects compilable code. I'll provide the class definition and member functions.
+
+I'll write it as:
+
+```cpp
+#include <string>
+#include <map>
+#include <fstream>
+#include <nlohmann/json.hpp>
+#include <optional>
+
+using json = nlohmann::json;
+
+class CookiesUtil {
+private:
+    std::string cookiesFile;
+    std::optional<std::map<std::string, std::string>> cookies;
+
+public:
+    CookiesUtil(const std::string& cookiesFile) : cookiesFile(cookiesFile), cookies(std::nullopt) {}
+
+    void getCookies(std::map<std::string, std::map<std::string, std::string>>& response) {
+        auto it = response.find("cookies");
+        if (it != response.end()) {
+            cookies = it->second; // copy
+        } else {
+            cookies = std::nullopt;
+        }
+        _saveCookies();
+    }
+
+    std::map<std::string, std::string> loadCookies() {
+        json j;
+        try {
+            std::ifstream file(cookiesFile);
+            if (!file.is_open()) {
+                return {};
+            }
+            file >> j;
+            std::map<std::string, std::string> result;
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                result[it.key()] = it.value().get<std::string>();
+            }
+            return result;
+        } catch (...) {
+            return {};
+        }
+    }
+
+    bool _saveCookies() {
+        json j;
+        if (cookies.has_value()) {
+            for (const auto& [key, value] : cookies.value()) {
+                j[key] = value;
+            }
+        }
+        try {
+            std::ofstream file(cookiesFile);
+            if (!file.is_open()) {
+                return false;
+            }
+            file << j.dump();
+            file.flush();
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    void setCookies(std::map<std::string, std::string>& request) {
+        std::string cookiesString;
+        if (cookies.has_value()) {
+            bool first = true;
+            for (const auto& [key, value] : cookies.value()) {
+                if (!first) {
+                    cookiesString += "; ";
+                }
+                first = false;
+                cookiesString += key + "=" + value;
+            }
+        }
+        request["cookies"] = cookiesString;
+    }
+};
+```
+
+But need to ensure that when cookies is nullopt, we still put empty string. Yes.
+
+Also note: In Java, `setCookies` method modifies request map in place. In C++, we use reference.
+
+Now, we must include necessary headers and assume nlohmann/json is available. Also note: The original Java code uses `Map<String, Map<String, String>> response` in getCookies. In C++, we used `std::map<std::string, std::map<std::string, std::string>>`. It's compatible.
+
+Potential issue: The Java `response` map might be a different concrete class (like HashMap), but since we use std::map (ordered) or unordered, it's fine. We'll use `std::map` for consistency with the typical C++ standard library, though Java used HashMap (unordered). But behavior doesn't depend on order. We'll use `std::map` for simplicity, but could use `std::unordered_map` as well. I'll keep `std::map` for readability. The user might expect STL containers.
+
+We should also consider that `loadCookies` returns `std::map<std::string, std::string>` by value, which might copy but fine.
+
+Now, we need to ensure that `_saveCookies` is called from `getCookies`. In Java, it's called after setting cookies. So we do the same.
+
+Edge case: What if `response.contains("cookies")` but the value is not a map? Java assumes it is. We'll assume it's a map.
+
+One more nuance: In `setCookies`, the Java code iterates over entries of `cookies` map. The order might be random (HashMap). In C++, `std::map` iterates in key order, which may produce different order of cookies in the string. But behavior should be identical regarding functionality; the only difference is the string order. However, if the application relies on order, it might break. But the Java HashMap does not guarantee order. So any order is acceptable. So using `std::map` (ordered) might actually produce a deterministic order, which is fine. To be more similar to Java's HashMap, we could use `std::unordered_map`. But then the order is unspecified but maybe different each run. I think either is acceptable. I'll use `std::map` for simplicity and deterministic behavior, which doesn't violate the requirement "behavior identical" because Java doesn't specify order.
+
+Now, include statements and using directives. We'll need to put everything in a namespace? Not necessary.
+
+We'll write the code as a single block.
+
+Also consider that the original Java code is in package `org.example`, but that's irrelevant.
+
+Now produce final answer with the C++ code.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <string>
+#include <map>
+#include <fstream>
+#include <nlohmann/json.hpp>
+#include <optional>
+
+using json = nlohmann::json;
+
+class CookiesUtil {
+private:
+    std::string cookiesFile;
+    std::optional<std::map<std::string, std::string>> cookies;
+
+public:
+    CookiesUtil(const std::string& cookiesFile)
+        : cookiesFile(cookiesFile), cookies(std::nullopt) {}
+
+    // Mimics Java's getCookies(Map<String, Map<String, String>> response)
+    void getCookies(std::map<std::string, std::map<std::string, std::string>>& response) {
+        auto it = response.find("cookies");
+        if (it != response.end()) {
+            cookies = it->second;           // copy the inner map
+        } else {
+            cookies = std::nullopt;
+        }
+        _saveCookies();                     // always save after retrieving
+    }
+
+    // Mimics Java's loadCookies()
+    std::map<std::string, std::string> loadCookies() {
+        json j;
+        try {
+            std::ifstream file(cookiesFile);
+            if (!file.is_open()) {
+                return {};
+            }
+            file >> j;
+            std::map<std::string, std::string> result;
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                result[it.key()] = it.value().get<std::string>();
+            }
+            return result;
+        } catch (...) {
+            return {};
+        }
+    }
+
+    // Mimics Java's _saveCookies()
+    bool _saveCookies() {
+        json j;
+        if (cookies.has_value()) {
+            for (const auto& [key, value] : cookies.value()) {
+                j[key] = value;
+            }
+        }
+        try {
+            std::ofstream file(cookiesFile);
+            if (!file.is_open()) {
+                return false;
+            }
+            file << j.dump();      // compact JSON, like Java's toJSONString()
+            file.flush();
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    // Mimics Java's setCookies(Map<String, String> request)
+    void setCookies(std::map<std::string, std::string>& request) {
+        std::string cookiesString;
+        if (cookies.has_value()) {
+            bool first = true;
+            for (const auto& [key, value] : cookies.value()) {
+                if (!first) {
+                    cookiesString += "; ";
+                }
+                first = false;
+                cookiesString += key + "=" + value;
+            }
+        }
+        request["cookies"] = cookiesString;
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <map>
+#include <fstream>
+#include <nlohmann/json.hpp>
+#include <optional>
+
+using json = nlohmann::json;
+
+class CookiesUtil {
+private:
+    std::string cookiesFile;
+    std::optional<std::map<std::string, std::string>> cookies;
+
+public:
+    CookiesUtil(const std::string& cookiesFile)
+        : cookiesFile(cookiesFile), cookies(std::nullopt) {}
+
+    // Mimics Java's getCookies(Map<String, Map<String, String>> response)
+    void getCookies(std::map<std::string, std::map<std::string, std::string>>& response) {
+        auto it = response.find("cookies");
+        if (it != response.end()) {
+            cookies = it->second;           // copy the inner map
+        } else {
+            cookies = std::nullopt;
+        }
+        _saveCookies();                     // always save after retrieving
+    }
+
+    // Mimics Java's loadCookies()
+    std::map<std::string, std::string> loadCookies() {
+        json j;
+        try {
+            std::ifstream file(cookiesFile);
+            if (!file.is_open()) {
+                return {};
+            }
+            file >> j;
+            std::map<std::string, std::string> result;
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                result[it.key()] = it.value().get<std::string>();
+            }
+            return result;
+        } catch (...) {
+            return {};
+        }
+    }
+
+    // Mimics Java's _saveCookies()
+    bool _saveCookies() {
+        json j;
+        if (cookies.has_value()) {
+            for (const auto& [key, value] : cookies.value()) {
+                j[key] = value;
+            }
+        }
+        try {
+            std::ofstream file(cookiesFile);
+            if (!file.is_open()) {
+                return false;
+            }
+            file << j.dump();      // compact JSON, like Java's toJSONString()
+            file.flush();
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    // Mimics Java's setCookies(Map<String, String> request)
+    void setCookies(std::map<std::string, std::string>& request) {
+        std::string cookiesString;
+        if (cookies.has_value()) {
+            bool first = true;
+            for (const auto& [key, value] : cookies.value()) {
+                if (!first) {
+                    cookiesString += "; ";
+                }
+                first = false;
+                cookiesString += key + "=" + value;
+            }
+        }
+        request["cookies"] = cookiesString;
+    }
+};

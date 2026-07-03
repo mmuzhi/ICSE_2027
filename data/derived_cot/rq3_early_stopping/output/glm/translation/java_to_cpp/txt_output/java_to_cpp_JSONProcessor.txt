@@ -1,0 +1,307 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import com.google.gson.Gson;
+
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
+
+public class JSONProcessor {
+
+    public Map<String, Object> readJson(String filePath) {
+        if (!Files.exists(Paths.get(filePath))) {
+            return null;
+        }
+        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            return new Gson().fromJson(reader, Map.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public boolean writeJson(Map<String, Object> data, String filePath) {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(filePath))) {
+            new Gson().toJson(data, writer);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public boolean processJson(String filePath, String removeKey) {
+        Map<String, Object> data = readJson(filePath);
+        if (data == null) {
+            return false;
+        }
+        if (data.containsKey(removeKey)) {
+            data.remove(removeKey);
+            return writeJson(data, filePath);
+        } else {
+            return false;
+        }
+    }
+}
+
+=== REASONING ===
+<think>
+The user wants me to translate a Java class `JSONProcessor` to C++ while keeping behavior identical.
+
+Let me analyze the Java code:
+
+1. `readJson(String filePath)` - Reads a JSON file and returns a `Map<String, Object>`. Returns `null` if file doesn't exist or on any exception.
+2. `writeJson(Map<String, Object> data, String filePath)` - Writes a map as JSON to a file. Returns `true` on success, `false` on exception.
+3. `processJson(String filePath, String removeKey)` - Reads JSON, removes a key if present, writes back. Returns `false` if data is null or key not present, otherwise the result of writeJson.
+
+For C++, I need:
+- A JSON library. The most common one is nlohmann/json.
+- File I/O using standard C++ streams.
+- A way to represent `Map<String, Object>` - in C++ with nlohmann/json, `nlohmann::json` can represent this directly, or I could use `std::map<std::string, nlohmann::json>` but that's more complex. Since the Java code uses `Map<String, Object>` which is essentially a JSON object, using `nlohmann::json` directly makes the most sense.
+
+Wait, but the Java code uses `Map<String, Object>` as the data type. In C++, the closest equivalent would be `std::map<std::string, nlohmann::json>` or just `nlohmann::json`. Let me think about this more carefully.
+
+The Java code uses Gson's `fromJson(reader, Map.class)` which deserializes into a `Map<String, Object>`. In C++, the natural equivalent with nlohmann/json would be `nlohmann::json` which can hold any JSON value.
+
+However, the Java method signatures use `Map<String, Object>`. To keep behavior identical and make the API similar, I could use `nlohmann::json` as the return type/parameter type, since it can represent a JSON object (which is essentially a map).
+
+Let me also consider:
+- `null` return → In C++, I could return `std::optional<nlohmann::json>` or return a `nlohmann::json` with a null check method. Using `std::optional` is cleaner.
+- Exception handling → Use try/catch similarly.
+
+Let me write the C++ code:
+
+```cpp
+#pragma once
+
+#include <fstream>
+#include <optional>
+#include <string>
+#include <filesystem>
+#include <nlohmann/json.hpp>
+
+class JSONProcessor {
+public:
+    std::optional<nlohmann::json> readJson(const std::string& filePath) {
+        if (!std::filesystem::exists(filePath)) {
+            return std::nullopt;
+        }
+        try {
+            std::ifstream file(filePath);
+            if (!file.is_open()) {
+                return std::nullopt;
+            }
+            nlohmann::json data = nlohmann::json::parse(file);
+            return data;
+        } catch (const std::exception& e) {
+            return std::nullopt;
+        }
+    }
+
+    bool writeJson(const nlohmann::json& data, const std::string& filePath) {
+        try {
+            std::ofstream file(filePath);
+            if (!file.is_open()) {
+                return false;
+            }
+            file << data.dump();
+            return true;
+        } catch (const std::exception& e) {
+            return false;
+        }
+    }
+
+    bool processJson(const std::string& filePath, const std::string& removeKey) {
+        auto dataOpt = readJson(filePath);
+        if (!dataOpt.has_value()) {
+            return false;
+        }
+        nlohmann::json data = dataOpt.value();
+        if (data.contains(removeKey)) {
+            data.erase(removeKey);
+            return writeJson(data, filePath);
+        } else {
+            return false;
+        }
+    }
+};
+```
+
+Wait, I need to think about the `Map<String, Object>` type more carefully. The Java code specifically returns `Map<String, Object>` and takes `Map<String, Object>` as input. The `Object` in Java can be any type (String, Number, Boolean, List, nested Map, etc.), which is exactly what `nlohmann::json` represents.
+
+However, there's a subtle issue: in Java, `readJson` returns `Map<String, Object>` which is specifically a map type. If the JSON file contains a non-object (like an array or a primitive), Gson would throw an exception (or return null). In C++, `nlohmann::json::parse` would successfully parse any JSON value. But since the Java code catches all exceptions and returns null, the behavior would be similar - if the JSON isn't an object, subsequent operations like `containsKey`/`contains` might behave differently.
+
+Actually, looking more carefully at the Java code, `new Gson().fromJson(reader, Map.class)` - if the JSON is not an object, this would likely throw an exception which gets caught and returns null. So in C++, I should check if the parsed JSON is an object.
+
+Let me also consider: the `writeJson` method in Java takes `Map<String, Object>` and writes it. In C++, I'm using `nlohmann::json`. This should be fine since `nlohmann::json` can represent a JSON object.
+
+Let me refine:
+
+```cpp
+std::optional<nlohmann::json> readJson(const std::string& filePath) {
+    if (!std::filesystem::exists(filePath)) {
+        return std::nullopt;
+    }
+    try {
+        std::ifstream file(filePath);
+        if (!file.is_open()) {
+            return std::nullopt;
+        }
+        nlohmann::json data = nlohmann::json::parse(file);
+        if (!data.is_object()) {
+            return std::nullopt;
+        }
+        return data;
+    } catch (const std::exception& e) {
+        return std::nullopt;
+    }
+}
+```
+
+Hmm, but actually, I'm not 100% sure Gson throws on non-object when deserializing to Map.class. It might actually try to adapt. Let me not add the `is_object()` check to keep it simpler and more faithful - if the JSON is not an object, `contains` and `erase` on a non-object nlohmann::json would behave differently, but this edge case is unlikely and the Java code would also have issues with it.
+
+Actually, let me reconsider. The instruction says "Keep behavior identical". In Java, `Gson.fromJson(reader, Map.class)` will throw a `JsonSyntaxException` or similar if the JSON is not an object. This would be caught and return null. So adding the `is_object()` check is more faithful.
+
+But wait, I should also think about what happens if `data` is not an object in `processJson`. In the Java version, `data.containsKey(removeKey)` would work because `data` is guaranteed to be a `Map`. In C++, if `data` is not an object, `data.contains()` might throw or behave unexpectedly.
+
+I'll add the `is_object()` check to be safe and match the Java behavior more closely.
+
+Now for `writeJson` - in Java, `new Gson().toJson(data, writer)` writes the map as JSON. In C++, `file << data.dump()` does the same. However, `data.dump()` produces compact JSON by default. Gson also produces compact JSON by default. So this should be fine.
+
+Actually, let me also think about whether I should use `data.dump(4)` for pretty printing or `data.dump()` for compact. Gson's default `toJson` produces compact JSON, so `data.dump()` (no indentation) is correct.
+
+One more thing: the Java `writeJson` method uses `BufferedWriter` which is buffered. C++ `std::ofstream` is buffered by default, so this is fine.
+
+Let me also think about the file writing: in Java, `new FileWriter(filePath)` overwrites the file. In C++, `std::ofstream(filePath)` also overwrites by default. Good.
+
+Let me finalize the code. I think using `std::optional<nlohmann::json>` is the right approach for `readJson`, and `nlohmann::json` for the parameter of `writeJson`.
+
+Actually, I realize I should think about whether to use `std::map<std::string, nlohmann::json>` or just `nlohmann::json`. The Java code uses `Map<String, Object>` as the type. In C++, using `nlohmann::json` directly is the most practical approach since:
+1. It can represent a JSON object (which is a map)
+2. It supports all the operations needed (contains, erase, serialization)
+3. Using `std::map<std::string, nlohmann::json>` would require conversion and be more complex
+
+Let me write the final version:
+
+```cpp
+
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#pragma once
+
+#include <filesystem>
+#include <fstream>
+#include <optional>
+#include <string>
+#include <nlohmann/json.hpp>
+
+class JSONProcessor {
+public:
+    std::optional<nlohmann::json> readJson(const std::string& filePath) {
+        if (!std::filesystem::exists(filePath)) {
+            return std::nullopt;
+        }
+        try {
+            std::ifstream file(filePath);
+            if (!file.is_open()) {
+                return std::nullopt;
+            }
+            nlohmann::json data = nlohmann::json::parse(file);
+            if (!data.is_object()) {
+                return std::nullopt;
+            }
+            return data;
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+    }
+
+    bool writeJson(const nlohmann::json& data, const std::string& filePath) {
+        try {
+            std::ofstream file(filePath);
+            if (!file.is_open()) {
+                return false;
+            }
+            file << data.dump();
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+
+    bool processJson(const std::string& filePath, const std::string& removeKey) {
+        auto dataOpt = readJson(filePath);
+        if (!dataOpt.has_value()) {
+            return false;
+        }
+        nlohmann::json data = dataOpt.value();
+        if (data.contains(removeKey)) {
+            data.erase(removeKey);
+            return writeJson(data, filePath);
+        } else {
+            return false;
+        }
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#pragma once
+
+#include <filesystem>
+#include <fstream>
+#include <optional>
+#include <string>
+#include <nlohmann/json.hpp>
+
+class JSONProcessor {
+public:
+    std::optional<nlohmann::json> readJson(const std::string& filePath) {
+        if (!std::filesystem::exists(filePath)) {
+            return std::nullopt;
+        }
+        try {
+            std::ifstream file(filePath);
+            if (!file.is_open()) {
+                return std::nullopt;
+            }
+            nlohmann::json data = nlohmann::json::parse(file);
+            if (!data.is_object()) {
+                return std::nullopt;
+            }
+            return data;
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+    }
+
+    bool writeJson(const nlohmann::json& data, const std::string& filePath) {
+        try {
+            std::ofstream file(filePath);
+            if (!file.is_open()) {
+                return false;
+            }
+            file << data.dump();
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+
+    bool processJson(const std::string& filePath, const std::string& removeKey) {
+        auto dataOpt = readJson(filePath);
+        if (!dataOpt.has_value()) {
+            return false;
+        }
+        nlohmann::json data = dataOpt.value();
+        if (data.contains(removeKey)) {
+            data.erase(removeKey);
+            return writeJson(data, filePath);
+        } else {
+            return false;
+        }
+    }
+};

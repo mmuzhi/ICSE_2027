@@ -1,0 +1,384 @@
+=== SOURCE CODE (cpp) ===
+#include <vector>
+#include <string>
+
+
+struct Stock {
+    std::string name;
+    double price;
+    int quantity;
+
+    
+    bool operator==(const Stock& other) const {
+        return name == other.name && price == other.price && quantity == other.quantity;
+    }
+};
+
+
+struct StockSummary {
+    std::string name;
+    double value;
+
+    
+    bool operator==(const StockSummary& other) const {
+        return name == other.name && value == other.value;
+    }
+};
+
+
+class StockPortfolioTracker {
+public:
+    explicit StockPortfolioTracker(double cash_balance);
+
+    void add_stock(const Stock& stock);
+    bool remove_stock(const Stock& stock);
+    bool buy_stock(const Stock& stock);
+    bool sell_stock(const Stock& stock);
+    double calculate_portfolio_value() const;
+    std::pair<double, std::vector<StockSummary>> get_portfolio_summary() const;
+    double get_stock_value(const Stock& stock) const;
+    const std::vector<Stock>& get_portfolio() const;
+    double get_cash_balance() const;
+    void set_portfolio(const std::vector<Stock>& portfolio);
+
+private:
+    std::vector<Stock> portfolio;
+    double cash_balance;
+};
+
+StockPortfolioTracker::StockPortfolioTracker(double cash_balance)
+    : cash_balance(cash_balance) {
+}
+
+void StockPortfolioTracker::add_stock(const Stock& stock) {
+    for (auto& pf : portfolio) {
+        if (pf.name == stock.name) {
+            pf.quantity += stock.quantity;
+            return;
+        }
+    }
+    portfolio.push_back(stock);
+}
+
+bool StockPortfolioTracker::remove_stock(const Stock& stock) {
+    for (auto it = portfolio.begin(); it != portfolio.end(); ++it) {
+        if (it->name == stock.name && it->quantity >= stock.quantity) {
+            it->quantity -= stock.quantity;
+            if (it->quantity == 0) {
+                portfolio.erase(it);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool StockPortfolioTracker::buy_stock(const Stock& stock) {
+    if (stock.price * stock.quantity > cash_balance) {
+        return false;
+    }
+    else {
+        add_stock(stock);
+        cash_balance -= stock.price * stock.quantity;
+        return true;
+    }
+}
+
+bool StockPortfolioTracker::sell_stock(const Stock& stock) {
+    if (!remove_stock(stock)) {
+        return false;
+    }
+    cash_balance += stock.price * stock.quantity;
+    return true;
+}
+
+double StockPortfolioTracker::calculate_portfolio_value() const {
+    double total_value = cash_balance;
+    for (const auto& stock : portfolio) {
+        total_value += stock.price * stock.quantity;
+    }
+    return total_value;
+}
+
+std::pair<double, std::vector<StockSummary>> StockPortfolioTracker::get_portfolio_summary() const {
+    std::vector<StockSummary> summary;
+    for (const auto& stock : portfolio) {
+        summary.push_back({ stock.name, get_stock_value(stock) });
+    }
+    return { calculate_portfolio_value(), summary };
+}
+
+double StockPortfolioTracker::get_stock_value(const Stock& stock) const {
+    return stock.price * stock.quantity;
+}
+
+const std::vector<Stock>& StockPortfolioTracker::get_portfolio() const {
+    return portfolio;
+}
+
+double StockPortfolioTracker::get_cash_balance() const {
+    return cash_balance;
+}
+
+void StockPortfolioTracker::set_portfolio(const std::vector<Stock>& p) {
+    portfolio = p;
+}
+
+
+=== REASONING ===
+<think>
+We need to translate C++ code to Python while preserving behavior. The C++ code defines two structs (Stock, StockSummary) and a class StockPortfolioTracker. The structs have operator==. In Python, we can use dataclasses or regular classes with __eq__. The class methods should behave identically. Need to be careful about:
+
+- `add_stock`: if stock with same name exists, add quantity; otherwise push new.
+- `remove_stock`: find stock with same name and sufficient quantity; subtract quantity; if zero remove from list; return True; else False.
+- `buy_stock`: check if cash sufficient, then add stock and deduct cash.
+- `sell_stock`: remove stock if possible, add cash.
+- `calculate_portfolio_value`: sum of cash + stock values.
+- `get_portfolio_summary`: list of StockSummary for each stock, plus total value.
+- `get_stock_value`: stock.price * stock.quantity.
+- `get_portfolio`: return list of stocks.
+- `get_cash_balance`, `set_portfolio`.
+
+Edge cases: double comparisons? The C++ code uses double for price, cash_balance. Python floats are fine. The equality operator in Stock compares doubles directly; so we should do the same (no epsilon). In Python, we'll define __eq__ accordingly.
+
+Also, the C++ get_portfolio returns const reference. In Python, we can just return the list (not a copy). But we need to ensure that the caller cannot modify the internal list? In C++ const reference prevents modification. In Python, returning the list exposes the reference; but the problem says "Keep behavior identical" - if we return the internal list, the caller could modify it, which would differ from C++ behavior (since in C++ you cannot modify through const ref, but it's still a reference to the same data). Actually in C++, returning const reference to a member vector means it's read-only through that reference, but the data can still be modified by other member functions. In Python, returning the list itself gives direct mutable access, which could allow external modifications. To mimic the const reference behavior, we should return a copy or a read-only view. However, the problem says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". If the C++ code returns a const reference, the caller cannot modify the portfolio through that reference; they can only read. To enforce that in Python, we could return a tuple (immutable) or a list copy. But returning a copy changes behavior in terms of identity and is a different memory object. The C++ const reference still refers to the same underlying vector; modifications to the vector via other methods are visible through that reference. In Python, if we return a copy, then updates after the copy are not reflected in the returned copy. That would be a behavioral difference. But the caller typically uses it immediately and doesn't hold a persistent reference. The problem likely expects equivalence in terms of observable behavior, not memory semantics. Usually, such translations treat returning a const reference as returning a read-only view. In Python, we can return a list that is a shallow copy? However, the C++ version does not create a copy; it returns a reference. If the caller later modifies the portfolio through other methods, the reference still sees updates. In Python, if we return the internal list, the caller can modify it, which is not allowed in C++. To prevent that, we could return a read-only proxy, but that's complex. Common practice in Python for such translations is to return a copy to prevent unintended modification, but that changes behavior: the returned list is not updated when portfolio changes. But the C++ doesn't guarantee that either; the const reference sees updates because it references the same object. If we return a copy, updates won't be visible. However, if the caller doesn't rely on updates after acquiring the reference (e.g., they just read it immediately), it's fine. But strictly, behavior should be identical. I think we should aim to preserve the same functional behavior: the function returns the current portfolio contents. In Python, returning a shallow copy is safe and idiomatic. However, the spec says "Keep behavior identical". Usually, in such code translation tasks, they want exact matching of function signatures and outputs, not necessarily memory model. For simplicity, I'll return a copy (list[:]) to avoid external modification. That ensures that if someone tries to modify the returned list, it doesn't affect internal state. In C++, they cannot modify through const ref. So this is a reasonable equivalent.
+
+Alternatively, we could return a `list` but document that it's read-only; but Python doesn't enforce that. I'll go with returning a copy. The same for `get_portfolio_summary`: it returns a vector copy of StockSummary, so no issue.
+
+Now, implementation details:
+
+- Use `dataclass` for Stock and StockSummary for convenience, with `__eq__` auto-generated if we set eq=True (default). But careful: dataclass compares fields in order. Stock has name, price, quantity. That matches C++: name, price, quantity. So fine. Use `frozen=True`? Not needed.
+
+- StockPortfolioTracker: initialize with cash_balance, portfolio empty list.
+
+- Methods: add_stock, remove_stock, buy_stock, sell_stock, etc.
+
+- `remove_stock`: We need to find the first stock with matching name and quantity >= stock.quantity. Use loop with index, modify in place. If after subtraction quantity == 0, remove that element. Need to be careful: after erase, we should not continue. In C++, after erasing the iterator is invalidated; we break. In Python, we can just pop at index and break. Also, iteration while modifying list is tricky; better to find index first and then modify. We'll loop over indices.
+
+Edge case: If multiple stocks with same name? In C++, only the first matching is used; our loop finds first. That's fine.
+
+- `buy_stock`: check cash >= price*quantity, then add_stock and deduct.
+
+- `sell_stock`: try remove_stock, if true then add cash.
+
+- `calculate_portfolio_value`: sum cash + stock.price*stock.quantity.
+
+- `get_portfolio_summary`: create list of StockSummary(name, value). Use get_stock_value.
+
+- `get_stock_value`: return stock.price * stock.quantity.
+
+- `get_portfolio`: return a copy of portfolio.
+
+- `set_portfolio`: replace portfolio with given list (shallow copy? In C++, it assigns the vector, which copies elements. We can assign new list, but careful: if the given list is later modified externally, we don't want it affecting internal. So we should copy elements? In C++, assignment of vector copies the elements (deep copy of strings, but Stock structs are copied). In Python, assignment of list copies references to the same Stock objects. If the Stock objects are dataclasses (immutable? they are mutable but with __eq__), sharing is fine because they are not modified externally? Actually, if the caller modifies a Stock object after setting it, that would affect internal portfolio because they share the same object. That could be a behavioral difference. In C++, setting the portfolio copies the vector, so subsequent modifications to the original vector or its elements don't affect the portfolio. To mimic that, we should create a shallow copy of the list and also possibly copy each Stock? The Stock struct in C++ is a plain data struct; copying it copies the string and doubles. In Python, we need to copy each Stock to avoid sharing mutations. Since Stock is a dataclass, we can use `dataclasses.replace` or create new instances. However, the function signature receives a list of Stock; we can just take a shallow copy of the list: `self.portfolio = list(p)` which creates new list but same objects. That still shares Stock instances. To be safe, we should deep copy each Stock. But is that necessary? The C++ code assumes the stock argument is passed by value or reference? In the C++ code, `set_portfolio(const std::vector<Stock>& p)` takes a const reference, and then assigns `portfolio = p;` which copies the vector (including each Stock). So subsequent modifications to the original vector or its elements do not affect the internal portfolio. In Python, if we assign `self.portfolio = p`, we are assigning the same list object (if p is a list) or a copy? If someone passes a list, `self.portfolio = p` just makes self.portfolio refer to the same list. That would allow external modifications. To prevent that, we need to copy the list and also copy each Stock. But Stock is a simple value object; copying it can be done by creating new instances: `[Stock(name=s.name, price=s.price, quantity=s.quantity) for s in p]`. Since Stock is a dataclass, we can use `dataclasses.replace` or simply create a new Stock. That's the safest. Let's do that.
+
+Similarly, in `add_stock`, we push the stock object directly. In C++, when you push_back the stock, it copies the stock. So the internal portfolio owns its copies. In Python, we are storing the same object reference. If the caller later modifies that Stock object (which they could if they kept a reference), it would affect internal state. To avoid that, we could store a copy when adding. However, in C++, the caller could modify the stock after passing it because the function receives by const reference (it takes `const Stock&`), but the variable in the caller is not const; they could still modify it. However, after the function call, the internal portfolio contains a copy; modifications to the original do not affect the copy. So to mimic, we should store a copy. That's important for behavioral equivalence. So for all methods that accept a Stock (add_stock, remove_stock, buy_stock, sell_stock), we should treat the input as a value and make a copy before storing. But for removal, we only need to match fields; we don't store it. However, to be safe, we can create copies when storing.
+
+Thus, in `add_stock`, we will copy the stock when pushing. In `remove_stock`, we don't need to copy because we are not storing it. In `buy_stock`, it calls add_stock which will copy. In `sell_stock`, it calls remove_stock, no storing. Also, `set_portfolio` should copy each element.
+
+Now, let's write the Python code.
+
+We'll use `dataclasses` from `dataclasses`. Define `@dataclass` for Stock and StockSummary. Add `__repr__` maybe not needed. For Stock, we need the fields name, price, quantity. For StockSummary: name, value.
+
+Define class StockPortfolioTracker.
+
+Implement methods as described.
+
+Edge case: In `remove_stock`, if after subtraction quantity becomes zero, remove it. In C++, `it->quantity -= stock.quantity; if (it->quantity == 0) { portfolio.erase(it); }` Note that after erase, iterator is invalid, but they break because they return true. In Python, we'll do similar: find index, modify quantity, if zero pop(index). Then return True.
+
+Need also to handle case where stock with same name exists but quantity less than required: we should continue searching? In C++, the loop checks `it->name == stock.name && it->quantity >= stock.quantity`. It only acts on first match that also has sufficient quantity. If there is a stock with same name but insufficient quantity, it continues to next? Actually, it will continue to next iteration because condition false, until it finds a match with sufficient or reaches end. So if there is a stock with same name but insufficient quantity, it will not reduce it; it goes to next element. That's correct. We'll replicate: find first element where name matches and quantity >= stock.quantity. If none, return False.
+
+Also, note that after removal if quantity becomes zero, we erase that element. If there are multiple stocks with same name (possible after partial removal? but add_stock only adds new stock if name not in portfolio, so there should be at most one stock per name. However, remove_stock might reduce quantity to zero and remove it, but later add_stock adds a new Stock with same name again, that would be a new entry with separate name. So there can be only one stock with a given name at a time because add_stock merges quantities. So using first match is fine. But still, we'll follow C++ behavior exactly.
+
+Now, let's write code.
+
+We'll also include `from typing import List, Tuple, Optional` but not required.
+
+Test with some cases mentally.
+
+One more: In C++, `StockPortfolioTracker::StockPortfolioTracker(double cash_balance) : cash_balance(cash_balance) {}` So constructor initializes cash_balance. In Python, `__init__`.
+
+Make sure that `calculate_portfolio_value` and `get_portfolio_summary` are const in C++; they don't modify state. We'll just implement.
+
+Now produce final answer.
+</think>
+
+=== RAW ANSWER ===
+```python
+from dataclasses import dataclass
+from typing import List, Tuple
+
+@dataclass
+class Stock:
+    name: str
+    price: float
+    quantity: int
+
+    def __eq__(self, other):
+        if not isinstance(other, Stock):
+            return NotImplemented
+        return (self.name == other.name and
+                self.price == other.price and
+                self.quantity == other.quantity)
+
+@dataclass
+class StockSummary:
+    name: str
+    value: float
+
+    def __eq__(self, other):
+        if not isinstance(other, StockSummary):
+            return NotImplemented
+        return self.name == other.name and self.value == other.value
+
+
+class StockPortfolioTracker:
+    def __init__(self, cash_balance: float):
+        self._cash_balance = cash_balance
+        self._portfolio: List[Stock] = []
+
+    def add_stock(self, stock: Stock) -> None:
+        # Make a copy to avoid external mutation of internal state
+        stock_copy = Stock(name=stock.name, price=stock.price, quantity=stock.quantity)
+        for pf in self._portfolio:
+            if pf.name == stock_copy.name:
+                pf.quantity += stock_copy.quantity
+                return
+        self._portfolio.append(stock_copy)
+
+    def remove_stock(self, stock: Stock) -> bool:
+        for i, pf in enumerate(self._portfolio):
+            if pf.name == stock.name and pf.quantity >= stock.quantity:
+                pf.quantity -= stock.quantity
+                if pf.quantity == 0:
+                    self._portfolio.pop(i)
+                return True
+        return False
+
+    def buy_stock(self, stock: Stock) -> bool:
+        cost = stock.price * stock.quantity
+        if cost > self._cash_balance:
+            return False
+        self.add_stock(stock)          # add_stock makes a copy
+        self._cash_balance -= cost
+        return True
+
+    def sell_stock(self, stock: Stock) -> bool:
+        if not self.remove_stock(stock):
+            return False
+        self._cash_balance += stock.price * stock.quantity
+        return True
+
+    def calculate_portfolio_value(self) -> float:
+        total = self._cash_balance
+        for s in self._portfolio:
+            total += s.price * s.quantity
+        return total
+
+    def get_portfolio_summary(self) -> Tuple[float, List[StockSummary]]:
+        summary = [StockSummary(name=s.name, value=self.get_stock_value(s))
+                   for s in self._portfolio]
+        return (self.calculate_portfolio_value(), summary)
+
+    def get_stock_value(self, stock: Stock) -> float:
+        return stock.price * stock.quantity
+
+    def get_portfolio(self) -> List[Stock]:
+        # Return a copy so external code cannot modify the internal list.
+        return list(self._portfolio)
+
+    def get_cash_balance(self) -> float:
+        return self._cash_balance
+
+    def set_portfolio(self, portfolio: List[Stock]) -> None:
+        # Deep copy each stock to maintain value semantics (matching C++ copy of vector).
+        self._portfolio = [Stock(name=s.name, price=s.price, quantity=s.quantity)
+                           for s in portfolio]
+```
+
+=== TRANSLATED CODE (py) ===
+from dataclasses import dataclass
+from typing import List, Tuple
+
+@dataclass
+class Stock:
+    name: str
+    price: float
+    quantity: int
+
+    def __eq__(self, other):
+        if not isinstance(other, Stock):
+            return NotImplemented
+        return (self.name == other.name and
+                self.price == other.price and
+                self.quantity == other.quantity)
+
+@dataclass
+class StockSummary:
+    name: str
+    value: float
+
+    def __eq__(self, other):
+        if not isinstance(other, StockSummary):
+            return NotImplemented
+        return self.name == other.name and self.value == other.value
+
+
+class StockPortfolioTracker:
+    def __init__(self, cash_balance: float):
+        self._cash_balance = cash_balance
+        self._portfolio: List[Stock] = []
+
+    def add_stock(self, stock: Stock) -> None:
+        stock_copy = Stock(name=stock.name, price=stock.price, quantity=stock.quantity)
+        for pf in self._portfolio:
+            if pf.name == stock_copy.name:
+                pf.quantity += stock_copy.quantity
+                return
+        self._portfolio.append(stock_copy)
+
+    def remove_stock(self, stock: Stock) -> bool:
+        for i, pf in enumerate(self._portfolio):
+            if pf.name == stock.name and pf.quantity >= stock.quantity:
+                pf.quantity -= stock.quantity
+                if pf.quantity == 0:
+                    self._portfolio.pop(i)
+                return True
+        return False
+
+    def buy_stock(self, stock: Stock) -> bool:
+        cost = stock.price * stock.quantity
+        if cost > self._cash_balance:
+            return False
+        self.add_stock(stock)          # add_stock makes a copy
+        self._cash_balance -= cost
+        return True
+
+    def sell_stock(self, stock: Stock) -> bool:
+        if not self.remove_stock(stock):
+            return False
+        self._cash_balance += stock.price * stock.quantity
+        return True
+
+    def calculate_portfolio_value(self) -> float:
+        total = self._cash_balance
+        for s in self._portfolio:
+            total += s.price * s.quantity
+        return total
+
+    def get_portfolio_summary(self) -> Tuple[float, List[StockSummary]]:
+        summary = [StockSummary(name=s.name, value=self.get_stock_value(s))
+                   for s in self._portfolio]
+        return (self.calculate_portfolio_value(), summary)
+
+    def get_stock_value(self, stock: Stock) -> float:
+        return stock.price * stock.quantity
+
+    def get_portfolio(self) -> List[Stock]:
+        return list(self._portfolio)
+
+    def get_cash_balance(self) -> float:
+        return self._cash_balance
+
+    def set_portfolio(self, portfolio: List[Stock]) -> None:
+        self._portfolio = [Stock(name=s.name, price=s.price, quantity=s.quantity)
+                           for s in portfolio]

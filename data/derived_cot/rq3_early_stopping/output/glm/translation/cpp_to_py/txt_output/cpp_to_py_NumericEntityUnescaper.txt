@@ -1,0 +1,228 @@
+=== SOURCE CODE (cpp) ===
+
+#include <cctype>
+#include <sstream>
+
+#include <string>
+
+class NumericEntityUnescaper {
+public:
+    NumericEntityUnescaper() = default;
+    std::string replace(const std::string& input);
+    static bool is_hex_char(char c);
+};
+
+std::string NumericEntityUnescaper::replace(const std::string& input) {
+    std::string out;
+    size_t pos = 0;
+    size_t length = input.size();
+    if (input.empty())
+    {
+        return "";
+    }
+    while (pos < length - 2) {
+        if (input[pos] == '&' && input[pos + 1] == '#') {
+            size_t start = pos + 2;
+            bool is_hex = false;
+
+            if (start < length && (input[start] == 'x' || input[start] == 'X')) {
+                ++start;
+                is_hex = true;
+            }
+
+            if (start == length) {
+                return out; 
+            }
+
+            size_t end = start;
+            while (end < length && is_hex_char(input[end])) {
+                ++end;
+            }
+
+            if (end < length && input[end] == ';') {
+                try {
+                    int entity_value;
+                    std::string number_str = input.substr(start, end - start);
+                    std::stringstream ss;
+                    if (is_hex) {
+                        ss << std::hex << number_str;
+                    }
+                    else {
+                        ss << number_str;
+                    }
+                    ss >> entity_value;
+
+                    if (ss.fail()) {
+                        return out; 
+                    }
+
+                    out.push_back(static_cast<char>(entity_value));
+                    pos = end + 1;
+                    continue;
+                }
+                catch (const std::exception&) {
+                    return out; 
+                }
+            }
+        }
+
+        out.push_back(input[pos]);
+        ++pos;
+    }
+
+    return out;
+}
+
+bool NumericEntityUnescaper::is_hex_char(char c) {
+    return std::isdigit(c) || (std::tolower(c) >= 'a' && std::tolower(c) <= 'f');
+}
+
+
+=== REASONING ===
+<think>
+Let me translate the C++ code to Python, keeping the behavior identical.
+
+Let me analyze the code carefully:
+
+1. `NumericEntityUnescaper` class with:
+   - `replace(input)` method
+   - `is_hex_char(c)` static method
+
+2. `replace` method logic:
+   - If input is empty, return ""
+   - Loop while pos < length - 2
+   - If current char is '&' and next is '#', try to parse a numeric entity
+   - After '&#', check for 'x' or 'X' prefix (hex)
+   - If start == length after consuming 'x'/'X', return out (partial)
+   - Find end by scanning hex chars
+   - If end < length and input[end] == ';', try to parse the number
+   - If parsing fails, return out (partial)
+   - If successful, append the character and continue
+   - Otherwise, just append the current char and advance
+
+3. `is_hex_char` checks if char is a digit or a-f (case insensitive)
+
+Key behavioral details:
+- The loop condition `pos < length - 2` means if length is 0, we already returned. If length is 1 or 2, `length - 2` could underflow in C++ (size_t is unsigned). But since we check `input.empty()` first, length >= 1. If length is 1, length-2 would be a huge number (unsigned underflow). Wait, but we return "" for empty input. If length is 1, length-2 with size_t would underflow to a very large number. So the loop would actually continue for length 1 and 2.
+
+Wait, let me reconsider. In C++, `size_t` is unsigned. If `length` is 1, then `length - 2` would underflow to `SIZE_MAX - 1` (a very large number). So the loop would actually execute for positions 0 through a huge number. But then accessing `input[pos]` would be out of bounds... but actually in C++ `input[pos]` with pos >= length is undefined behavior.
+
+Hmm, but the code checks `input.empty()` and returns "" only for empty input. For input of length 1 or 2, the loop condition `pos < length - 2` with unsigned arithmetic would cause issues.
+
+Wait, actually for length 1: length - 2 = SIZE_MAX (unsigned underflow). So pos < SIZE_MAX would be true for pos=0, and then we'd access input[0], input[1] (out of bounds for length 1). This is a bug in the C++ code, but we need to replicate it.
+
+Actually wait - for length 1, the while condition `pos < length - 2` with size_t... length=1, length-2 wraps to a huge number. So pos=0 < huge_number is true. Then we check `input[pos] == '&' && input[pos + 1] == '#'`. input[0] is valid, input[1] is out of bounds. This is undefined behavior in C++.
+
+Hmm, but in practice, this would likely just read garbage or crash. In Python, we'd get an IndexError.
+
+But wait - maybe the intent is that for strings of length < 3, there can't be a complete entity (minimum is "&#x;" which is 4 chars, or "&#0;" which is 4 chars), so the loop shouldn't execute. The unsigned underflow bug means it actually would try to execute.
+
+Let me think about how to handle this. The instruction says "Keep behavior identical". In C++, this is undefined behavior for strings of length 1 or 2. I think the most reasonable interpretation is to replicate the intended behavior: for strings shorter than 3 characters, the loop doesn't execute and we just return the remaining characters.
+
+Actually, let me re-read: for length 0, we return "". For length 1, the C++ code has undefined behavior due to unsigned underflow. For length 2, same issue.
+
+But actually, wait. Let me reconsider. If length is 2, length-2 = 0, so pos < 0 is false (since pos starts at 0), so the loop doesn't execute. Then we fall through and return out, which is empty. But we haven't appended any characters to out!
+
+Hmm, that's a bug too - the remaining characters (after the loop) are never appended. The loop only appends characters one at a time as it goes, and when it exits, any remaining characters are lost.
+
+Wait, let me re-read the code more carefully:
+
+```cpp
+while (pos < length - 2) {
+    if (input[pos] == '&' && input[pos + 1] == '#') {
+        // ... try to parse entity
+    }
+    out.push_back(input[pos]);
+    ++pos;
+}
+return out;
+```
+
+So the loop processes characters from pos 0 to length-3 (inclusive). Characters at positions length-2 and length-1 are never processed and never added to the output.
+
+For example, if input is "ab", length=2, length-2=0, pos<0 is false (unsigned), so the loop doesn't execute, and we return "" (losing "ab").
+
+
+</think>
+
+=== RAW ANSWER ===
+```python
+class NumericEntityUnescaper:
+    def replace(self, input_str):
+        out = []
+        pos = 0
+        length = len(input_str)
+        if not input_str:
+            return ""
+        while pos < length - 2:
+            if input_str[pos] == '&' and input_str[pos + 1] == '#':
+                start = pos + 2
+                is_hex = False
+                if start < length and (input_str[start] == 'x' or input_str[start] == 'X'):
+                    start += 1
+                    is_hex = True
+                if start == length:
+                    return "".join(out)
+                end = start
+                while end < length and NumericEntityUnescaper.is_hex_char(input_str[end]):
+                    end += 1
+                if end < length and input_str[end] == ';':
+                    try:
+                        number_str = input_str[start:end]
+                        if is_hex:
+                            entity_value = int(number_str, 16)
+                        else:
+                            entity_value = int(number_str)
+                        out.append(chr(entity_value))
+                        pos = end + 1
+                        continue
+                    except (ValueError, OverflowError):
+                        return "".join(out)
+            out.append(input_str[pos])
+            pos += 1
+        return "".join(out)
+
+    @staticmethod
+    def is_hex_char(c):
+        return c.isdigit() or (c.lower() >= 'a' and c.lower() <= 'f')
+```
+
+=== TRANSLATED CODE (py) ===
+class NumericEntityUnescaper:
+    def replace(self, input_str):
+        out = []
+        pos = 0
+        length = len(input_str)
+        if not input_str:
+            return ""
+        while pos < length - 2:
+            if input_str[pos] == '&' and input_str[pos + 1] == '#':
+                start = pos + 2
+                is_hex = False
+                if start < length and (input_str[start] == 'x' or input_str[start] == 'X'):
+                    start += 1
+                    is_hex = True
+                if start == length:
+                    return "".join(out)
+                end = start
+                while end < length and NumericEntityUnescaper.is_hex_char(input_str[end]):
+                    end += 1
+                if end < length and input_str[end] == ';':
+                    try:
+                        number_str = input_str[start:end]
+                        if is_hex:
+                            entity_value = int(number_str, 16)
+                        else:
+                            entity_value = int(number_str)
+                        out.append(chr(entity_value))
+                        pos = end + 1
+                        continue
+                    except (ValueError, OverflowError):
+                        return "".join(out)
+            out.append(input_str[pos])
+            pos += 1
+        return "".join(out)
+
+    @staticmethod
+    def is_hex_char(c):
+        return c.isdigit() or (c.lower() >= 'a' and c.lower() <= 'f')

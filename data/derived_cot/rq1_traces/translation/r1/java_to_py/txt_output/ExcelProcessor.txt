@@ -1,0 +1,780 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+public class ExcelProcessor {
+
+    public ExcelProcessor() {
+    }
+
+    public List<List<Object>> readExcel(String fileName) {
+        List<List<Object>> data = new ArrayList<>();
+        try (FileInputStream file = new FileInputStream(fileName);
+             Workbook workbook = new XSSFWorkbook(file)) {
+            Sheet sheet = workbook.getSheetAt(0);
+            for (Row row : sheet) {
+                List<Object> rowData = new ArrayList<>();
+                for (Cell cell : row) {
+                    switch (cell.getCellType()) {
+                        case STRING:
+                            rowData.add(cell.getStringCellValue());
+                            break;
+                        case NUMERIC:
+                            rowData.add((int) cell.getNumericCellValue());
+                            break;
+                        default:
+                            rowData.add(null);
+                            break;
+                    }
+                }
+                data.add(rowData);
+            }
+        } catch (IOException e) {
+            return null;
+        }
+        return data;
+    }
+
+
+
+    public boolean writeExcel(List<List<Object>> data, String fileName) {
+        try (Workbook workbook = new XSSFWorkbook();
+             FileOutputStream fileOut = new FileOutputStream(fileName)) {
+            Sheet sheet = workbook.createSheet("Sheet1");
+            for (int i = 0; i < data.size(); i++) {
+                Row row = sheet.createRow(i);
+                List<Object> rowData = data.get(i);
+                for (int j = 0; j < rowData.size(); j++) {
+                    Cell cell = row.createCell(j);
+                    Object value = rowData.get(j);
+                    if (value instanceof String) {
+                        cell.setCellValue((String) value);
+                    }
+                    else if (value instanceof Integer) {
+                        cell.setCellValue((Integer) value);
+                    }
+                }
+            }
+            workbook.write(fileOut);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    public String processExcelData(int N, String saveFileName) {
+        List<List<Object>> data = readExcel(saveFileName);
+        if (data == null || N >= data.get(0).size()) {
+            return null;
+        }
+        List<List<Object>> newData = new ArrayList<>();
+        for (List<Object> row : data) {
+            List<Object> newRow = new ArrayList<>(row);
+            Object value = row.get(N);
+            if (value instanceof String) {
+                newRow.add(((String) value).toUpperCase());
+            }
+            else {
+                newRow.add(value);
+            }
+            newData.add(newRow);
+        }
+        String newFileName = saveFileName.replace(".xlsx", "_process.xlsx");
+        boolean success = writeExcel(newData, newFileName);
+        return success ? newFileName : null;
+    }
+}
+
+=== REASONING ===
+<think>
+
+We are going to use the openpyxl library for Excel processing in Python because it supports the .xlsx format (like XSSFWorkbook).
+ Steps:
+ 1. For reading: 
+    - We'll use openpyxl.load_workbook to read the file.
+    - We'll iterate over the rows and cells in the first sheet.
+    - For each cell, we check the data type. Note: In openpyxl, we can check the data type by `cell.data_type` or by using `isinstance(cell.value, ...)`. However, note that in openpyxl, numeric values are of type int, float, or even long. Also, note that dates are also numeric. But the original code casts to int. So we'll do similarly: if it's a string, we take string; if it's a number, we cast to int? But note: the original code uses `(int) cell.getNumericCellValue()` which truncates any decimal. We'll do similarly: convert to int (if it's a float, we truncate). However, note: the original code doesn't handle booleans or formulas? The original code only handles STRING and NUMERIC, and others become null.
+
+    But note: in openpyxl, the cell type can be 's' for string, 'n' for numeric, 'b' for boolean, etc. However, the value is stored appropriately. We can check the type of the value.
+
+    However, the original code uses:
+        case STRING: -> string
+        case NUMERIC: -> cast to int
+        default: null.
+
+    We'll do:
+        if cell.data_type == 's': string
+        elif cell.data_type == 'n': int(cell.value)   [but note: if the cell is a date, it will be numeric? But the original code treats it as numeric and converts to int? So we do the same?]
+
+    But caution: if the numeric cell has a fractional part, converting to int truncates. That's what the Java code does.
+
+ 2. For writing:
+    - We create a new workbook and a sheet.
+    - We iterate over the data (list of lists) and write each cell. We only handle String and Integer (as in Java). Other types? We don't set? But note: in the Java code, if the value is not String or Integer, it doesn't set any value? Then the cell remains blank? We'll do the same.
+
+ 3. The method `processExcelData`:
+    - Reads the Excel file.
+    - If the read returns None (error) or if the column index N is beyond the number of columns in the first row, return None.
+    - Then, for each row, we create a new row that is a copy of the original row and then append a new cell: 
+          if the value at column N is a string -> convert to uppercase and add
+          else -> add the value as is (which might be integer or null)
+    - Then write to a new file (with the name replaced: "_process.xlsx") and return the new file name if successful, else None.
+
+ 4. We must mimic the behavior exactly: including returning None on read error, returning None if N is out of bounds (using the first row to check the column count?), and returning None if write fails.
+
+ Implementation:
+
+ We'll create a class `ExcelProcessor` with the same methods.
+
+ Note: We must handle exceptions similarly: 
+    - In readExcel: on any IOException, return None. In Python, we'll catch IOError (or OSError) and also more specific ones? But the original catches IOException which includes many things. We'll catch Exception? Or better: catch IOError? Actually, openpyxl might throw its own exceptions? But note: when opening a file, we can get FileNotFound, etc. We'll catch Exception to be safe? But the original catches IOException only. We'll catch all exceptions? Actually, the original returns null on any IOException. We'll catch any exception and return None? Because in Python, the equivalent of IOException is IOError, but since Python 3.3, IOError is an alias for OSError. Also, openpyxl can throw InvalidFileException which is a kind of Exception? We want to catch any exception that might occur during reading? Because the original catches IOException and returns null. We'll mimic by catching Exception? Or just OSError? To be safe, we'll catch Exception and return None.
+
+ However, note: the original code catches IOException only. We can try to catch the more specific ones? But for simplicity, we'll catch all exceptions.
+
+ But note: the original code catches IOException and returns null. We'll do the same: catch Exception and return None.
+
+ However, in the write method, we return false on IOException. We'll return False on any exception? Similarly.
+
+ Let's write the code accordingly.
+
+ We'll use:
+   import openpyxl
+   from openpyxl import Workbook, load_workbook
+   from openpyxl.utils import get_column_letter
+
+ But note: we don't need get_column_letter for this.
+
+ Steps:
+
+  readExcel(fileName):
+      try:
+          wb = load_workbook(filename=fileName, read_only=True, data_only=True) 
+          # We use read_only for performance? But note: the original didn't. However, the file might be large? 
+          # But note: the original code uses XSSFWorkbook which loads the entire file. So we don't use read_only? 
+          # Also, note: we need to iterate over rows and cells arbitrarily. Let's not use read_only? Because read_only is for sequential reading and might not be necessary.
+          # Also, data_only=True to get the computed value? Because if the cell has a formula, we want the value? The original code uses getCellType() and then gets the value accordingly. In openpyxl, if we use data_only=True, then the value is the last computed value? But note: the original code doesn't mention formulas. It uses the cell type. In openpyxl, the type of a formula cell is 'f', but if data_only=True then we get the value and the type of the value? Actually, openpyxl will set the cell.value to the computed value and the cell.data_type to the type of the computed value? So we can use data_only=True? But note: the original code doesn't set data_only? In Apache POI, by default, it reads the stored value? Actually, the original code uses cell.getStringCellValue() for string and cell.getNumericCellValue() for numeric. So it's reading the stored value? So we want data_only=True? 
+
+          However, note: without data_only, openpyxl returns the formula string for a formula cell? We don't want that? We want the value? The original code would have treated a formula cell as numeric or string? Actually, the original code doesn't handle formula cells: because the cell type would be FORMULA? Then it would fall into default -> null. 
+
+          But wait: in Apache POI, if you use cell.getCellType() it returns FORMULA for formula cells? Then we would get null? But if we want the cached value, we need to use cell.getCachedFormulaResultType()? But the original code doesn't do that. So it returns null for formulas? 
+
+          Therefore, we don't need data_only? Because we want to get the cell type as stored? Actually, no: the cell type for a formula cell is FORMULA, but then we don't get the value? 
+
+          The original code only handles STRING and NUMERIC. So we can do the same: if the cell type is not string or numeric, we put null. 
+
+          In openpyxl, we can get the cell type? The attribute is `data_type`. The possible values are: 
+            's' for string, 
+            'n' for numeric, 
+            'b' for boolean, 
+            'f' for formula, 
+            'inlineStr' for inline string? 
+            and also 'e' for error? 
+
+          We want:
+            if cell.data_type == 's': then string
+            elif cell.data_type == 'n': then convert the value to int? But note: the value might be float? Then we do int(cell.value) -> truncate.
+            else: None
+
+          However, note: for formula cells, we want to skip? So we don't get the computed value? That matches the original? Because the original didn't handle FORMULA type? 
+
+          Therefore, we don't use data_only? We use the cell.data_type.
+
+          But note: without data_only, the formula cells are stored as formula and the value is the formula string? Actually, no: the value of a formula cell without data_only is the last computed value? Actually, no: by default, openpyxl loads the value? The documentation says: 
+            "By default, openpyxl does not evaluate formulae, but the data_only flag can be set to True to read the value stored at the last time Excel read the sheet."
+
+          So if we want to mimic the original behavior (which ignores formula cells and returns null for them) we should not set data_only? Then the formula cells will have type 'f'? Then we put None? 
+
+          But wait: without data_only, what is the value of a formula cell? It is the formula string? Then we would get a string? But that's not what we want because the original code doesn't handle formulas. 
+
+          Actually, the original code uses:
+             cell.getCellType() 
+          In Apache POI, for a formula cell, getCellType() returns CellType.FORMULA? Then we fall into default -> null.
+
+          Therefore, we don't set data_only? Then openpyxl will set cell.data_type to 'f' for formula? Then we put None? That's correct.
+
+          However, without data_only, what is the value for a numeric cell? It is the number (as float or int). And for a string cell, it is the string? So we are safe.
+
+          So: we don't set data_only? Actually, we can leave it as default? So we don't set it? The default is data_only=False? Then the formula cells are of type 'f'? Then we return None? Correct.
+
+      Steps:
+          wb = load_workbook(fileName)
+          sheet = wb.worksheets[0]   # get first sheet
+          data = []
+          for row in sheet.iter_rows():   # iterates over all rows in the sheet
+              rowData = []
+              for cell in row:
+                  if cell.data_type == 's':
+                      rowData.append(cell.value)
+                  elif cell.data_type == 'n':
+                      # Convert to int? But note: the original code casts to int. This truncates decimals.
+                      # If the value is an integer, then converting to int is safe. If it's float, truncates.
+                      # But what if the value is a date? Then it's numeric? Then we truncate? That might be wrong? 
+                      # However, the original code does the same: truncates. So we do:
+                      try:
+                          rowData.append(int(cell.value))
+                      except:
+                          # In case of overflow? or if it's too big? But the original would have truncated? 
+                          # Actually, the original casts to int which truncates. So we do int(cell.value) and if there's an error? Then we should do the same? But the original doesn't throw? It truncates? 
+                          # Let's hope it's a number. If not, we might get an exception? Then we should return None? But the original doesn't. It just truncates? 
+                          # We'll do int(cell.value) and if it fails, we set None? But the original doesn't. It just truncates? So we do the same: truncate? 
+                          rowData.append(None)   # Or maybe we should do the same as default? But the cell is numeric? So we should not fail? 
+                          # Actually, if it's a date, cell.value is a datetime? Then converting to int? That gives the integer representation? But that's not what the original does? 
+                          # The original code: cell.getNumericCellValue() returns a double, then cast to int? So it truncates? 
+                          # For a date, that double is the number of days since epoch? Then we truncate? 
+                          # So we do the same? 
+                          # But note: we might get a datetime? How does openpyxl represent dates? It returns a datetime object? 
+                          # Actually, openpyxl returns a datetime object for cells that are formatted as dates? But the data_type is 'n'? 
+                          # Then we are trying to convert a datetime to int? That fails? 
+                          # Therefore, we need to check: if the cell is a date? 
+                          # How? We can check: if cell.is_date? 
+                          # Then what? The original code doesn't treat dates differently? So we should truncate? But we cannot convert datetime to int? 
+                          # Therefore, we must avoid that? 
+                          # We can check: 
+                          #   if cell.data_type == 'n' and not cell.is_date:
+                          #       int(cell.value)
+                          #   else if cell.data_type == 'n' and cell.is_date:
+                          #       then we don't truncate? But the original would truncate? 
+                          # Actually, the original code doesn't know about dates? It treats them as numeric? Then truncates? 
+                          # But in Apache POI, if the cell is a date, cell.getNumericCellValue() returns the same double? Then we cast to int? 
+                          # So we get an integer? 
+                          # But in openpyxl, for a date, cell.value is a datetime? Then we cannot cast to int? 
+                          # Therefore, we must convert the date to the same representation? 
+                          # We can do: 
+                          #   if cell.is_date:
+                          #       value = cell.value
+                          #       then convert to Excel serial number? But that's a float? Then we cast to int? 
+                          # But note: the original code doesn't know about dates? So we do the same? 
+                          # Alternatively, we can use the same method as Apache POI: use the internal numeric value? 
+                          # How? In openpyxl, we can get the internal value? It's stored as the number? 
+                          # Actually, openpyxl doesn't store the internal value? It converts to datetime? 
+                          # How did we get into this? 
+                          # Since the requirement is to mimic the original, and the original doesn't handle dates? Then we treat dates as numeric? But then we get a datetime? 
+                          # This is a problem.
+
+          We must reconsider: 
+            In Apache POI, for a cell that is a date, it is stored as a numeric? Then getCellType() returns CellType.NUMERIC? Then we cast the numeric value to int? 
+            So we should do the same? 
+
+          How to get the raw value? 
+            In openpyxl, we can use: cell.internal_value? But that doesn't exist? 
+          Alternatively, we can use:
+            cell.value   # returns the converted value (datetime for dates)
+            but we want the raw value? 
+
+          Actually, we can set load_workbook to not convert dates? 
+          There is an option: `data_only` and `keep_vba`? But we don't see an option for dates? 
+
+          Actually, openpyxl automatically converts dates? There is a way to disable? 
+          We can use: 
+            wb = load_workbook(fileName, data_only=False, keep_vba=False, read_only=False, keep_links=False)
+            but still, dates are converted? 
+
+          How about: 
+            We check if the cell is a date? Then we use the numeric representation? 
+            But how? 
+            We can use: 
+                if cell.is_date:
+                    # convert the date to the Excel serial number? 
+                    # But that's what we want? 
+                    # How? 
+                    # Actually, openpyxl doesn't store the serial number? It converts to datetime? 
+                    # Then we have to convert back? 
+                    # We can use: 
+                    #   from openpyxl.utils.datetime import to_excel
+                    #   value = to_excel(cell.value)
+                    # But note: the to_excel function converts a datetime to an Excel serial number? 
+                    # Then we cast to int? 
+
+          However, this adds complexity. And note: the original code didn't handle dates? It treated them as numeric? Then truncated? 
+
+          Therefore, we must do the same? But we can't because we get a datetime? 
+
+          Alternatively, we can change our approach: 
+            Instead of relying on cell.data_type, we check the type of cell.value? 
+            Because: 
+                if type(cell.value) is str: then string?
+                elif type(cell.value) is int: then we use int? 
+                elif type(cell.value) is float: then we cast to int? 
+                else: None? 
+
+          But wait: what about booleans? The original code doesn't handle them? Then we put None? 
+
+          And for dates? They are of type datetime? Then we would fall into else? Then None? That's not what the original does? 
+
+          Therefore, we must handle dates? 
+
+          How about: 
+            We check the cell.number_format? If it looks like a date? But that's complex? 
+
+          Given the complexity and the fact that the original code didn't handle dates (it treated them as numeric and then truncated) but we cannot get the numeric value? 
+
+          We decide to do: 
+            We use the following:
+                if cell.data_type == 's':
+                    value = cell.value
+                elif cell.data_type == 'n':
+                    if cell.is_date:
+                        # Convert the datetime to the Excel serial number? But note: the original code would have returned the serial number truncated to int?
+                        # But the original code didn't know it was a date? It treated it as any numeric? 
+                        # So we should do the same? 
+                        # How to get the serial number? 
+                        # Actually, we can't easily without the base date? 
+                        # Alternatively, we can use the fact that in Excel, dates are stored as floats? 
+                        # But openpyxl already converted it? 
+                        # Therefore, we must get the raw value? 
+
+          After research: we can use `cell.internal_value`? But that doesn't exist? 
+
+          Alternatively, we can use: 
+            from openpyxl.utils.datetime import from_excel
+            # But we want the opposite? 
+
+          Actually, we can avoid converting dates by setting the `data_only` to True? But then we get the last computed value? And for a date cell, we get a datetime? Then we are back to the same problem? 
+
+          Another idea: use `read_only` mode? In read_only mode, we can get the raw value? 
+            wb = load_workbook(fileName, read_only=True)
+            then cell.value returns the raw value? For a date, it returns the float? 
+
+          Let me test: 
+            In read_only mode, a date cell returns a float? 
+
+          According to the openpyxl documentation: 
+            "In read-only mode, the cell value is the raw value as stored by Excel. For example, dates are stored as numbers and formatted by Excel accordingly."
+
+          So we can do:
+            wb = load_workbook(fileName, read_only=True)
+            then for a date cell, cell.value is a float? 
+
+          Then we can do: 
+            if cell.data_type == 's':
+                value = cell.value
+            elif cell.data_type == 'n':
+                value = int(cell.value)   # truncates
+            else:
+                value = None
+
+          But note: in read_only mode, we cannot use cell.is_date? Because it doesn't load the formatting? 
+
+          And the data_type? It should be 'n' for numeric? 
+
+          So we can do: 
+            wb = load_workbook(fileName, read_only=True)
+            then iterate:
+                for row in sheet.rows:   # note: in read_only, we use sheet.rows which is a generator
+                ...
+
+          But note: the original code didn't use read_only? But the behavior is what we want? 
+
+          Therefore, we decide to use read_only=True? Then we get the raw values? Then we can do the same as the original? 
+
+          However, note: the original code didn't use read_only? But we are free to change the reading method as long as the behavior is the same? 
+
+          So let's use read_only mode? 
+
+          Steps for readExcel:
+            try:
+                wb = load_workbook(fileName, read_only=True)
+                sheet = wb.active   # or wb.worksheets[0]? 
+                # Actually, we want the first sheet? 
+                sheet = wb.worksheets[0]   # index 0
+
+                data = []
+                for row in sheet.rows:   # iterates over all rows that contain data? 
+                    rowData = []
+                    for cell in row:
+                        if cell.data_type == 's':
+                            rowData.append(cell.value)
+                        elif cell.data_type == 'n':
+                            # Try to convert to int? But note: the value might be float? 
+                            # We truncate? 
+                            try:
+                                # If it's an integer, we can convert to int? But if it's a float, truncate?
+                                # But note: the original code casts a double to int -> truncates? 
+                                rowData.append(int(cell.value))
+                            except Exception as e:
+                                # If there's an error (like too big? or not a number? but it should be numeric) 
+                                # But what if it's NaN? Then we get an exception? Then we put None? 
+                                rowData.append(None)
+                        else:
+                            rowData.append(None)
+                    data.append(rowData)
+                wb.close()
+                return data
+            except Exception as e:
+                return None
+
+          But note: the original code iterates over all rows, including empty rows? Actually, in Apache POI, `for (Row row : sheet)` iterates over rows that are defined (not skipped). Similarly, openpyxl read_only mode iterates only over rows that are not empty? 
+
+          However, the original code also iterates over rows that are empty? Actually, no: in Apache POI, the row iterator might skip rows that are entirely empty? Actually, it depends on the `sheet.rowIterator()` which by default skips empty rows? 
+
+          But wait: the code uses `for (Row row : sheet)` which uses `sheet.rowIterator()`? And according to the documentation: 
+            "The iterator will skip empty rows if the user has configured the sheet to be in 'sparse' mode. This is the default."
+
+          So empty rows are skipped? 
+
+          In openpyxl, in read_only mode, `sheet.rows` returns a generator that iterates over all rows that have data? So it skips empty rows? 
+
+          Therefore, we are consistent? 
+
+          However, note: what if a row has some cells empty? Then the row is included? And the empty cells? In openpyxl, in read_only mode, the row is a tuple of cells? Only the cells that have data? 
+
+          But wait: the original code iterates over each row and then over each cell in the row? And if a cell is missing? Then it skips? Actually, no: in Apache POI, `row` can have null cells? But the code does `for (Cell cell : row)` which iterates over defined cells? 
+
+          Therefore, we might have a discrepancy: 
+            In Apache POI, a row might have 10 cells, but if the first and last are defined and the middle are empty, then the row will have two cells? 
+            In openpyxl, in read_only mode, the row will have two cells? 
+
+          But note: the original code uses `row` which is an object representing a row? And then iterates over `row` which gives the defined cells? 
+
+          So we are consistent? 
+
+          However, what about columns? The original code doesn't skip columns? It goes from the first to the last defined cell? 
+
+          So we are okay? 
+
+          But note: the original code might not get contiguous cells? Actually, the row is represented as a sparse row? But the iteration is over the defined cells? 
+
+          Similarly, openpyxl read_only mode returns rows that are sparse? 
+
+          Therefore, we'll use read_only mode? 
+
+          However, note: the write method then writes the data as a contiguous block? So the empty cells are not written? That's the same as the original? 
+
+          But wait: the original write method: 
+            for (int i = 0; i < data.size(); i++) {
+                Row row = sheet.createRow(i);
+                List<Object> rowData = data.get(i);
+                for (int j = 0; j < rowData.size(); j++) {
+                    Cell cell = row.createCell(j);
+                    ... 
+                }
+            }
+
+          This writes contiguous rows and columns? So if the data has a row with two elements, then it writes two cells? 
+
+          Similarly, in openpyxl, we write contiguous rows? 
+
+          But note: the original read method might skip empty rows? Then the data list has fewer rows? Then when writing, we write only those rows? 
+
+          So we are consistent? 
+
+          Therefore, we decide to use read_only=True.
+
+  writeExcel(data, fileName):
+        We create a new Workbook, then create a sheet named "Sheet1".
+        Then we iterate over the data (list of rows) and write each cell? 
+        We only write if the value is String or Integer? 
+
+        Steps:
+          wb = Workbook()
+          sheet = wb.active
+          sheet.title = "Sheet1"   # the original creates a sheet named "Sheet1"
+
+          for i, rowData in enumerate(data):
+              row = sheet.append([])   # but we want to set by index? 
+              # Alternatively, we can create a row: 
+              row = sheet.cell(row=i+1, column=1)   # no, we need to create a row?
+
+          Actually, we can do:
+              for i, rowData in enumerate(data):
+                  for j, value in enumerate(rowData):
+                      if value is not None:
+                          if isinstance(value, str):
+                              cell = sheet.cell(row=i+1, column=j+1, value=value)
+                          elif isinstance(value, int):
+                              cell = sheet.cell(row=i+1, column=j+1, value=value)
+                          # else: skip? But the original doesn't set the cell? 
+                      # else: skip? 
+
+          But note: the original code creates the cell always? But if the value is not string or integer, it doesn't set the value? So the cell remains empty? 
+
+          We can do the same? 
+
+          However, note: the original creates the cell? So we must create the cell? 
+
+          But if we do `sheet.cell(...)` then the cell is created? 
+
+          But what if the value is None? Then we create a cell and leave it blank? 
+
+          Actually, in the original code, it creates the cell and then sets the value only if string or integer? So the cell exists? 
+
+          Therefore, we must create every cell? 
+
+          We can do:
+            for i in range(len(data)):
+                row = data[i]
+                for j in range(len(row)):
+                    value = row[j]
+                    cell = sheet.cell(row=i+1, column=j+1)
+                    if isinstance(value, str):
+                        cell.value = value
+                    elif isinstance(value, int):
+                        cell.value = value
+                    # else: leave blank
+
+          But note: the original creates the row and then the cell? 
+
+          Alternatively, we can do:
+            for i, row in enumerate(data):
+                for j, value in enumerate(row):
+                    if value is not None:
+                        if isinstance(value, str) or isinstance(value, int):
+                            cell = sheet.cell(row=i+1, column=j+1, value=value)
+
+          But that doesn't create a cell for None? 
+
+          So we must create the cell regardless? 
+
+          We can do:
+            for i, row in enumerate(data):
+                for j, value in enumerate(row):
+                    cell = sheet.cell(row=i+1, column=j+1)
+                    if isinstance(value, str):
+                        cell.value = value
+                    elif isinstance(value, int):
+                        cell.value = value
+
+          This creates every cell? 
+
+          But what if we have a row that has 10 cells? Then we create 10 cells? 
+
+          This matches the original? 
+
+          Then we save: wb.save(fileName)
+
+          And return True? 
+
+          If any exception? return False.
+
+  processExcelData(N, saveFileName):
+      Same as the original.
+
+  Note: We must be cautious: the original uses the first row to check the column count? 
+        if (data == null || N >= data.get(0).size()) 
+        So we check: if data is None or if N >= len(data[0])? 
+
+      Then we create newData: 
+          for each row in data:
+              newRow = a copy of row (list copy: newRow = row[:] or list(row))
+              then get the value at column N: 
+                 if it's a string: convert to uppercase and append
+                 else: append the value as is.
+
+      Then write to newFileName = saveFileName.replace(".xlsx", "_process.xlsx")
+      Then if write successful, return newFileName, else None.
+
+  Let's code accordingly.
+
+  Important: We must use the same class and method names? 
+
+  We'll create:
+
+      class ExcelProcessor:
+          def __init__(self):
+              pass
+
+          def readExcel(self, fileName):
+              # as above with read_only mode
+
+          def writeExcel(self, data, fileName):
+              # as above
+
+          def processExcelData(self, N, saveFileName):
+              # as described
+
+  Let's code accordingly.
+
+  Note: We must use openpyxl. So we need to install it? But the problem doesn't require running? We just write the code.
+
+  We'll write the code accordingly.
+
+  But note: the original reads only the first sheet? So we do.
+
+  Let's code.
+
+</think>
+
+=== RAW ANSWER ===
+
+To translate the given Java code to Python while maintaining identical behavior, we use the `openpyxl` library for Excel processing. The translation ensures that:
+- Inputs/outputs, side effects, edge cases, and exceptions are handled identically.
+- The code remains non-idiomatic Python where necessary to preserve behavior.
+
+### Approach
+1. **Reading Excel Files (`readExcel` method)**:
+   - Use `openpyxl` in read-only mode to efficiently read large files.
+   - Only handle string and numeric cell types (converting numeric values to integers by truncation), mirroring the Java code's behavior. Other types (like formulas, booleans) result in `None`.
+   - Return `None` on any read errors.
+
+2. **Writing Excel Files (`writeExcel` method)**:
+   - Create a new workbook and sheet named "Sheet1".
+   - Iterate through the data list to write each cell, handling only string and integer types (other types are skipped, leaving cells blank).
+   - Return `False` on any write errors.
+
+3. **Processing Excel Data (`processExcelData` method)**:
+   - Read the input file and validate the column index `N`.
+   - For each row, append a new cell containing the uppercase string (if the `N`-th cell is a string) or the original value (if numeric).
+   - Write the processed data to a new file with "_process.xlsx" suffix.
+   - Return the new filename on success or `None` on failure.
+
+### Solution Code
+```python
+import openpyxl
+from openpyxl import Workbook, load_workbook
+
+class ExcelProcessor:
+
+    def __init__(self):
+        pass
+
+    def readExcel(self, fileName):
+        try:
+            wb = load_workbook(fileName, read_only=True)
+            sheet = wb.worksheets[0]
+            data = []
+            for row in sheet.rows:
+                rowData = []
+                for cell in row:
+                    if cell.data_type == 's':
+                        rowData.append(cell.value)
+                    elif cell.data_type == 'n':
+                        try:
+                            rowData.append(int(cell.value))
+                        except:
+                            rowData.append(None)
+                    else:
+                        rowData.append(None)
+                data.append(rowData)
+            wb.close()
+            return data
+        except Exception as e:
+            return None
+
+    def writeExcel(self, data, fileName):
+        try:
+            wb = Workbook()
+            sheet = wb.active
+            sheet.title = "Sheet1"
+            for i, rowData in enumerate(data):
+                for j, value in enumerate(rowData):
+                    cell = sheet.cell(row=i+1, column=j+1)
+                    if isinstance(value, str):
+                        cell.value = value
+                    elif isinstance(value, int):
+                        cell.value = value
+            wb.save(fileName)
+            return True
+        except Exception as e:
+            return False
+
+    def processExcelData(self, N, saveFileName):
+        data = self.readExcel(saveFileName)
+        if data is None or not data or N >= len(data[0]):
+            return None
+        newData = []
+        for row in data:
+            newRow = list(row)
+            value = newRow[N]
+            if isinstance(value, str):
+                newRow.append(value.upper())
+            else:
+                newRow.append(value)
+            newData.append(newRow)
+        newFileName = saveFileName.replace(".xlsx", "_process.xlsx")
+        success = self.writeExcel(newData, newFileName)
+        return newFileName if success else None
+```
+
+### Explanation
+1. **Reading Excel Files**:
+   - The `readExcel` method uses `openpyxl`'s read-only mode to handle large files efficiently.
+   - It processes each cell: strings are added as-is, numeric values are truncated to integers, and other types result in `None`.
+   - Returns `None` on any read error.
+
+2. **Writing Excel Files**:
+   - The `writeExcel` method creates a new workbook and sheet named "Sheet1".
+   - It writes each cell value from the input data, handling only strings and integers (other types leave cells blank).
+   - Returns `False` on any write error.
+
+3. **Processing Data**:
+   - `processExcelData` reads the input file, checks for valid column index `N`, and processes each row by appending the uppercase version of the string at column `N` (or the original value if not a string).
+   - The processed data is saved to a new file with "_process.xlsx" suffix. The new filename is returned on success; otherwise, `None` is returned.
+
+This translation maintains the original Java code's behavior while leveraging Python's capabilities and the `openpyxl` library for Excel handling.
+
+=== TRANSLATED CODE (py) ===
+import openpyxl
+from openpyxl import Workbook, load_workbook
+
+class ExcelProcessor:
+
+    def __init__(self):
+        pass
+
+    def readExcel(self, fileName):
+        try:
+            wb = load_workbook(fileName, read_only=True)
+            sheet = wb.worksheets[0]
+            data = []
+            for row in sheet.rows:
+                rowData = []
+                for cell in row:
+                    if cell.data_type == 's':
+                        rowData.append(cell.value)
+                    elif cell.data_type == 'n':
+                        try:
+                            rowData.append(int(cell.value))
+                        except:
+                            rowData.append(None)
+                    else:
+                        rowData.append(None)
+                data.append(rowData)
+            wb.close()
+            return data
+        except Exception as e:
+            return None
+
+    def writeExcel(self, data, fileName):
+        try:
+            wb = Workbook()
+            sheet = wb.active
+            sheet.title = "Sheet1"
+            for i, rowData in enumerate(data):
+                for j, value in enumerate(rowData):
+                    cell = sheet.cell(row=i+1, column=j+1)
+                    if isinstance(value, str):
+                        cell.value = value
+                    elif isinstance(value, int):
+                        cell.value = value
+            wb.save(fileName)
+            return True
+        except Exception as e:
+            return False
+
+    def processExcelData(self, N, saveFileName):
+        data = self.readExcel(saveFileName)
+        if data is None or not data or N >= len(data[0]):
+            return None
+        newData = []
+        for row in data:
+            newRow = list(row)
+            value = newRow[N]
+            if isinstance(value, str):
+                newRow.append(value.upper())
+            else:
+                newRow.append(value)
+            newData.append(newRow)
+        newFileName = saveFileName.replace(".xlsx", "_process.xlsx")
+        success = self.writeExcel(newData, newFileName)
+        return newFileName if success else None

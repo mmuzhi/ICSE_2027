@@ -1,0 +1,638 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.io.*;
+import java.nio.file.*;
+import java.util.zip.*;
+import java.util.logging.*;
+
+public class ZipFileProcessor {
+
+    private static final Logger logger = Logger.getLogger(ZipFileProcessor.class.getName());
+    private final Path zipFilePath;
+
+    public ZipFileProcessor(String zipFileName) {
+        this.zipFilePath = Paths.get(zipFileName);
+    }
+
+    ZipFile readZipFile() {
+        if (Files.notExists(zipFilePath)) {
+            logger.log(Level.SEVERE, "Zip file does not exist: " + zipFilePath.toAbsolutePath());
+            return null;
+        }
+        try {
+            return new ZipFile(zipFilePath.toFile());
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Failed to read the zip file: " + zipFilePath.toAbsolutePath(), e);
+            return null;
+        }
+    }
+
+    public boolean extractAll(String outputDir) {
+        Path outputDirPath = Paths.get(outputDir);
+        try (ZipFile zipFile = readZipFile()) {
+            if (zipFile == null) return false;
+
+            if (Files.notExists(outputDirPath)) {
+                try {
+                    Files.createDirectories(outputDirPath);
+                    logger.info("Created output directory: " + outputDirPath.toAbsolutePath());
+                } catch (IOException e) {
+                    logger.log(Level.SEVERE, "Failed to create output directory: " + outputDirPath.toAbsolutePath(), e);
+                    return false;
+                }
+            }
+
+            zipFile.stream().forEach(entry -> {
+                Path filePath = outputDirPath.resolve(entry.getName());
+                try {
+                    if (entry.isDirectory()) {
+                        if (Files.notExists(filePath)) {
+                            Files.createDirectories(filePath);
+                            logger.info("Created directory: " + filePath.toAbsolutePath());
+                        }
+                    } else {
+                        try (InputStream in = zipFile.getInputStream(entry);
+                             OutputStream out = Files.newOutputStream(filePath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                            byte[] buffer = new byte[1024];
+                            int len;
+                            while ((len = in.read(buffer)) > 0) {
+                                out.write(buffer, 0, len);
+                            }
+                            logger.info("Extracted file: " + filePath.toAbsolutePath());
+                        }
+                    }
+                } catch (IOException e) {
+                    logger.log(Level.SEVERE, "Failed to process entry: " + entry.getName(), e);
+                }
+            });
+
+            return true;
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Failed to extract files from zip: " + zipFilePath.toAbsolutePath(), e);
+            return false;
+        }
+    }
+
+    public boolean extractFile(String fileName, String outputDir) {
+        Path outputDirPath = Paths.get(outputDir);
+        Path filePath = outputDirPath.resolve(fileName);
+        try (ZipFile zipFile = readZipFile()) {
+            if (zipFile == null) return false;
+
+            ZipEntry entry = zipFile.getEntry(fileName);
+            if (entry == null) {
+                logger.warning("File not found in zip: " + fileName);
+                return false;
+            }
+
+            if (Files.notExists(filePath.getParent())) {
+                try {
+                    Files.createDirectories(filePath.getParent());
+                    logger.info("Created parent directory: " + filePath.getParent().toAbsolutePath());
+                } catch (IOException e) {
+                    logger.log(Level.SEVERE, "Failed to create parent directory: " + filePath.getParent().toAbsolutePath(), e);
+                    return false;
+                }
+            }
+
+            try (InputStream in = zipFile.getInputStream(entry);
+                 OutputStream out = Files.newOutputStream(filePath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                byte[] buffer = new byte[1024];
+                int len;
+                while ((len = in.read(buffer)) > 0) {
+                    out.write(buffer, 0, len);
+                }
+                logger.info("Extracted file: " + filePath.toAbsolutePath());
+            }
+
+            return true;
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Failed to extract file: " + fileName, e);
+            return false;
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+Let me translate the Java code to Python, keeping behavior identical.
+
+Key things to handle:
+1. Java's `ZipFile` - Python has `zipfile.ZipFile`
+2. Java's `Logger` - Python has `logging`
+3. Java's `Path` - Python has `pathlib.Path`
+4. Java's `Files` operations - Python's `pathlib` and `os`
+5. The `readZipFile` method returns a ZipFile object (or null) - in Python, zipfile.ZipFile is a context manager
+6. The `extractAll` method uses try-with-resources on the ZipFile returned from `readZipFile`
+7. Error handling and logging levels
+
+Let me think about the behavior carefully:
+
+1. `readZipFile()`: Checks if file exists, if not logs SEVERE and returns None. If exists, tries to open as ZipFile, on IOException logs SEVERE and returns None.
+
+2. `extractAll(outputDir)`: 
+   - Calls readZipFile()
+   - If null, returns False
+   - Creates output directory if it doesn't exist
+   - Iterates over entries, creates directories or extracts files
+   - If an entry fails, it logs the error but continues processing other entries
+   - Returns True at the end (even if some entries failed)
+   - The try-with-resources on ZipFile means it closes after
+
+3. `extractFile(fileName, outputDir)`:
+   - Calls readZipFile()
+   - If null, returns False
+   - Gets specific entry by name
+   - If not found, logs WARNING and returns False
+   - Creates parent directories if needed
+   - Extracts the file
+   - Returns True on success
+
+Important behavioral notes:
+- In Java, `readZipFile()` returns a `ZipFile` object that is NOT in a try-with-resources. The caller is responsible for closing it. In `extractAll` and `extractFile`, the returned ZipFile IS used in try-with-resources.
+- In Python, `zipfile.ZipFile` is also a context manager.
+- The `readZipFile` method in Java doesn't close the ZipFile - it returns it for the caller to manage. In Python, we need to replicate this. But Python's ZipFile can be used without a context manager too - just call `zipfile.ZipFile(path)` and it returns an open ZipFile that needs to be closed manually.
+
+Wait, but there's a subtlety. In Java, `readZipFile()` returns a `ZipFile` object. The caller then uses it in try-with-resources. In Python, we can return a `zipfile.ZipFile` object and the caller can use it as a context manager.
+
+But wait - in the Java code, `readZipFile()` is called inside `try (ZipFile zipFile = readZipFile())`. This means the ZipFile is used as a resource in try-with-resources. In Python, we can do `with readZipFile() as zip_file:` but that requires the returned object to be a context manager. `zipfile.ZipFile` IS a context manager, so we can do:
+
+```python
+zip_file = readZipFile()
+if zip_file is None:
+    return False
+try:
+    ...
+finally:
+    zip_file.close()
+```
+
+Or we could use it as a context manager. Let me think about the cleanest approach.
+
+Actually, looking at the Java more carefully:
+
+```java
+try (ZipFile zipFile = readZipFile()) {
+    if (zipFile == null) return false;
+    ...
+}
+```
+
+In Java, try-with-resources with a null resource is fine - it just doesn't try to close null. In Python, `with None:` would raise an error. So we need to handle this differently.
+
+Let me structure the Python code to match the behavior:
+
+```python
+import logging
+import os
+import zipfile
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+class ZipFileProcessor:
+
+    def __init__(self, zipFileName):
+        self.zipFilePath = Path(zipFileName)
+
+    def readZipFile(self):
+        if not self.zipFilePath.exists():
+            logger.log(logging.ERROR, "Zip file does not exist: " + str(self.zipFilePath.resolve()))
+            return None
+        try:
+            return zipfile.ZipFile(str(self.zipFilePath), 'r')
+        except (IOError, OSError) as e:
+            logger.log(logging.ERROR, "Failed to read the zip file: " + str(self.zipFilePath.resolve()), exc_info=e)
+            return None
+
+    def extractAll(self, outputDir):
+        outputDirPath = Path(outputDir)
+        zipFile = self.readZipFile()
+        if zipFile is None:
+            return False
+        try:
+            if not outputDirPath.exists():
+                try:
+                    outputDirPath.mkdir(parents=True, exist_ok=True)
+                    logger.info("Created output directory: " + str(outputDirPath.resolve()))
+                except OSError as e:
+                    logger.log(logging.ERROR, "Failed to create output directory: " + str(outputDirPath.resolve()), exc_info=e)
+                    return False
+
+            for entry in zipFile.infolist():
+                filePath = outputDirPath / entry.filename
+                try:
+                    if entry.is_dir():
+                        if not filePath.exists():
+                            filePath.mkdir(parents=True, exist_ok=True)
+                            logger.info("Created directory: " + str(filePath.resolve()))
+                    else:
+                        # Ensure parent directories exist
+                        filePath.parent.mkdir(parents=True, exist_ok=True)
+                        with zipFile.open(entry) as inStream, open(filePath, 'wb') as outStream:
+                            buffer = inStream.read(1024)
+                            while buffer:
+                                outStream.write(buffer)
+                                buffer = inStream.read(1024)
+                        logger.info("Extracted file: " + str(filePath.resolve()))
+                except (IOError, OSError) as e:
+                    logger.log(logging.ERROR, "Failed to process entry: " + entry.filename, exc_info=e)
+
+            return True
+        except (IOError, OSError) as e:
+            logger.log(logging.ERROR, "Failed to extract files from zip: " + str(self.zipFilePath.resolve()), exc_info=e)
+            return False
+        finally:
+            zipFile.close()
+
+    def extractFile(self, fileName, outputDir):
+        outputDirPath = Path(outputDir)
+        filePath = outputDirPath / fileName
+        zipFile = self.readZipFile()
+        if zipFile is None:
+            return False
+        try:
+            try:
+                entry = zipFile.getinfo(fileName)
+            except KeyError:
+                entry = None
+            if entry is None:
+                logger.warning("File not found in zip: " + fileName)
+                return False
+
+            if not filePath.parent.exists():
+                try:
+                    filePath.parent.mkdir(parents=True, exist_ok=True)
+                    logger.info("Created parent directory: " + str(filePath.parent.resolve()))
+                except OSError as e:
+                    logger.log(logging.ERROR, "Failed to create parent directory: " + str(filePath.parent.resolve()), exc_info=e)
+                    return False
+
+            with zipFile.open(entry) as inStream, open(filePath, 'wb') as outStream:
+                buffer = inStream.read(1024)
+                while buffer:
+                    outStream.write(buffer)
+                    buffer = inStream.read(1024)
+            logger.info("Extracted file: " + str(filePath.resolve()))
+
+            return True
+        except (IOError, OSError) as e:
+            logger.log(logging.ERROR, "Failed to extract file: " + fileName, exc_info=e)
+            return False
+        finally:
+            zipFile.close()
+```
+
+Wait, let me reconsider a few things:
+
+1. In Java, `Files.notExists(zipFilePath)` - this returns true if the file doesn't exist. In Python, `not Path.exists()` is equivalent. But Java's `notExists` can also return true when the existence cannot be determined (rare edge case). For practical purposes, `not exists()` is equivalent.
+
+2. In Java, `logger.log(Level.SEVERE, msg, e)` logs the message with the exception. In Python, `logger.log(logging.ERROR, msg, exc_info=e)` or `logger.error(msg, exc_info=e)` does the same.
+
+Actually, wait. In Java, `logger.log(Level.SEVERE, msg, e)` will log the message and the exception stack trace. In Python, `logger.error(msg, exc_info=e)` does the same. But `logger.log(logging.ERROR, msg, exc_info=e)` also works.
+
+Hmm, but actually in Python's logging, when you pass `exc_info=e`, it will include the exception info. But the format might differ from Java. The behavior should be functionally equivalent though.
+
+3. In Java, `ZipFile.stream()` iterates over entries. In Python, `ZipFile.infolist()` returns a list of `ZipInfo` objects.
+
+4. In Java, `entry.isDirectory()` checks if entry is a directory. In Python, `ZipInfo.is_dir()` does the same.
+
+5. In Java, `zipFile.getEntry(fileName)` returns null if not found. In Python, `zipFile.getinfo(fileName)` raises `KeyError` if not found. I need to catch that.
+
+6. In Java, `Files.newOutputStream(filePath, CREATE, TRUNCATE_EXISTING)` - this creates or truncates the file. In Python, `open(filePath, 'wb')` does the same.
+
+7. In Java, the buffer read is `in.read(buffer)` which returns the number of bytes read, or -1 at end. The condition `> 0` means it stops when no more bytes. In Python, `read(1024)` returns bytes, and empty bytes means end of stream. So `while buffer:` is equivalent.
+
+Wait, actually there's a subtle difference. In Java, `read(buffer)` can return 0 if no data is available yet (for streams that can block). But for a ZipFile input stream, this shouldn't happen. And the condition is `> 0`, so 0 would also stop. In Python, `read(1024)` returns at most 1024 bytes, and empty bytes `b''` at end. So `while buffer:` (which is False for empty bytes) is equivalent.
+
+8. In Java, `Paths.get(outputDir)` - in Python, `Path(outputDir)`.
+
+9. In Java, `outputDirPath.resolve(entry.getName())` - in Python, `outputDirPath / entry.filename`.
+
+10. In Java, `filePath.toAbsolutePath()` - in Python, `filePath.resolve()`.
+
+Wait, there's actually a subtle difference. Java's `Path.resolve()` for an absolute path returns the absolute path. Python's `/` operator also handles this correctly. But Java's `resolve` with a relative path concatenates. Python's `/` does the same. So they should be equivalent.
+
+Actually, one more thing. In Java, `entry.getName()` can return paths with `/` as separator. In Python, `entry.filename` also uses `/`. When using `Path / "a/b/c"`, Python handles this correctly by treating it as a relative path with subdirectories.
+
+Let me also consider: in Java, when extracting a file entry, the parent directories might not exist. The Java code doesn't explicitly create parent directories for file entries in `extractAll`. Let me re-read...
+
+In `extractAll`:
+```java
+if (entry.isDirectory()) {
+    if (Files.notExists(filePath)) {
+        Files.createDirectories(filePath);
+    }
+} else {
+    // just writes the file
+}
+```
+
+In Java, `Files.newOutputStream` will fail if the parent directory doesn't exist. But in a well-formed zip file, directory entries come before their files. However, not all zip files are well-formed. The Java code would throw an IOException if the parent directory doesn't exist for a file entry, and it would be caught by the inner catch block, logged, and processing would continue.
+
+In Python, `open(filePath, 'wb')` would also fail if the parent directory doesn't exist. So the behavior would be the same - it would raise an exception, be caught, logged, and continue.
+
+But wait, should I add `filePath.parent.mkdir(parents=True, exist_ok=True)` before writing? The Java code doesn't do this. Let me keep the behavior identical - don't create parent directories for file entries, and let it fail if they don't exist.
+
+Actually, hmm, let me reconsider. The Java code doesn't explicitly create parent directories for file entries. If the zip file is well-formed (directory entries before file entries), this works fine. If not, it throws IOException which is caught and logged. The Python code should behave the same way.
+
+But actually, I added `filePath.parent.mkdir(parents=True, exist_ok=True)` in my draft. Let me remove that to keep behavior identical.
+
+Wait, but actually there's another consideration. In Python's zipfile, when you iterate with `infolist()`, directory entries may or may not be present depending on how the zip was created. If a zip file doesn't have explicit directory entries, the Java code would fail to extract files (because the parent directory doesn't exist). The Python code should fail in the same way.
+
+Let me remove the `filePath.parent.mkdir()` call from `extractAll` to match the Java behavior.
+
+Actually, wait. Let me re-read the Java code more carefully.
+
+In `extractAll`, for non-directory entries:
+```java
+try (InputStream in = zipFile.getInputStream(entry);
+     OutputStream out = Files.newOutputStream(filePath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+    byte[] buffer = new byte[1024];
+    int len;
+    while ((len = in.read(buffer)) > 0) {
+        out.write(buffer, 0, len);
+    }
+    logger.info("Extracted file: " + filePath.toAbsolutePath());
+}
+```
+
+If the parent directory doesn't exist, `Files.newOutputStream` will throw `NoSuchFileException` (a subclass of `IOException`), which will be caught by the inner catch block:
+```java
+} catch (IOException e) {
+    logger.log(Level.SEVERE, "Failed to process entry: " + entry.getName(), e);
+}
+```
+
+And processing continues with the next entry. So the behavior is: log error and continue.
+
+In Python, `open(filePath, 'wb')` would raise `FileNotFoundError` (a subclass of `OSError`), which would be caught by the equivalent except block. Same behavior.
+
+OK, let me also think about the `readZipFile` method. In Java, it returns a `ZipFile` object. The caller is expected to close it (via try-with-resources). In Python, I'll return a `zipfile.ZipFile` object, and the caller will close it in a `finally` block.
+
+But wait, there's a subtle issue. In Java, `try (ZipFile zipFile = readZipFile())` - if `readZipFile()` returns null, the try-with-resources doesn't try to close null, it's fine. But in the Java code, the next line is `if (zipFile == null) return false;` which returns before any resource cleanup is needed.
+
+In my Python code, I handle this by checking for None before entering the try block.
+
+Let me also think about the `extractFile` method. In Java:
+```java
+ZipEntry entry = zipFile.getEntry(fileName);
+if (entry == null) {
+    logger.warning("File not found in zip: " + fileName);
+    return false;
+}
+```
+
+In Python, `zipfile.ZipFile.getinfo(fileName)` raises `KeyError` if not found. I can use a try/except, or I can check with `namelist()`. Let me use try/except to match the Java flow more closely.
+
+Actually, Python's `zipfile.ZipFile` has a `namelist()` method that returns all names. I could check `if fileName not in zipFile.namelist()`, but that's O(n). Using try/except with `getinfo()` is more efficient and matches the Java behavior.
+
+Let me finalize the code:
+
+```python
+import logging
+import zipfile
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+class ZipFileProcessor:
+
+    def __init__(self, zipFileName):
+        self.zipFilePath = Path(zipFileName)
+
+    def readZipFile(self):
+        if not self.zipFilePath.exists():
+            logger.log(logging.ERROR, "Zip file does not exist: " + str(self.zipFilePath.resolve()))
+            return None
+        try:
+            return zipfile.ZipFile(str(self.zipFilePath), 'r')
+        except OSError as e:
+            logger.log(logging.ERROR, "Failed to read the zip file: " + str(self.zipFilePath.resolve()), exc_info=e)
+            return None
+
+    def extractAll(self, outputDir):
+        outputDirPath = Path(outputDir)
+        zipFile = self.readZipFile()
+
+</think>
+
+=== RAW ANSWER ===
+```python
+import logging
+import zipfile
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+class ZipFileProcessor:
+
+    def __init__(self, zipFileName):
+        self.zipFilePath = Path(zipFileName)
+
+    def readZipFile(self):
+        if not self.zipFilePath.exists():
+            logger.error("Zip file does not exist: " + str(self.zipFilePath.resolve()))
+            return None
+        try:
+            return zipfile.ZipFile(str(self.zipFilePath), 'r')
+        except (OSError, zipfile.BadZipFile) as e:
+            logger.error("Failed to read the zip file: " + str(self.zipFilePath.resolve()), exc_info=e)
+            return None
+
+    def extractAll(self, outputDir):
+        outputDirPath = Path(outputDir)
+        zipFile = self.readZipFile()
+        if zipFile is None:
+            return False
+        try:
+            if not outputDirPath.exists():
+                try:
+                    outputDirPath.mkdir(parents=True, exist_ok=True)
+                    logger.info("Created output directory: " + str(outputDirPath.resolve()))
+                except OSError as e:
+                    logger.error("Failed to create output directory: " + str(outputDirPath.resolve()), exc_info=e)
+                    return False
+
+            for entry in zipFile.infolist():
+                filePath = outputDirPath / entry.filename
+                try:
+                    if entry.is_dir():
+                        if not filePath.exists():
+                            filePath.mkdir(parents=True, exist_ok=True)
+                            logger.info("Created directory: " + str(filePath.resolve()))
+                    else:
+                        with zipFile.open(entry) as inStream:
+                            with open(filePath, 'wb') as outStream:
+                                while True:
+                                    buffer = inStream.read(1024)
+                                    if not buffer:
+                                        break
+                                    outStream.write(buffer)
+                        logger.info("Extracted file: " + str(filePath.resolve()))
+                except (OSError, zipfile.BadZipFile) as e:
+                    logger.error("Failed to process entry: " + entry.filename, exc_info=e)
+
+            return True
+        except (OSError, zipfile.BadZipFile) as e:
+            logger.error("Failed to extract files from zip: " + str(self.zipFilePath.resolve()), exc_info=e)
+            return False
+        finally:
+            zipFile.close()
+
+    def extractFile(self, fileName, outputDir):
+        outputDirPath = Path(outputDir)
+        filePath = outputDirPath / fileName
+        zipFile = self.readZipFile()
+        if zipFile is None:
+            return False
+        try:
+            try:
+                entry = zipFile.getinfo(fileName)
+            except KeyError:
+                entry = None
+            if entry is None:
+                logger.warning("File not found in zip: " + fileName)
+                return False
+
+            if not filePath.parent.exists():
+                try:
+                    filePath.parent.mkdir(parents=True, exist_ok=True)
+                    logger.info("Created parent directory: " + str(filePath.parent.resolve()))
+                except OSError as e:
+                    logger.error("Failed to create parent directory: " + str(filePath.parent.resolve()), exc_info=e)
+                    return False
+
+            if entry.is_dir():
+                if not filePath.exists():
+                    filePath.mkdir(parents=True, exist_ok=True)
+                    logger.info("Created directory: " + str(filePath.resolve()))
+            else:
+                with zipFile.open(entry) as inStream:
+                    with open(filePath, 'wb') as outStream:
+                        while True:
+                            buffer = inStream.read(1024)
+                            if not buffer:
+                                break
+                            outStream.write(buffer)
+                logger.info("Extracted file: " + str(filePath.resolve()))
+
+            return True
+        except (OSError, zipfile.BadZipFile) as e:
+            logger.error("Failed to extract file: " + fileName, exc_info=e)
+            return False
+        finally:
+            zipFile.close()
+```
+
+=== TRANSLATED CODE (py) ===
+import logging
+import zipfile
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+class ZipFileProcessor:
+
+    def __init__(self, zipFileName):
+        self.zipFilePath = Path(zipFileName)
+
+    def readZipFile(self):
+        if not self.zipFilePath.exists():
+            logger.error("Zip file does not exist: " + str(self.zipFilePath.resolve()))
+            return None
+        try:
+            return zipfile.ZipFile(str(self.zipFilePath), 'r')
+        except (OSError, zipfile.BadZipFile) as e:
+            logger.error("Failed to read the zip file: " + str(self.zipFilePath.resolve()), exc_info=e)
+            return None
+
+    def extractAll(self, outputDir):
+        outputDirPath = Path(outputDir)
+        zipFile = self.readZipFile()
+        if zipFile is None:
+            return False
+        try:
+            if not outputDirPath.exists():
+                try:
+                    outputDirPath.mkdir(parents=True, exist_ok=True)
+                    logger.info("Created output directory: " + str(outputDirPath.resolve()))
+                except OSError as e:
+                    logger.error("Failed to create output directory: " + str(outputDirPath.resolve()), exc_info=e)
+                    return False
+
+            for entry in zipFile.infolist():
+                filePath = outputDirPath / entry.filename
+                try:
+                    if entry.is_dir():
+                        if not filePath.exists():
+                            filePath.mkdir(parents=True, exist_ok=True)
+                            logger.info("Created directory: " + str(filePath.resolve()))
+                    else:
+                        with zipFile.open(entry) as inStream:
+                            with open(filePath, 'wb') as outStream:
+                                while True:
+                                    buffer = inStream.read(1024)
+                                    if not buffer:
+                                        break
+                                    outStream.write(buffer)
+                        logger.info("Extracted file: " + str(filePath.resolve()))
+                except (OSError, zipfile.BadZipFile) as e:
+                    logger.error("Failed to process entry: " + entry.filename, exc_info=e)
+
+            return True
+        except (OSError, zipfile.BadZipFile) as e:
+            logger.error("Failed to extract files from zip: " + str(self.zipFilePath.resolve()), exc_info=e)
+            return False
+        finally:
+            zipFile.close()
+
+    def extractFile(self, fileName, outputDir):
+        outputDirPath = Path(outputDir)
+        filePath = outputDirPath / fileName
+        zipFile = self.readZipFile()
+        if zipFile is None:
+            return False
+        try:
+            try:
+                entry = zipFile.getinfo(fileName)
+            except KeyError:
+                entry = None
+            if entry is None:
+                logger.warning("File not found in zip: " + fileName)
+                return False
+
+            if not filePath.parent.exists():
+                try:
+                    filePath.parent.mkdir(parents=True, exist_ok=True)
+                    logger.info("Created parent directory: " + str(filePath.parent.resolve()))
+                except OSError as e:
+                    logger.error("Failed to create parent directory: " + str(filePath.parent.resolve()), exc_info=e)
+                    return False
+
+            if entry.is_dir():
+                if not filePath.exists():
+                    filePath.mkdir(parents=True, exist_ok=True)
+                    logger.info("Created directory: " + str(filePath.resolve()))
+            else:
+                with zipFile.open(entry) as inStream:
+                    with open(filePath, 'wb') as outStream:
+                        while True:
+                            buffer = inStream.read(1024)
+                            if not buffer:
+                                break
+                            outStream.write(buffer)
+                logger.info("Extracted file: " + str(filePath.resolve()))
+
+            return True
+        except (OSError, zipfile.BadZipFile) as e:
+            logger.error("Failed to extract file: " + fileName, exc_info=e)
+            return False
+        finally:
+            zipFile.close()

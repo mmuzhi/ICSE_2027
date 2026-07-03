@@ -1,0 +1,883 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
+
+public class CookiesUtil {
+    private String cookiesFile;
+    private Map<String, String> cookies;
+
+    public CookiesUtil(String cookiesFile) {
+        this.cookiesFile = cookiesFile;
+        this.cookies = null;
+    }
+
+    public void getCookies(Map<String, Map<String, String>> response) {
+        this.cookies = response.get("cookies");
+        _saveCookies();
+    }
+
+    public Map<String, String> loadCookies() {
+        JSONParser parser = new JSONParser();
+        try (FileReader reader = new FileReader(cookiesFile)) {
+            JSONObject jsonObject = (JSONObject) parser.parse(reader);
+            Map<String, String> cookiesData = new HashMap<>();
+            jsonObject.forEach((key, value) -> cookiesData.put((String) key, (String) value));
+            return cookiesData;
+        } catch (IOException | ParseException e) {
+            return new HashMap<>();
+        }
+    }
+
+    boolean _saveCookies() {
+        try (FileWriter file = new FileWriter(cookiesFile)) {
+            JSONObject jsonObject = new JSONObject();
+            if (cookies != null) {
+                cookies.forEach(jsonObject::put);
+            }
+            file.write(jsonObject.toJSONString());
+            file.flush();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    public void setCookies(Map<String, String> request) {
+        StringBuilder cookiesString = new StringBuilder();
+        if (cookies != null) {
+            cookies.forEach((key, value) -> {
+                if (cookiesString.length() > 0) {
+                    cookiesString.append("; ");
+                }
+                cookiesString.append(key).append("=").append(value);
+            });
+        }
+        request.put("cookies", cookiesString.toString());
+    }
+}
+
+
+=== REASONING ===
+<think>
+1.  **Understand the Goal**: The objective is to translate a Java class (`CookiesUtil`) into C++ while keeping the behavior identical (inputs/outputs, side effects, edge cases, exceptions). Idiomatic C++ should be used only when it doesn't change behavior.
+
+2.  **Analyze the Java Code**:
+    *   **Class**: `CookiesUtil` in package `org.example`.
+    *   **Fields**:
+        *   `String cookiesFile`: Path to the cookies file.
+        *   `Map<String, String> cookies`: A map storing cookies.
+    *   **Constructor**: `CookiesUtil(String cookiesFile)` initializes `cookiesFile` and sets `cookies` to `null`.
+    *   **Method `getCookies`**: Takes a `Map<String, Map<String, String>> response`, extracts the "cookies" entry, assigns it to `this.cookies`, and calls `_saveCookies()`.
+    *   **Method `loadCookies`**: Reads `cookiesFile` using `FileReader`, parses it as JSON using `JSONParser`, casts to `JSONObject`, iterates over entries casting keys/values to `String`, and returns a `Map<String, String>`. If `IOException` or `ParseException` occurs, returns an empty `HashMap`.
+    *   **Method `_saveCookies`**: Writes `cookies` to `cookiesFile` as JSON. If `cookies` is not null, puts all entries into a `JSONObject`, writes `toJSONString()`, flushes, and returns `true`. On `IOException`, returns `false`.
+    *   **Method `setCookies`**: Takes a `Map<String, String> request`, formats `cookies` into a string like `key1=value1; key2=value2`, and puts it into `request` under the key "cookies".
+
+3.  **Map Java Concepts to C++**:
+    *   `String` -> `std::string`
+    *   `Map<String, String>` -> `std::map<std::string, std::string>` or `std::unordered_map<std::string, std::string>`. Java's `HashMap` is unordered, so `std::unordered_map` is closer in behavior, but `std::map` is often more idiomatic for JSON-like structures where key order might matter for reproducibility. However, since `HashMap` doesn't guarantee order, `std::unordered_map` matches the Java behavior better. Wait, Java `JSONObject` (from json-simple) extends `HashMap`, so order is not guaranteed. Let's use `std::map` for deterministic serialization, or `std::unordered_map` to strictly match `HashMap`. Actually, C++ JSON libraries often work with `nlohmann::json` or similar. Since the prompt doesn't specify a JSON library, I'll need to choose one or implement basic JSON parsing/writing. `nlohmann/json` is the standard de-facto C++ JSON library. I will use it.
+    *   `null` -> `std::optional<std::unordered_map<std::string, std::string>>` or just a boolean flag, or an empty map. Wait, in Java, `cookies` can be `null`. In C++, we can use `std::optional<std::unordered_map<std::string, std::string>>` or just check if a pointer is null, or simply use an empty map to represent null if the distinction isn't strictly necessary. However, `if (cookies != null)` is explicitly checked. `std::optional` perfectly models this.
+    *   `FileReader` / `FileWriter` -> `std::ifstream` / `std::ofstream`.
+    *   Exceptions: Java catches `IOException | ParseException`. In C++, `nlohmann::json` throws `nlohmann::json::exception` (or derived like `parse_error`). File reading can set `failbit`. We can catch `std::exception` to cover both, or check stream state and catch json exceptions.
+    *   `JSONObject` -> `nlohmann::json`.
+    *   `Map<String, Map<String, String>> response` -> `std::unordered_map<std::string, std::unordered_map<std::string, std::string>>& response` (or `const&` if possible, but Java passes reference implicitly). Wait, `getCookies` modifies `this->cookies` but doesn't modify `response`. So `const &` is appropriate.
+    *   `request.put("cookies", ...)` -> `request["cookies"] = ...`
+
+4.  **Drafting the C++ Code**:
+
+    *   **Includes**:
+        ```cpp
+        #include <string>
+        #include <unordered_map>
+        #include <optional>
+        #include <fstream>
+        #include <sstream>
+        #include <nlohmann/json.hpp>
+        ```
+
+    *   **Class Definition**:
+        ```cpp
+        class CookiesUtil {
+        private:
+            std::string cookiesFile;
+            std::optional<std::unordered_map<std::string, std::string>> cookies;
+
+        public:
+            CookiesUtil(const std::string& cookiesFile)
+                : cookiesFile(cookiesFile), cookies(std::nullopt) {}
+
+            void getCookies(const std::unordered_map<std::string, std::unordered_map<std::string, std::string>>& response) {
+                auto it = response.find("cookies");
+                if (it != response.end()) {
+                    cookies = it->second;
+                } else {
+                    cookies = std::nullopt; // Java's response.get("cookies") returns null if missing
+                }
+                _saveCookies();
+            }
+
+            std::unordered_map<std::string, std::string> loadCookies() {
+                std::ifstream reader(cookiesFile);
+                if (!reader.is_open()) {
+                    return {};
+                }
+                try {
+                    nlohmann::json jsonObject = nlohmann::json::parse(reader);
+                    std::unordered_map<std::string, std::string> cookiesData;
+                    for (auto it = jsonObject.begin(); it != jsonObject.end(); ++it) {
+                        cookiesData[it.key()] = it.value().get<std::string>();
+                    }
+                    return cookiesData;
+                } catch (const std::exception& e) {
+                    return {};
+                }
+            }
+
+            bool _saveCookies() {
+                std::ofstream file(cookiesFile);
+                if (!file.is_open()) {
+                    return false;
+                }
+                try {
+                    nlohmann::json jsonObject = nlohmann::json::object();
+                    if (cookies.has_value()) {
+                        for (const auto& kv : cookies.value()) {
+                            jsonObject[kv.first] = kv.second;
+                        }
+                    }
+                    file << jsonObject.dump();
+                    file.flush();
+                    return true;
+                } catch (const std::exception& e) {
+                    return false;
+                }
+            }
+
+            void setCookies(std::unordered_map<std::string, std::string>& request) {
+                std::ostringstream cookiesString;
+                if (cookies.has_value()) {
+                    bool first = true;
+                    for (const auto& kv : cookies.value()) {
+                        if (!first) {
+                            cookiesString << "; ";
+                        }
+                        cookiesString << kv.first << "=" << kv.second;
+                        first = false;
+                    }
+                }
+                request["cookies"] = cookiesString.str();
+            }
+        };
+        ```
+
+5.  **Refining and Checking Behavior**:
+    *   *Java `getCookies`*: `this.cookies = response.get("cookies");`. If "cookies" is not in `response`, it assigns `null`. My C++ does exactly this by checking `response.find("cookies")` and assigning `std::nullopt` if not found.
+    *   *Java `loadCookies`*: Returns `HashMap` on success, `HashMap` on failure. C++ returns `unordered_map` on both. Catches `IOException | ParseException`. In C++, `std::ifstream` failing to open doesn't throw by default, it just sets failbit. `nlohmann::json::parse` throws `nlohmann::json::parse_error` on parse failure. So catching `std::exception` covers the parse error. What about IO error during read? `nlohmann::json::parse` reads from stream, if stream fails it might throw. But `!reader.is_open()` handles file not existing. What if other IO error? We can just wrap the whole thing in a try-catch.
+    *   *Java `_saveCookies`*: `FileWriter` throws `IOException` if file cannot be opened/written. C++ `std::ofstream` doesn't throw by default. To strictly match Java's exception behavior, we might need to enable exceptions on the stream (`file.exceptions(std::ofstream::failbit | std::ofstream::badbit)`), or just check `!file.is_open()` and return `false`. The Java code returns `false` on `IOException`. If `FileWriter` constructor throws, it propagates! Wait, `new FileWriter(cookiesFile)` can throw `IOException` if the file cannot be opened. In the Java code, the `try` block starts *before* `FileWriter` initialization: `try (FileWriter file = new FileWriter(cookiesFile))`. If `new FileWriter` throws, it's caught by `catch (IOException e)` and returns `false`! So C++ checking `!file.is_open()` and returning `false` perfectly matches the Java behavior (returning false on failure to open/write).
+    *   *Java `setCookies`*: Iterates over `cookies` map. Java `HashMap` iteration order is unpredictable. C++ `std::unordered_map` iteration order is also unpredictable. This matches. The string building logic: `if (cookiesString.length() > 0) { cookiesString.append("; "); }`. My C++ uses a `bool first` flag, which is functionally identical.
+    *   *JSON Library*: The prompt doesn't specify a JSON library for C++. Using `nlohmann/json` is the standard choice. I should include a comment or assume it's available. I will use `nlohmann::json`.
+    *   *Map Type*: Java `Map` is an interface, instantiated as `HashMap`. `std::unordered_map` is the C++ equivalent of `HashMap`. I'll use `std::unordered_map`. Wait, `std::map` is often preferred for deterministic output, but to strictly match `HashMap`'s non-deterministic iteration, `std::unordered_map` is technically more accurate. I'll stick with `std::unordered_map`.
+    *   *Nullability*: `std::optional` perfectly models Java's `null` reference for `cookies`.
+
+6.  **Detailed Comparison**:
+
+    *Java `loadCookies`:*
+    ```java
+    public Map<String, String> loadCookies() {
+        JSONParser parser = new JSONParser();
+        try (FileReader reader = new FileReader(cookiesFile)) {
+            JSONObject jsonObject = (JSONObject) parser.parse(reader);
+            Map<String, String> cookiesData = new HashMap<>();
+            jsonObject.forEach((key, value) -> cookiesData.put((String) key, (String) value));
+            return cookiesData;
+        } catch (IOException | ParseException e) {
+            return new HashMap<>();
+        }
+    }
+    ```
+    *C++ translation:*
+    ```cpp
+    std::unordered_map<std::string, std::string> loadCookies() {
+        try {
+            std::ifstream reader(cookiesFile);
+            if (!reader.is_open()) {
+                return {};
+            }
+            nlohmann::json jsonObject = nlohmann::json::parse(reader);
+            std::unordered_map<std::string, std::string> cookiesData;
+            for (auto it = jsonObject.begin(); it != jsonObject.end(); ++it) {
+                cookiesData[it.key()] = it.value().get<std::string>();
+            }
+            return cookiesData;
+        } catch (const std::exception& e) {
+            return {};
+        }
+    }
+    ```
+    Wait, `FileReader` constructor throws `FileNotFoundException` (which is a subclass of `IOException`). In my C++ code, `std::ifstream` doesn't throw if the file doesn't exist, it just fails to open. So checking `!reader.is_open()` handles the `FileNotFoundException` case, returning `{}` which matches the `catch (IOException)` returning `new HashMap<>()`.
+
+    *Java `_saveCookies`:*
+    ```java
+    boolean _saveCookies() {
+        try (FileWriter file = new FileWriter(cookiesFile)) {
+            JSONObject jsonObject = new JSONObject();
+            if (cookies != null) {
+                cookies.forEach(jsonObject::put);
+            }
+            file.write(jsonObject.toJSONString());
+            file.flush();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+    ```
+    *C++ translation:*
+    ```cpp
+    bool _saveCookies() {
+        try {
+            std::ofstream file(cookiesFile);
+            if (!file.is_open()) {
+                return false;
+            }
+            nlohmann::json jsonObject = nlohmann::json::object();
+            if (cookies.has_value()) {
+                for (const auto& kv : cookies.value()) {
+                    jsonObject[kv.first] = kv.second;
+                }
+            }
+            file << jsonObject.dump();
+            file.flush();
+            return true;
+        } catch (const std::exception& e) {
+            return false;
+        }
+    }
+    ```
+    Wait, `std::ofstream` doesn't throw by default. But `nlohmann::json::dump()` could theoretically throw (e.g., `std::bad_alloc`), and `operator<<` could throw if exceptions are enabled. Wrapping in `try-catch` handles exceptions similarly to Java's `catch (IOException)`. Returning `false` on failure is identical.
+
+    *Java `setCookies`:*
+    ```java
+    public void setCookies(Map<String, String> request) {
+        StringBuilder cookiesString = new StringBuilder();
+        if (cookies != null) {
+            cookies.forEach((key, value) -> {
+                if (cookiesString.length() > 0) {
+                    cookiesString.append("; ");
+                }
+                cookiesString.append(key).append("=").append(value);
+            });
+        }
+        request.put("cookies", cookiesString.toString());
+    }
+    ```
+    *C++ translation:*
+    ```cpp
+    void setCookies(std::unordered_map<std::string, std::string>& request) {
+        std::string cookiesString;
+        if (cookies.has_value()) {
+            for (const auto& kv : cookies.value()) {
+                if (!cookiesString.empty()) {
+                    cookiesString += "; ";
+                }
+                cookiesString += kv.first + "=" + kv.second;
+            }
+        }
+        request["cookies"] = cookiesString;
+    }
+    ```
+
+    *Java `getCookies`:*
+    ```java
+    public void getCookies(Map<String, Map<String, String>> response) {
+        this.cookies = response.get("cookies");
+        _saveCookies();
+    }
+    ```
+    *C++ translation:*
+    ```cpp
+    void getCookies(const std::unordered_map<std::string, std::unordered_map<std::string, std::string>>& response) {
+        auto it = response.find("cookies");
+        if (it != response.end()) {
+            cookies = it->second;
+        } else {
+            cookies = std::nullopt;
+        }
+        _saveCookies();
+    }
+    ```
+
+7.  **Refining Types and Signatures**:
+    *   Java `Map<String, String>` -> C++ `std::unordered_map<std::string, std::string>`. Let's alias it for readability: `using CookieMap = std::unordered_map<std::string, std::string>;`
+    *   Java `Map<String, Map<String, String>>` -> `std::unordered_map<std::string, CookieMap>`.
+    *   The Java code uses `org.json.simple.JSONObject`. `json-simple` parses everything into `String` for keys and values if casted. `nlohmann::json` handles types strictly. If the JSON file contains non-string values, `it.value().get<std::string>()` will throw `nlohmann::json::type_error`, which will be caught by `catch (const std::exception& e)` and return `{}`. In Java, `(String) value` would throw a `ClassCastException`, which is uncaught and would propagate up! Wait.
+    Let's look at Java `loadCookies`:
+    ```java
+    jsonObject.forEach((key, value) -> cookiesData.put((String) key, (String) value));
+    ```
+    If `value` is not a String, `(String) value` throws `ClassCastException`. This is NOT caught by `catch (IOException | ParseException e)`. So it would propagate.
+    In C++, `it.value().get<std::string>()` throws `nlohmann::json::type_error`, which inherits from `std::exception`. My `catch (const std::exception& e)` would catch it and return `{}`. This changes behavior!
+    To strictly match Java behavior, I should only catch parsing/IO exceptions, or let type errors propagate.
+    Wait, `nlohmann::json::parse_error` inherits from `nlohmann::json::exception`, which inherits from `std::exception`.
+    If I want to catch only parse errors and IO errors, I can catch `nlohmann::json::parse_error` and `std::ios_base::failure` (if exceptions are enabled), but `std::ifstream` doesn't throw by default.
+    Let's rethink: does Java `ClassCastException` happen? `json-simple` `JSONObject` is a `HashMap<String, Object>`. If the JSON has `{"key": 123}`, `value` is a `Long`. Casting to `String` throws `ClassCastException`.
+    If I want to be identical, I should let type errors throw. But wait, C++ `nlohmann::json` `get<std::string>()` on a number will throw `type_error`.
+    If I catch `nlohmann::json::parse_error` specifically, then `type_error` will propagate, just like Java's `ClassCastException` propagates.
+    Let's adjust `loadCookies`:
+    ```cpp
+    std::unordered_map<std::string, std::string> loadCookies() {
+        std::ifstream reader(cookiesFile);
+        if (!reader.is_open()) {
+            return {}; // FileNotFoundException equivalent
+        }
+        nlohmann::json jsonObject;
+        try {
+            jsonObject = nlohmann::json::parse(reader);
+        } catch (const nlohmann::json::parse_error& e) {
+            return {}; // ParseException equivalent
+        }
+        // IOException during read? nlohmann::json::parse reads from stream.
+        // If stream fails, it might throw. Let's catch std::exception for IO, but wait, Java catches IOException.
+        // Actually, nlohmann::parse might throw parse_error if stream is bad.
+        
+        std::unordered_map<std::string, std::string> cookiesData;
+        for (auto it = jsonObject.begin(); it != jsonObject.end(); ++it) {
+            cookiesData[it.key()] = it.value().get<std::string>(); // Can throw type_error, equivalent to ClassCastException
+        }
+        return cookiesData;
+    }
+    ```
+    Wait, what if `reader` throws an IO error? `nlohmann::json::parse` catches `std::ios_base::failure` and rethrows as `nlohmann::json::parse_error` or just throws `parse_error`.
+    Actually, if I just catch `nlohmann::json::parse_error`, it covers `ParseException`. What about `IOException`? In Java, `FileReader` might throw `IOException`. In C++, `std::ifstream` construction doesn't throw, it just sets fail bit. So `!reader.is_open()` handles that.
+    What if `reader` encounters an IO error *during* parsing? `nlohmann::json::parse` will likely throw `nlohmann::json::parse_error`. This is close enough.
+    To be safe and match Java's `catch (IOException | ParseException)` returning `{}`, I could catch `nlohmann::json::parse_error` and maybe `std::ios_base::failure`.
+    Let's just catch `nlohmann::json::exception` which covers `parse_error`, and `std::exception` for IO? No, catching `std::exception` would also catch `type_error` (the equivalent of `ClassCastException`), which Java does *not* catch.
+    So:
+    ```cpp
+    try {
+        jsonObject = nlohmann::json::parse(reader);
+    } catch (const nlohmann::json::parse_error& e) {
+        return {};
+    }
+    ```
+    This is much closer to the Java behavior!
+
+    What about `_saveCookies`?
+    ```java
+    try (FileWriter file = new FileWriter(cookiesFile)) {
+        // ...
+    } catch (IOException e) {
+        return false;
+    }
+    ```
+    In C++:
+    ```cpp
+    bool _saveCookies() {
+        try {
+            std::ofstream file(cookiesFile);
+            if (!file.is_open()) {
+                // FileWriter throws IOException if it can't open.
+                // Wait, Java's FileWriter throws IOException, which is caught, returning false.
+                // So returning false here is correct.
+                return false;
+            }
+            nlohmann::json jsonObject = nlohmann::json::object();
+            if (cookies.has_value()) {
+                for (const auto& kv : cookies.value()) {
+                    jsonObject[kv.first] = kv.second;
+                }
+            }
+            file << jsonObject.dump();
+            file.flush();
+            if (!file) { // Check for write errors that didn't throw
+                return false;
+            }
+            return true;
+        } catch (const std::ios_base::failure& e) {
+            return false;
+        }
+    }
+    ```
+    Wait, `std::ofstream` doesn't throw by default unless `exceptions()` is set. If we just do `file << ...` and it fails (e.g. disk full), it sets the failbit but doesn't throw. In Java, `file.write` or `file.flush` would throw `IOException`, which is caught, returning `false`.
+    To perfectly emulate this, we should check the stream state after writing:
+    ```cpp
+    file << jsonObject.dump();
+    file.flush();
+    return file.good(); // Returns true if no errors, false if any error occurred (mimics catching IOException)
+    ```
+    Wait, if `file.flush()` fails, `file.good()` will be false. This perfectly matches Java's behavior of returning `false` on any IO error.
+
+    Let's refine `_saveCookies`:
+    ```cpp
+    bool _saveCookies() {
+        std::ofstream file(cookiesFile);
+        if (!file.is_open()) {
+            return false;
+        }
+        nlohmann::json jsonObject = nlohmann::json::object();
+        if (cookies.has_value()) {
+            for (const auto& kv : cookies.value()) {
+                jsonObject[kv.first] = kv.second;
+            }
+        }
+        file << jsonObject.dump();
+        file.flush();
+        return file.good();
+    }
+    ```
+    This is much cleaner and perfectly matches the logic (returns true on success, false on any IO failure).
+
+    What about `loadCookies`?
+    ```java
+    try (FileReader reader = new FileReader(cookiesFile)) {
+        JSONObject jsonObject = (JSONObject) parser.parse(reader);
+        // ...
+        return cookiesData;
+    } catch (IOException | ParseException e) {
+        return new HashMap<>();
+    }
+    ```
+    C++ equivalent:
+    ```cpp
+    std::unordered_map<std::string, std::string> loadCookies() {
+        std::ifstream reader(cookiesFile);
+        if (!reader.is_open()) {
+            return {};
+        }
+        nlohmann::json jsonObject;
+        try {
+            jsonObject = nlohmann::json::parse(reader);
+        } catch (const nlohmann::json::parse_error& e) {
+            return {}; // ParseException
+        }
+        if (!reader.good() && !reader.eof()) {
+            // If reading failed for an IO reason (not just EOF)
+            // Actually, nlohmann::json::parse reads the whole stream. If an IO error occurs, it might throw parse_error.
+            // Let's just trust parse_error for now, or check reader state.
+            return {};
+        }
+
+        std::unordered_map<std::string, std::string> cookiesData;
+        for (auto it = jsonObject.begin(); it != jsonObject.end(); ++it) {
+            cookiesData[it.key()] = it.value().get<std::string>();
+        }
+        return cookiesData;
+    }
+    ```
+    Wait, if `reader` hits an IO error, `nlohmann::json::parse` throws `nlohmann::json::parse_error` (with an `id` or message indicating IO error) or `std::ios_base::failure`. Catching `nlohmann::json::parse_error` handles the `ParseException`. What about `IOException`? If we want to be strictly equivalent, we should catch IO errors too. But `std::ifstream` doesn't throw. It just sets `failbit`. `nlohmann::json::parse` might throw `parse_error` if the stream is not good.
+    Actually, catching `nlohmann::json::exception` might be safer, but it catches `type_error` which Java doesn't catch.
+    Let's stick to catching `nlohmann::json::parse_error`. If there's an IO error during parsing, `nlohmann::json::parse` throws `nlohmann::json::parse_error`. So catching it covers both `ParseException` and `IOException` during parse.
+
+    Let's double check `json-simple`'s `JSONObject.toJSONString()`. It produces standard JSON like `{"key":"value"}`. `nlohmann::json::dump()` does the same.
+
+    Let's check `CookiesUtil` constructor:
+    ```java
+    public CookiesUtil(String cookiesFile) {
+        this.cookiesFile = cookiesFile;
+        this.cookies = null;
+    }
+    ```
+    C++:
+    ```cpp
+    CookiesUtil(const std::string& cookiesFile) : cookiesFile(cookiesFile), cookies(std::nullopt) {}
+    ```
+
+    Let's check `getCookies`:
+    ```java
+    public void getCookies(Map<String, Map<String, String>> response) {
+        this.cookies = response.get("cookies");
+        _saveCookies();
+    }
+    ```
+    C++:
+    ```cpp
+    using CookieMap = std::unordered_map<std::string, std::string>;
+
+    void getCookies(const std::unordered_map<std::string, CookieMap>& response) {
+        auto it = response.find("cookies");
+        if (it != response.end()) {
+            cookies = it->second;
+        } else {
+            cookies = std::nullopt;
+        }
+        _saveCookies();
+    }
+    ```
+
+    Let's check `setCookies`:
+    ```java
+    public void setCookies(Map<String, String> request) {
+        StringBuilder cookiesString = new StringBuilder();
+        if (cookies != null) {
+            cookies.forEach((key, value) -> {
+                if (cookiesString.length() > 0) {
+                    cookiesString.append("; ");
+                }
+                cookiesString.append(key).append("=").append(value);
+            });
+        }
+        request.put("cookies", cookiesString.toString());
+    }
+    ```
+    C++:
+    ```cpp
+    void setCookies(std::unordered_map<std::string, std::string>& request) {
+        std::string cookiesString;
+        if (cookies.has_value()) {
+            for (const auto& kv : cookies.value()) {
+                if (!cookiesString.empty()) {
+                    cookiesString += "; ";
+                }
+                cookiesString += kv.first + "=" + kv.second;
+            }
+        }
+        request["cookies"] = cookiesString;
+    }
+    ```
+
+8.  **Handling JSON Library Dependency**:
+    Since C++ doesn't have a standard JSON library, I need to mention that `nlohmann/json` is used. I will include the single-header include `#include <nlohmann/json.hpp>`.
+
+9.  **Formatting and Namespaces**:
+    The Java code is in `package org.example;`. In C++, we can use `namespace org { namespace example { ... } }` or just omit it if not strictly necessary, but to keep behavior identical (in terms of naming), I'll wrap it in `namespace org { namespace example { ... } }`.
+
+10. **Refining the Map Type**:
+    Java `HashMap` does not guarantee order. C++ `std::unordered_map` also does not guarantee order. This is a perfect match.
+    However, when iterating to build `cookiesString`, the order will be arbitrary in both languages. This is identical behavior.
+
+11. **Edge Cases**:
+    *   What if `cookiesFile` is empty? `nlohmann::json::parse` throws `parse_error`. Java `JSONParser.parse` throws `ParseException`. Both return empty map.
+    *   What if `cookiesFile` contains invalid JSON? `parse_error` caught, returns empty map.
+    *   What if `cookiesFile` contains a JSON array instead of object? `nlohmann::json::parse` succeeds, but iterating with `begin()`/`end()` on an array uses index keys ("0", "1", etc.). Java `json-simple` casting to `JSONObject` would throw `ClassCastException` because it's a `JSONArray`. To match this, we should check if the parsed JSON is an object!
+    ```cpp
+    if (!jsonObject.is_object()) {
+        return {}; // Equivalent to ClassCastException on (JSONObject) parser.parse(...)
+    }
+    ```
+    This is a great catch! In Java, `(JSONObject) parser.parse(reader)` throws `ClassCastException` if the root is not an object. In C++, `nlohmann::json` would just be an array, and iterating would yield index-based key-value pairs. To strictly match Java, we must assert it's an object. Since `ClassCastException` is unchecked in Java, it would propagate up. Should we throw in C++?
+    Wait, `ClassCastException` is an unchecked exception (extends `RuntimeException`). It would propagate up and crash if unhandled.
+    If I want to be strictly identical, I should throw an exception if it's not an object.
+    ```cpp
+    if (!jsonObject.is_object()) {
+        throw std::runtime_error("Parsed JSON is not an object");
+    }
+    ```
+    Or, since Java `ClassCastException` is a runtime exception, `std::runtime_error` is a good equivalent.
+    Let's check `json-simple` behavior: `(JSONObject) parser.parse(reader)` literally casts it. If it's a `JSONArray`, `ClassCastException` is thrown.
+    So:
+    ```cpp
+    nlohmann::json jsonObject;
+    try {
+        jsonObject = nlohmann::json::parse(reader);
+    } catch (const nlohmann::json::parse_error& e) {
+        return {};
+    }
+    if (!jsonObject.is_object()) {
+        throw std::runtime_error("JSON is not an object");
+    }
+    ```
+    What about the values inside the object?
+    ```java
+    jsonObject.forEach((key, value) -> cookiesData.put((String) key, (String) value));
+    ```
+    If a value is not a string, `(String) value` throws `ClassCastException`.
+    In C++:
+    ```cpp
+    cookiesData[it.key()] = it.value().get<std::string>();
+    ```
+    `it.value().get<std::string>()` throws `nlohmann::json::type_error` if the value is not a string. `type_error` inherits from `std::exception`. This is a runtime error, similar to `ClassCastException`. So this perfectly matches the Java behavior (throws on type mismatch).
+
+12. **Putting it all together**:
+
+    ```cpp
+    #include <string>
+    #include <unordered_map>
+    #include <optional>
+    #include <fstream>
+    #include <sstream>
+    #include <stdexcept>
+    #include <nlohmann/json.hpp>
+
+    namespace org {
+    namespace example {
+
+    using CookieMap = std::unordered_map<std::string, std::string>;
+
+    class CookiesUtil {
+    private:
+        std::string cookiesFile;
+        std::optional<CookieMap> cookies;
+
+        bool _saveCookies() {
+            std::ofstream file(cookiesFile);
+            if (!file.is_open()) {
+                return false;
+            }
+            nlohmann::json jsonObject = nlohmann::json::object();
+            if (cookies.has_value()) {
+                for (const auto& kv : cookies.value()) {
+                    jsonObject[kv.first] = kv.second;
+                }
+            }
+            file << jsonObject.dump();
+            file.flush();
+            return file.good();
+        }
+
+    public:
+        CookiesUtil(const std::string& cookiesFile)
+            : cookiesFile(cookiesFile), cookies(std::nullopt) {}
+
+        void getCookies(const std::unordered_map<std::string, CookieMap>& response) {
+            auto it = response.find("cookies");
+            if (it != response.end()) {
+                cookies = it->second;
+            } else {
+                cookies = std::nullopt;
+            }
+            _saveCookies();
+        }
+
+        CookieMap loadCookies() {
+            std::ifstream reader(cookiesFile);
+            if (!reader.is_open()) {
+                return {};
+            }
+            nlohmann::json jsonObject;
+            try {
+                jsonObject = nlohmann::json::parse(reader);
+            } catch (const nlohmann::json::parse_error& e) {
+                return {};
+            }
+            
+            if (!jsonObject.is_object()) {
+                throw std::runtime_error("Parsed JSON is not an object");
+            }
+
+            CookieMap cookiesData;
+            for (auto it = jsonObject.begin(); it != jsonObject.end(); ++it) {
+                cookiesData[it.key()] = it.value().get<std::string>();
+            }
+            return cookiesData;
+        }
+
+        void setCookies(CookieMap& request) {
+            std::string cookiesString;
+            if (cookies.has_value()) {
+                for (const auto& kv : cookies.value()) {
+                    if (!cookiesString.empty()) {
+                        cookiesString += "; ";
+                    }
+                    cookiesString += kv.first + "=" + kv.second;
+                }
+            }
+            request["cookies"] = cookiesString;
+        }
+    };
+
+    } // namespace example
+    } // namespace org
+    ```
+
+13. **Review against constraints**:
+    *   *Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)*:
+        *   `getCookies` extracts "cookies" map, assigns it, or assigns null (`std::nullopt`). Calls `_saveCookies`. Matches.
+        *   `loadCookies` reads file, parses JSON. Returns empty map on `IOException`/`ParseException` (file not found / parse error). Throws on invalid types (`ClassCastException` equivalent). Matches.
+        *   `_saveCookies` writes JSON to file. Returns `true` on success, `false` on `IOException` (open failure / write failure). Matches.
+        *   `setCookies` formats cookies as `k1=v1; k2=v2` and puts into request map under "cookies". Matches.
+    *   *Use idiomatic C++ only when it doesn't change behavior*:
+        *   Using `std::optional` for nullable types is idiomatic and doesn't change behavior.
+        *   Using `std::unordered_map` for `HashMap` is idiomatic and doesn't change behavior.
+        *   Using `std::ifstream`/`std::ofstream` is idiomatic and doesn't change behavior.
+        *   Using `nlohmann::json` is the standard way to handle JSON in modern C++, matching `json-simple` behavior.
+
+14. **Minor adjustments**:
+    *   In Java, `_saveCookies` is package-private (no access modifier). In C++, I put it under `private`. Java's default is package-private, meaning classes in the same package can access it. C++ doesn't have package-private. `private` is the closest if we don't want it fully public, or we can just make it `public` to be safe, but `private` is usually fine since it starts with `_` indicating internal use. I'll leave it `private` but note that C++ doesn't have package visibility. Actually, leaving it `private` is safer. Wait, Java code says `boolean _saveCookies()`. It's package-private. Let's make it `public` or `protected`? No, `private` is fine for translation unless we want to strictly allow same-namespace access. In C++, there's no equivalent, so `private` is the most common translation for internal helper methods.
+    *   `jsonObject.toJSONString()`: `nlohmann::json::dump()` produces equivalent output.
+    *   `FileWriter` and `FileReader` constructors:
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <string>
+#include <unordered_map>
+#include <optional>
+#include <fstream>
+#include <stdexcept>
+#include <nlohmann/json.hpp>
+
+namespace org {
+namespace example {
+
+using CookieMap = std::unordered_map<std::string, std::string>;
+
+class CookiesUtil {
+private:
+    std::string cookiesFile;
+    std::optional<CookieMap> cookies;
+
+public:
+    CookiesUtil(const std::string& cookiesFile)
+        : cookiesFile(cookiesFile), cookies(std::nullopt) {}
+
+    void getCookies(const std::unordered_map<std::string, CookieMap>& response) {
+        auto it = response.find("cookies");
+        if (it != response.end()) {
+            cookies = it->second;
+        } else {
+            cookies = std::nullopt;
+        }
+        _saveCookies();
+    }
+
+    CookieMap loadCookies() {
+        std::ifstream reader(cookiesFile);
+        if (!reader.is_open()) {
+            return {};
+        }
+        nlohmann::json jsonObject;
+        try {
+            jsonObject = nlohmann::json::parse(reader);
+        } catch (const nlohmann::json::parse_error& e) {
+            return {};
+        }
+        
+        if (!jsonObject.is_object()) {
+            throw std::runtime_error("Parsed JSON is not an object");
+        }
+
+        CookieMap cookiesData;
+        for (auto it = jsonObject.begin(); it != jsonObject.end(); ++it) {
+            cookiesData[it.key()] = it.value().get<std::string>();
+        }
+        return cookiesData;
+    }
+
+    bool _saveCookies() {
+        std::ofstream file(cookiesFile);
+        if (!file.is_open()) {
+            return false;
+        }
+        nlohmann::json jsonObject = nlohmann::json::object();
+        if (cookies.has_value()) {
+            for (const auto& kv : cookies.value()) {
+                jsonObject[kv.first] = kv.second;
+            }
+        }
+        file << jsonObject.dump();
+        file.flush();
+        return file.good();
+    }
+
+    void setCookies(CookieMap& request) {
+        std::string cookiesString;
+        if (cookies.has_value()) {
+            for (const auto& kv : cookies.value()) {
+                if (!cookiesString.empty()) {
+                    cookiesString += "; ";
+                }
+                cookiesString += kv.first + "=" + kv.second;
+            }
+        }
+        request["cookies"] = cookiesString;
+    }
+};
+
+} // namespace example
+} // namespace org
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <unordered_map>
+#include <optional>
+#include <fstream>
+#include <stdexcept>
+#include <nlohmann/json.hpp>
+
+namespace org {
+namespace example {
+
+using CookieMap = std::unordered_map<std::string, std::string>;
+
+class CookiesUtil {
+private:
+    std::string cookiesFile;
+    std::optional<CookieMap> cookies;
+
+public:
+    CookiesUtil(const std::string& cookiesFile)
+        : cookiesFile(cookiesFile), cookies(std::nullopt) {}
+
+    void getCookies(const std::unordered_map<std::string, CookieMap>& response) {
+        auto it = response.find("cookies");
+        if (it != response.end()) {
+            cookies = it->second;
+        } else {
+            cookies = std::nullopt;
+        }
+        _saveCookies();
+    }
+
+    CookieMap loadCookies() {
+        std::ifstream reader(cookiesFile);
+        if (!reader.is_open()) {
+            return {};
+        }
+        nlohmann::json jsonObject;
+        try {
+            jsonObject = nlohmann::json::parse(reader);
+        } catch (const nlohmann::json::parse_error& e) {
+            return {};
+        }
+        
+        if (!jsonObject.is_object()) {
+            throw std::runtime_error("Parsed JSON is not an object");
+        }
+
+        CookieMap cookiesData;
+        for (auto it = jsonObject.begin(); it != jsonObject.end(); ++it) {
+            cookiesData[it.key()] = it.value().get<std::string>();
+        }
+        return cookiesData;
+    }
+
+    bool _saveCookies() {
+        std::ofstream file(cookiesFile);
+        if (!file.is_open()) {
+            return false;
+        }
+        nlohmann::json jsonObject = nlohmann::json::object();
+        if (cookies.has_value()) {
+            for (const auto& kv : cookies.value()) {
+                jsonObject[kv.first] = kv.second;
+            }
+        }
+        file << jsonObject.dump();
+        file.flush();
+        return file.good();
+    }
+
+    void setCookies(CookieMap& request) {
+        std::string cookiesString;
+        if (cookies.has_value()) {
+            for (const auto& kv : cookies.value()) {
+                if (!cookiesString.empty()) {
+                    cookiesString += "; ";
+                }
+                cookiesString += kv.first + "=" + kv.second;
+            }
+        }
+        request["cookies"] = cookiesString;
+    }
+};
+
+} // namespace example
+} // namespace org

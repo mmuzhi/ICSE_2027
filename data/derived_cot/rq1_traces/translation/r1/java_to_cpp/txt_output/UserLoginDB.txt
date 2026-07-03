@@ -1,0 +1,814 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+public class UserLoginDB {
+    private Connection connection;
+
+    public UserLoginDB(String dbName) {
+        try {
+            connection = DriverManager.getConnection("jdbc:sqlite:" + dbName);
+            createTable();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void createTable() {
+        String createTableQuery = "CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)";
+        try (PreparedStatement pstmt = connection.prepareStatement(createTableQuery)) {
+            pstmt.execute();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void insertUser(String username, String password) {
+        String insertQuery = "INSERT INTO users (username, password) VALUES (?, ?)";
+        try (PreparedStatement pstmt = connection.prepareStatement(insertQuery)) {
+            pstmt.setString(1, username);
+            pstmt.setString(2, password);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public String searchUserByUsername(String username) {
+        String searchQuery = "SELECT * FROM users WHERE username = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(searchQuery)) {
+            pstmt.setString(1, username);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("username") + "," + rs.getString("password");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    public void deleteUserByUsername(String username) {
+        String deleteQuery = "DELETE FROM users WHERE username = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(deleteQuery)) {
+            pstmt.setString(1, username);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public boolean validateUserLogin(String username, String password) {
+        String user = searchUserByUsername(username);
+        if (user != null) {
+            String[] parts = user.split(",");
+            return parts[1].equals(password);
+        }
+        return false;
+    }
+
+    public void close() {
+        try {
+            if (connection != null) {
+                connection.close();
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+=== REASONING ===
+<think>
+
+We are translating Java JDBC code to C++. Since C++ doesn't have a built-in SQLite library, we will use the SQLite C API or a wrapper.
+ However, the problem says to keep behavior identical and use idiomatic C++ only when it doesn't change behavior.
+ We'll use the SQLite C API to mimic the behavior.
+
+ Steps:
+ 1. We'll use the sqlite3 library (which is a C library, but we can use it in C++).
+ 2. We need to include <sqlite3.h> and link against the sqlite3 library.
+ 3. We'll create a class UserLoginDB that has a sqlite3* instead of Connection.
+ 4. We'll mimic the methods: constructor, createTable, insertUser, searchUserByUsername, deleteUserByUsername, validateUserLogin, and close.
+ 5. We'll handle errors by printing to stderr (like e.printStackTrace() in Java).
+
+ Note: The Java code uses PreparedStatement and ResultSet. We'll use sqlite3_prepare_v2, sqlite3_bind_text, sqlite3_step, etc.
+
+ Important: The Java code returns a string in the format "username,password" from searchUserByUsername. We'll do the same.
+
+ We'll manage resources (like closing the database in the destructor) and use RAII where appropriate.
+
+ However, note the problem says "Keep behavior identical", so we won't change the design (like using RAII for connections) if it changes behavior? 
+ But in C++ we must manage resources safely. We'll add a destructor to close the connection.
+
+ Let's design:
+
+ Class UserLoginDB:
+   private: sqlite3 *db;
+
+ Methods:
+   Constructor: takes a dbName (string) and opens the database. Then calls createTable.
+   createTable: executes the CREATE TABLE IF NOT EXISTS query.
+   insertUser: inserts a user with username and password.
+   searchUserByUsername: returns a string "username,password" if found, else nullptr (or we can return an empty string? The Java returns null). We'll return a string, and if not found, return an empty string? Actually, the Java returns null. We can return a null pointer? But the function returns string. Alternatively, we can use std::optional, but the problem says to keep behavior identical. So we return a string and if not found, we return an empty string? But note: the Java code returns null. We can return a null pointer only if we return a pointer. Instead, let's return a string and if not found, return an empty string? But then validateUserLogin would break because it checks for null.
+
+ Alternatively, we can change the return type to return a pointer? But that changes the interface.
+
+ Since the problem says "Keep behavior identical", we must return a null when not found? In C++, we cannot return null for a string. So we have two options:
+
+ Option 1: Return a pointer to a string (i.e., std::string*) and return nullptr for not found. But that would require the caller to manage memory? Not good.
+
+ Option 2: Use an output parameter and return a boolean (like the C API does). But that changes the interface.
+
+ Option 3: Return an empty string and then in validateUserLogin check for empty string? But then the behavior is not identical: the Java code returns null and we return empty string. Then in validateUserLogin, the condition `if (user != null)` becomes `if (!user.empty())`. But what if there is a user with empty username and password? Then the Java code would return a non-null string and we would return a non-empty string. So it would work? However, note that the Java code returns a string in the format "username,password", so if the username is empty, the string would be ",password". So it's non-empty. Therefore, returning an empty string for "not found" is acceptable? Actually, the Java code returns null. We must mimic that.
+
+ Alternatively, we can use std::optional<std::string>. But the problem says "use idiomatic C++ only when it doesn't change behavior". Using optional would change the interface? The caller would have to check differently. So we avoid.
+
+ How about we return a unique_ptr<string>? That is heavy and changes the caller.
+
+ Given the constraints, I propose we change the return type to return a string and use a special value for not found? But the Java code returns null. We cannot return null for a string.
+
+ Another idea: we can throw an exception? But the Java code doesn't throw, it returns null.
+
+ Alternatively, we can return a boolean and pass the result by reference? Let me see the usage:
+
+ In validateUserLogin, we have:
+   String user = searchUserByUsername(username);
+   if (user != null) { ... }
+
+ We can change searchUserByUsername to:
+   bool searchUserByUsername(const std::string& username, std::string& result);
+
+ Then if found, return true and set result = username + "," + password; else false.
+
+ But the problem says to keep the behavior identical, meaning the same inputs and outputs. This changes the method signature.
+
+ After reconsideration, note that the problem says: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". So we must have the same method signatures? Or at least the same external behavior?
+
+ The Java method signature: public String searchUserByUsername(String username)
+
+ We cannot return a String and null in C++. Therefore, we have to return a pointer? Or we can return a string and use a magic value? But that would be error prone.
+
+ Alternatively, we can return a dynamically allocated string and return nullptr for not found? Then the caller must free? That is not idiomatic and error prone.
+
+ Since we are translating for a specific usage (only used by validateUserLogin which checks for null), and the original Java returns null, we can return a char* (and then the caller would compare to nullptr). But then we are using C-style.
+
+ Or we can return a std::unique_ptr<std::string>? Then the caller would use it as:
+
+   auto user = searchUserByUsername(username);
+   if (user) {
+        ... use *user ...
+   }
+
+ This is acceptable? But the original Java code uses a String. So the caller code would change? The problem says to keep behavior identical, meaning the same inputs/outputs? The inputs are the same, but the output type is different? And the usage in validateUserLogin would change.
+
+ Alternatively, we can change the entire class to be as close as possible? Since the problem says "translate", we are allowed to change the internal implementation but not the external behavior.
+
+ The external behavior of the class is:
+   - insertUser: inserts a user, no return.
+   - searchUserByUsername: returns a string of the form "username,password" if found, else null.
+   - deleteUserByUsername: deletes a user, no return.
+   - validateUserLogin: returns true if the user exists and password matches, else false.
+
+ How about we implement searchUserByUsername to return a std::string, and if not found, we return an empty string? Then in validateUserLogin, we change:
+
+   Original: if (user != null) { ... }
+   Ours: if (!user.empty()) { ... }
+
+ But what if there is a user with empty username and password? Then the string would be ",", which is non-empty. So it would work? Actually, the username cannot be empty? The Java code does not prevent that. But note: the delete and search by username use the username. If we have an empty username, then we can have a user with empty username. Then:
+
+   In Java: searchUserByUsername("") would return a non-null string (if exists).
+   In C++: we would return a non-empty string.
+
+   But what if we search for a non-existent user? We return an empty string? Then:
+
+      validateUserLogin for non-existent user: user.empty() -> false -> returns false.
+
+   In Java: returns false.
+
+   So the behavior is the same? Yes.
+
+   However, what if we have a user with an empty string as username? Then:
+
+      In Java: searchUserByUsername("") returns a string (non-null) -> then we split and check password -> returns true if password matches.
+
+      In C++: we return a non-empty string -> then split and check password -> same.
+
+   And what if we have two users: one with username "a" and one with ""? Then searching for "a" returns "a,pass", and for "" returns ",pass". Both non-empty.
+
+   Therefore, using an empty string to represent "not found" is safe because the username in the database cannot be null? Actually, the table allows any string. But note: the username is used as a key? The original code does not enforce uniqueness. But that's the same.
+
+   However, what if the user has an empty string as username? Then we cannot distinguish between that and not found? Actually, we can: because if we search for a username that does not exist, we return empty string. If we search for an existing username that is empty, we return a non-empty string (with two commas? Actually, the string would be "," + password). So it's non-empty.
+
+   Therefore, we can use:
+
+        std::string searchUserByUsername(const std::string& username) {
+            ... if found, return username + "," + password;
+            ... else return std::string(); // empty string
+        }
+
+   Then in validateUserLogin:
+
+        std::string user = searchUserByUsername(username);
+        if (!user.empty()) {
+            // split the string by comma
+            // but note: what if the username or password contains a comma?
+            // The Java code does the same: it uses split(",") which is not safe if there are commas in the username or password.
+            // So we are mimicking that flaw.
+
+            size_t pos = user.find(',');
+            if (pos == std::string::npos) {
+                // This should not happen because we stored it as "username,password"
+                return false;
+            }
+            std::string storedPassword = user.substr(pos+1);
+            return storedPassword == password;
+        }
+        return false;
+
+   But wait, the original Java code does:
+
+        String[] parts = user.split(",");
+        return parts[1].equals(password);
+
+   This would break if the username has a comma? Because then parts[1] would be only part of the password? Or the rest? Actually, split(",") in Java returns an array of all parts. So if the username is "a,b" and password is "c", then the string is "a,b,c" and split gives ["a", "b", "c"] -> parts[1] is "b", which is not the password. So it fails.
+
+   We are mimicking the same flaw? We are using the same method: we are returning a string with a comma. So we must split on the first comma? Or the last? Actually, the Java split uses the entire comma and splits arbitrarily. But note: we are storing exactly two fields. And we are storing without any escaping.
+
+   The Java code is flawed. We are going to mimic the flaw? Yes, because the problem says "keep behavior identical".
+
+   Alternatively, we can note that the Java code uses the comma as a separator and the split will break if there is a comma in the username or password. But that's the same as in the Java code.
+
+   Therefore, we'll use the same approach: return a string with the format: username + "," + password.
+
+   However, we must be cautious: the Java code does not escape commas. So we don't either.
+
+ Implementation:
+
+   We'll use the SQLite C API.
+
+   Steps for each method:
+
+   Constructor:
+        sqlite3_open(("jdbc:sqlite:" + dbName).c_str(), &db) -> but note: the Java uses "jdbc:sqlite:dbName", which is a JDBC URL. SQLite C API expects a filename. We are not using the jdbc:sqlite: prefix. So we should remove it? Or does the Java code use a filename with that prefix? Actually, the Java code uses that prefix to indicate it's an SQLite database.
+
+   The SQLite C API doesn't understand "jdbc:sqlite:dbname". We need to remove the prefix? Or just pass the dbName as is? Actually, the parameter passed to the constructor is dbName. The Java code does:
+
+        connection = DriverManager.getConnection("jdbc:sqlite:" + dbName);
+
+   In SQLite JDBC, the string after "jdbc:sqlite:" is the filename. So we can pass dbName directly to sqlite3_open.
+
+   But note: the dbName might be a full path? So we don't change it.
+
+   However, the Java code appends "jdbc:sqlite:" to the dbName. So the actual database file name is the string passed? Actually, no: the dbName is the entire database name? Then the Java code uses "jdbc:sqlite:dbName". We don't need the prefix for SQLite C API. So we can do:
+
+        std::string dbFileName = dbName; // but the Java code uses "jdbc:sqlite:" + dbName -> so we should remove the prefix?
+
+   Actually, the constructor is called with a dbName. For example, if we call new UserLoginDB("test.db"), then the Java code opens "jdbc:sqlite:test.db". In SQLite JDBC, that means the file "test.db". So for SQLite C API, we can just open "test.db".
+
+   But what if the dbName is an absolute path? Then the Java code uses "jdbc:sqlite:/absolute/path", and we should open "/absolute/path". So we can remove the prefix "jdbc:sqlite:"? Or we can assume the dbName passed to the constructor does not contain the prefix? Actually, the Java code does:
+
+        connection = DriverManager.getConnection("jdbc:sqlite:" + dbName);
+
+   So the dbName is a string that is the filename. So we can use dbName directly? But note: what if the dbName is "jdbc:sqlite:test.db"? Then we would open a file named "jdbc:sqlite:test.db", which is not intended? Actually, the constructor is called by the user. The user would pass the same dbName? So we assume the dbName is a simple filename or path without the prefix.
+
+   Therefore, we'll use the same dbName string for sqlite3_open.
+
+   But wait: the Java code appends "jdbc:sqlite:" to the dbName. So the C++ code should do the same? Actually, no: because the SQLite C API doesn't need that. We'll just use the dbName as the filename.
+
+   However, to be consistent, if the user passes "test.db", we open "test.db". But the Java code opens the same file? Actually, the JDBC driver interprets "jdbc:sqlite:test.db" as the file "test.db". So we are doing the same.
+
+   Therefore, we can do:
+
+        int rc = sqlite3_open(dbName.c_str(), &db);
+
+   Then createTable: same as Java.
+
+   We'll write helper functions for executing statements and queries.
+
+   We'll use prepared statements for insert, search, delete.
+
+   Error handling: print to stderr.
+
+   We'll write:
+
+        void createTable() {
+            const char* createTableQuery = "CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)";
+            char* errMsg = nullptr;
+            int rc = sqlite3_exec(db, createTableQuery, nullptr, nullptr, &errMsg);
+            if (rc != SQLITE_OK) {
+                std::cerr << "SQL error: " << errMsg << std::endl;
+                sqlite3_free(errMsg);
+            }
+        }
+
+   But note: the Java code uses PreparedStatement even for createTable. We can use sqlite3_exec for simplicity.
+
+   For insert, search, delete: we use prepared statements.
+
+   Example for insertUser:
+
+        void insertUser(const std::string& username, const std::string& password) {
+            const char* insertQuery = "INSERT INTO users (username, password) VALUES (?, ?)";
+            sqlite3_stmt* stmt;
+            int rc = sqlite3_prepare_v2(db, insertQuery, -1, &stmt, nullptr);
+            if (rc != SQLITE_OK) {
+                std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+                return;
+            }
+
+            rc = sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+            if (rc != SQLITE_OK) {
+                std::cerr << "Failed to bind username: " << sqlite3_errmsg(db) << std::endl;
+                sqlite3_finalize(stmt);
+                return;
+            }
+
+            rc = sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+            if (rc != SQLITE_OK) {
+                std::cerr << "Failed to bind password: " << sqlite3_errmsg(db) << std::endl;
+                sqlite3_finalize(stmt);
+                return;
+            }
+
+            rc = sqlite3_step(stmt);
+            if (rc != SQLITE_DONE) {
+                std::cerr << "Insert failed: " << sqlite3_errmsg(db) << std::endl;
+            }
+
+            sqlite3_finalize(stmt);
+        }
+
+   Similarly for others.
+
+   For searchUserByUsername:
+
+        std::string searchUserByUsername(const std::string& username) {
+            const char* searchQuery = "SELECT * FROM users WHERE username = ?";
+            sqlite3_stmt* stmt;
+            int rc = sqlite3_prepare_v2(db, searchQuery, -1, &stmt, nullptr);
+            if (rc != SQLITE_OK) {
+                std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+                return ""; // return empty string for error? But Java returns null only if not found. We'll return empty string for not found, but what about error? We want to mimic: on error, we print and then return null? Actually, the Java code catches SQLException, prints, and returns null. So we do the same: return empty string on error? Or we should return empty string only for not found? And for error, we return empty string? But note: the Java code returns null only for not found? Actually, on error, it also returns null.
+
+            }
+
+            rc = sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+            if (rc != SQLITE_OK) {
+                std::cerr << "Failed to bind username: " << sqlite3_errmsg(db) << std::endl;
+                sqlite3_finalize(stmt);
+                return "";
+            }
+
+            rc = sqlite3_step(stmt);
+            if (rc == SQLITE_ROW) {
+                // get the columns
+                const char* u = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                const char* p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+                std::string result = std::string(u) + "," + std::string(p);
+                sqlite3_finalize(stmt);
+                return result;
+            } else if (rc == SQLITE_DONE) {
+                // not found
+                sqlite3_finalize(stmt);
+                return "";
+            } else {
+                // error
+                std::cerr << "Search failed: " << sqlite3_errmsg(db) << std::endl;
+                sqlite3_finalize(stmt);
+                return "";
+            }
+        }
+
+   But note: the Java code returns null on not found. We are returning empty string. We decided that's acceptable because the caller (validateUserLogin) checks for null and we are checking for empty string. And the behavior is the same for the intended use.
+
+   Similarly, deleteUserByUsername:
+
+        void deleteUserByUsername(const std::string& username) {
+            ... similar to insert ...
+
+   validateUserLogin: same as Java.
+
+   close: 
+        void close() {
+            if (db) {
+                sqlite3_close(db);
+                db = nullptr;
+            }
+        }
+
+   Also, we should add a destructor that calls close.
+
+   The Java code has a close method. We'll do the same.
+
+   Now, what about exceptions? The Java code catches SQLException and prints the stack trace. We catch SQLite errors and print a message.
+
+   We'll write:
+
+        UserLoginDB(const std::string& dbName) {
+            int rc = sqlite3_open(dbName.c_str(), &db);
+            if (rc != SQLITE_OK) {
+                std::cerr << "Cannot open database: " << sqlite3_errmsg(db) << std::endl;
+                // Note: the Java code prints the stack trace and continues? Then the connection is null? We set db to nullptr?
+                db = nullptr;
+                // But then createTable will crash? We should not createTable if db is null.
+                return;
+            }
+            createTable();
+        }
+
+   And in createTable, if db is null, we skip? We'll check for db != nullptr.
+
+   Alternatively, we can throw an exception? But the Java code doesn't throw, it just prints. So we print and set db to null.
+
+   Then in every method, we check if db is null? We can do:
+
+        void createTable() {
+            if (!db) return;
+            ...
+        }
+
+   Similarly for other methods.
+
+   We'll do that.
+
+   Summary:
+
+        class UserLoginDB {
+        private:
+            sqlite3* db;
+
+        public:
+            UserLoginDB(const std::string& dbName) : db(nullptr) {
+                int rc = sqlite3_open(dbName.c_str(), &db);
+                if (rc != SQLITE_OK) {
+                    std::cerr << "Cannot open database: " << sqlite3_errmsg(db) << std::endl;
+                    sqlite3_close(db); // if open fails, db might be set to an error state? According to doc: even if open fails, we should close.
+                    db = nullptr;
+                    return;
+                }
+                createTable();
+            }
+
+            ~UserLoginDB() {
+                close();
+            }
+
+            void close() {
+                if (db) {
+                    sqlite3_close(db);
+                    db = nullptr;
+                }
+            }
+
+            // Other methods: createTable, insertUser, etc. with checks for db not null.
+
+        };
+
+   Now, let's code accordingly.
+
+   Note: We must include <sqlite3.h> and <iostream> and <string>.
+
+   We assume the environment has sqlite3 installed.
+
+   We'll write the code accordingly.
+
+   Important: The SQLite C API returns error messages that we print.
+
+   Let's code step by step.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a Java class that interacts with an SQLite database using JDBC into an equivalent C++ class that uses the SQLite C API. The goal is to maintain identical behavior in terms of database operations, error handling, and resource management.
+
+### Approach
+1. **Database Connection**: Use the SQLite C API to open and manage a database connection.
+2. **Table Creation**: Execute a SQL statement to create the `users` table if it does not exist.
+3. **User Operations**: Implement methods to insert, search, delete, and validate user credentials.
+4. **Resource Management**: Ensure proper opening and closing of the database connection to prevent leaks.
+5. **Error Handling**: Mimic Java's error handling by printing error messages to `stderr` without throwing exceptions.
+
+### Solution Code
+```cpp
+#include <sqlite3.h>
+#include <iostream>
+#include <string>
+#include <cstring>
+
+class UserLoginDB {
+private:
+    sqlite3* db;
+
+    void createTable() {
+        if (!db) return;
+
+        const char* createTableQuery = "CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)";
+        char* errMsg = nullptr;
+        int rc = sqlite3_exec(db, createTableQuery, nullptr, nullptr, &errMsg);
+        if (rc != SQLITE_OK) {
+            std::cerr << "SQL error: " << errMsg << std::endl;
+            sqlite3_free(errMsg);
+        }
+    }
+
+public:
+    UserLoginDB(const std::string& dbName) : db(nullptr) {
+        int rc = sqlite3_open(dbName.c_str(), &db);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Cannot open database: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_close(db);
+            db = nullptr;
+            return;
+        }
+        createTable();
+    }
+
+    ~UserLoginDB() {
+        close();
+    }
+
+    void insertUser(const std::string& username, const std::string& password) {
+        if (!db) return;
+
+        const char* insertQuery = "INSERT INTO users (username, password) VALUES (?, ?)";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(db, insertQuery, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+            return;
+        }
+
+        rc = sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to bind username: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return;
+        }
+
+        rc = sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to bind password: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return;
+        }
+
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            std::cerr << "Insert failed: " << sqlite3_errmsg(db) << std::endl;
+        }
+
+        sqlite3_finalize(stmt);
+    }
+
+    std::string searchUserByUsername(const std::string& username) {
+        if (!db) return "";
+
+        const char* searchQuery = "SELECT * FROM users WHERE username = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(db, searchQuery, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+            return "";
+        }
+
+        rc = sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to bind username: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return "";
+        }
+
+        rc = sqlite3_step(stmt);
+        if (rc == SQLITE_ROW) {
+            const char* u = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            const char* p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            std::string result = std::string(u) + "," + std::string(p);
+            sqlite3_finalize(stmt);
+            return result;
+        } else if (rc == SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            return "";
+        } else {
+            std::cerr << "Search failed: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return "";
+        }
+    }
+
+    void deleteUserByUsername(const std::string& username) {
+        if (!db) return;
+
+        const char* deleteQuery = "DELETE FROM users WHERE username = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(db, deleteQuery, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+            return;
+        }
+
+        rc = sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to bind username: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return;
+        }
+
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            std::cerr << "Delete failed: " << sqlite3_errmsg(db) << std::endl;
+        }
+
+        sqlite3_finalize(stmt);
+    }
+
+    bool validateUserLogin(const std::string& username, const std::string& password) {
+        std::string user = searchUserByUsername(username);
+        if (!user.empty()) {
+            size_t pos = user.find(',');
+            if (pos == std::string::npos) {
+                return false;
+            }
+            std::string storedPassword = user.substr(pos + 1);
+            return storedPassword == password;
+        }
+        return false;
+    }
+
+    void close() {
+        if (db) {
+            sqlite3_close(db);
+            db = nullptr;
+        }
+    }
+};
+```
+
+### Explanation
+1. **Database Connection**: The constructor opens the SQLite database using `sqlite3_open`. If it fails, an error is printed, and the connection is set to `nullptr`.
+2. **Table Creation**: The `createTable` method executes a SQL command to create the `users` table if it doesn't exist, using `sqlite3_exec`.
+3. **Insert User**: The `insertUser` method uses a prepared statement to safely insert user credentials into the database, binding parameters to avoid SQL injection.
+4. **Search User**: The `searchUserByUsername` method retrieves a user by username, returning a comma-separated string of username and password if found, or an empty string otherwise.
+5. **Delete User**: The `deleteUserByUsername` method removes a user from the database using a prepared statement.
+6. **Validate Login**: The `validateUserLogin` method checks if the provided password matches the stored password for a given username.
+7. **Resource Management**: The destructor ensures the database connection is closed, and the `close` method allows explicit closure. Prepared statements are finalized to free resources after use.
+8. **Error Handling**: Errors encountered during database operations are printed to `stderr`, mirroring the Java code's behavior of printing stack traces.
+
+=== TRANSLATED CODE (cpp) ===
+#include <sqlite3.h>
+#include <iostream>
+#include <string>
+#include <cstring>
+
+class UserLoginDB {
+private:
+    sqlite3* db;
+
+    void createTable() {
+        if (!db) return;
+
+        const char* createTableQuery = "CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)";
+        char* errMsg = nullptr;
+        int rc = sqlite3_exec(db, createTableQuery, nullptr, nullptr, &errMsg);
+        if (rc != SQLITE_OK) {
+            std::cerr << "SQL error: " << errMsg << std::endl;
+            sqlite3_free(errMsg);
+        }
+    }
+
+public:
+    UserLoginDB(const std::string& dbName) : db(nullptr) {
+        int rc = sqlite3_open(dbName.c_str(), &db);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Cannot open database: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_close(db);
+            db = nullptr;
+            return;
+        }
+        createTable();
+    }
+
+    ~UserLoginDB() {
+        close();
+    }
+
+    void insertUser(const std::string& username, const std::string& password) {
+        if (!db) return;
+
+        const char* insertQuery = "INSERT INTO users (username, password) VALUES (?, ?)";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(db, insertQuery, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+            return;
+        }
+
+        rc = sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to bind username: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return;
+        }
+
+        rc = sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to bind password: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return;
+        }
+
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            std::cerr << "Insert failed: " << sqlite3_errmsg(db) << std::endl;
+        }
+
+        sqlite3_finalize(stmt);
+    }
+
+    std::string searchUserByUsername(const std::string& username) {
+        if (!db) return "";
+
+        const char* searchQuery = "SELECT * FROM users WHERE username = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(db, searchQuery, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+            return "";
+        }
+
+        rc = sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to bind username: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return "";
+        }
+
+        rc = sqlite3_step(stmt);
+        if (rc == SQLITE_ROW) {
+            const char* u = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+            const char* p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            std::string result = std::string(u) + "," + std::string(p);
+            sqlite3_finalize(stmt);
+            return result;
+        } else if (rc == SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            return "";
+        } else {
+            std::cerr << "Search failed: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return "";
+        }
+    }
+
+    void deleteUserByUsername(const std::string& username) {
+        if (!db) return;
+
+        const char* deleteQuery = "DELETE FROM users WHERE username = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(db, deleteQuery, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+            return;
+        }
+
+        rc = sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Failed to bind username: " << sqlite3_errmsg(db) << std::endl;
+            sqlite3_finalize(stmt);
+            return;
+        }
+
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            std::cerr << "Delete failed: " << sqlite3_errmsg(db) << std::endl;
+        }
+
+        sqlite3_finalize(stmt);
+    }
+
+    bool validateUserLogin(const std::string& username, const std::string& password) {
+        std::string user = searchUserByUsername(username);
+        if (!user.empty()) {
+            size_t pos = user.find(',');
+            if (pos == std::string::npos) {
+                return false;
+            }
+            std::string storedPassword = user.substr(pos + 1);
+            return storedPassword == password;
+        }
+        return false;
+    }
+
+    void close() {
+        if (db) {
+            sqlite3_close(db);
+            db = nullptr;
+        }
+    }
+};

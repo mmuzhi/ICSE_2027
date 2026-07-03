@@ -1,0 +1,543 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.io.*;
+import java.nio.file.*;
+import java.util.zip.*;
+import java.util.logging.*;
+
+public class ZipFileProcessor {
+
+    private static final Logger logger = Logger.getLogger(ZipFileProcessor.class.getName());
+    private final Path zipFilePath;
+
+    public ZipFileProcessor(String zipFileName) {
+        this.zipFilePath = Paths.get(zipFileName);
+    }
+
+    ZipFile readZipFile() {
+        if (Files.notExists(zipFilePath)) {
+            logger.log(Level.SEVERE, "Zip file does not exist: " + zipFilePath.toAbsolutePath());
+            return null;
+        }
+        try {
+            return new ZipFile(zipFilePath.toFile());
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Failed to read the zip file: " + zipFilePath.toAbsolutePath(), e);
+            return null;
+        }
+    }
+
+    public boolean extractAll(String outputDir) {
+        Path outputDirPath = Paths.get(outputDir);
+        try (ZipFile zipFile = readZipFile()) {
+            if (zipFile == null) return false;
+
+            if (Files.notExists(outputDirPath)) {
+                try {
+                    Files.createDirectories(outputDirPath);
+                    logger.info("Created output directory: " + outputDirPath.toAbsolutePath());
+                } catch (IOException e) {
+                    logger.log(Level.SEVERE, "Failed to create output directory: " + outputDirPath.toAbsolutePath(), e);
+                    return false;
+                }
+            }
+
+            zipFile.stream().forEach(entry -> {
+                Path filePath = outputDirPath.resolve(entry.getName());
+                try {
+                    if (entry.isDirectory()) {
+                        if (Files.notExists(filePath)) {
+                            Files.createDirectories(filePath);
+                            logger.info("Created directory: " + filePath.toAbsolutePath());
+                        }
+                    } else {
+                        try (InputStream in = zipFile.getInputStream(entry);
+                             OutputStream out = Files.newOutputStream(filePath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                            byte[] buffer = new byte[1024];
+                            int len;
+                            while ((len = in.read(buffer)) > 0) {
+                                out.write(buffer, 0, len);
+                            }
+                            logger.info("Extracted file: " + filePath.toAbsolutePath());
+                        }
+                    }
+                } catch (IOException e) {
+                    logger.log(Level.SEVERE, "Failed to process entry: " + entry.getName(), e);
+                }
+            });
+
+            return true;
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Failed to extract files from zip: " + zipFilePath.toAbsolutePath(), e);
+            return false;
+        }
+    }
+
+    public boolean extractFile(String fileName, String outputDir) {
+        Path outputDirPath = Paths.get(outputDir);
+        Path filePath = outputDirPath.resolve(fileName);
+        try (ZipFile zipFile = readZipFile()) {
+            if (zipFile == null) return false;
+
+            ZipEntry entry = zipFile.getEntry(fileName);
+            if (entry == null) {
+                logger.warning("File not found in zip: " + fileName);
+                return false;
+            }
+
+            if (Files.notExists(filePath.getParent())) {
+                try {
+                    Files.createDirectories(filePath.getParent());
+                    logger.info("Created parent directory: " + filePath.getParent().toAbsolutePath());
+                } catch (IOException e) {
+                    logger.log(Level.SEVERE, "Failed to create parent directory: " + filePath.getParent().toAbsolutePath(), e);
+                    return false;
+                }
+            }
+
+            try (InputStream in = zipFile.getInputStream(entry);
+                 OutputStream out = Files.newOutputStream(filePath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                byte[] buffer = new byte[1024];
+                int len;
+                while ((len = in.read(buffer)) > 0) {
+                    out.write(buffer, 0, len);
+                }
+                logger.info("Extracted file: " + filePath.toAbsolutePath());
+            }
+
+            return true;
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Failed to extract file: " + fileName, e);
+            return false;
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+Let me translate this Java code to C++ carefully, preserving the behavior as closely as possible.
+
+Key things to handle:
+1. Java's `ZipFile` → C++ needs a zip library. I'll use `libzip` (common C library) or implement using a zip library. Actually, let me use `minizip` or `libzip`. Let me go with `libzip` as it's more modern and commonly available.
+2. Java's `Logger` → I'll use `spdlog` or a simple custom logger. To keep it simple and not add external dependencies beyond what's needed, I'll create a simple logger that mimics Java's logging behavior.
+3. Java's `Path` → C++17 `std::filesystem::path`
+4. Java's `Files` → C++17 `std::filesystem` functions
+5. Java's try-with-resources → RAII patterns in C++
+
+Let me think about the zip library choice. `libzip` is a good choice. It provides:
+- `zip_open` to open zip files
+- `zip_stat_index` to iterate entries
+- `zip_fopen_index` to read entry contents
+- `zip_close` to close
+
+Let me write the C++ code:
+
+```cpp
+#pragma once
+
+#include <string>
+#include <filesystem>
+#include <fstream>
+#include <vector>
+#include <cstring>
+#include <zip.h>
+
+// Simple logger to mimic Java's java.util.logging.Logger
+// In production, you'd use spdlog or similar
+#include <iostream>
+#include <sstream>
+
+namespace fs = std::filesystem;
+
+// Logger levels matching Java's Level
+enum class LogLevel {
+    SEVERE,
+    WARNING,
+    INFO
+};
+
+class Logger {
+private:
+    std::string name_;
+    
+    void log(LogLevel level, const std::string& message, const std::string& exception_msg = "") {
+        const char* level_str = "";
+        switch (level) {
+            case LogLevel::SEVERE: level_str = "SEVERE"; break;
+            case LogLevel::WARNING: level_str = "WARNING"; break;
+            case LogLevel::INFO: level_str = "INFO"; break;
+        }
+        std::cerr << level_str << ": " << message;
+        if (!exception_msg.empty()) {
+            std::cerr << std::endl << exception_msg;
+        }
+        std::cerr << std::endl;
+    }
+
+public:
+    explicit Logger(std::string name) : name_(std::move(name)) {}
+    
+    void severe(const std::string& message) { log(LogLevel::SEVERE, message); }
+    void severe(const std::string& message, const std::string& exc) { log(LogLevel::SEVERE, message, exc); }
+    void warning(const std::string& message) { log(LogLevel::WARNING, message); }
+    void info(const std::string& message) { log(LogLevel::INFO, message); }
+};
+
+// RAII wrapper for libzip's zip_t
+class ZipFile {
+private:
+    zip_t* archive_;
+    bool valid_;
+
+public:
+    explicit ZipFile(const std::string& path) : archive_(nullptr), valid_(false) {
+        int err = 0;
+        archive_ = zip_open(path.c_str(), ZIP_RDONLY, &err);
+        if (archive_ == nullptr) {
+            valid_ = false;
+        } else {
+            valid_ = true;
+        }
+    }
+    
+    ~ZipFile() {
+        if (archive_ != nullptr) {
+            zip_close(archive_);
+        }
+    }
+    
+    // Non-copyable
+    ZipFile(const ZipFile&) = delete;
+    ZipFile& operator=(const ZipFile&) = delete;
+    
+    // Movable
+    ZipFile(ZipFile&& other) noexcept : archive_(other.archive_), valid_(other.valid_) {
+        other.archive_ = nullptr;
+        other.valid_ = false;
+    }
+    
+    ZipFile& operator=(ZipFile&& other) noexcept {
+        if (this != &other) {
+            if (archive_) zip_close(archive_);
+            archive_ = other.archive_;
+            valid_ = other.valid_;
+            other.archive_ = nullptr;
+            other.valid_ = false;
+        }
+        return *this;
+    }
+    
+    bool isValid() const { return valid_; }
+    
+    zip_int64_t getNumEntries() const {
+        if (!valid_) return 0;
+        return zip_get_num_entries(archive_, 0);
+    }
+    
+    struct Entry {
+        std::string name;
+        bool is_directory;
+        zip_uint64_t index;
+    };
+    
+    std::vector<Entry> getEntries() const {
+        std::vector<Entry> entries;
+        if (!valid_) return entries;
+        
+        zip_int64_t num = zip_get_num_entries(archive_, 0);
+        for (zip_int64_t i = 0; i < num; i++) {
+            Entry entry;
+            const char* name = zip_get_name(archive_, i, 0);
+            if (name == nullptr) continue;
+            entry.name = name;
+            entry.index = static_cast<zip_uint64_t>(i);
+            entry.is_directory = (!entry.name.empty() && entry.name.back() == '/');
+            entries.push_back(entry);
+        }
+        return entries;
+    }
+    
+    Entry getEntry(const std::string& fileName) const {
+        Entry entry;
+        entry.index = static_cast<zip_uint64_t>(-1);
+        entry.is_directory = false;
+        
+        if (!valid_) return entry;
+        
+        zip_int64_t idx = zip_name_locate(archive_, fileName.c_str(), 0);
+        if (idx < 0) {
+            return entry;
+        }
+        
+        const char* name = zip_get_name(archive_, idx, 0);
+        if (name == nullptr) return entry;
+        
+        entry.name = name;
+        entry.index = static_cast<zip_uint64_t>(idx);
+        entry.is_directory = (!entry.name.empty() && entry.name.back() == '/');
+        return entry;
+    }
+    
+    bool hasEntry(const std::string& fileName) const {
+        if (!valid_) return false;
+        return zip_name_locate(archive_, fileName.c_str(), 0) >= 0;
+    }
+    
+    bool extractEntry(const Entry& entry, const fs::path& outputPath) const {
+        if (!valid_ || entry.index == static_cast<zip_uint64_t>(-1)) return false;
+        
+        zip_file_t* file = zip_fopen_index(archive_, entry.index, 0);
+        if (file == nullptr) return false;
+        
+        std::ofstream out(outputPath, std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) {
+            zip_fclose(file);
+            return false;
+        }
+        
+        char buffer[1024];
+        zip_int64_t len;
+        while ((len = zip_fread(file, buffer, sizeof(buffer))) > 0) {
+            out.write(buffer, len);
+        }
+        
+        zip_fclose(file);
+        out.close();
+        return true;
+    }
+    
+    zip_t* handle() const { return archive_; }
+};
+
+class ZipFileProcessor {
+private:
+    static Logger logger;
+    fs::path zipFilePath_;
+    
+    std::unique_ptr<ZipFile> readZipFile() {
+        if (!fs::exists(zipFilePath_)) {
+            logger.severe("Zip file does not exist: " + fs::absolute(zipFilePath_).string());
+            return nullptr;
+        }
+        
+        auto zipFile = std::make_unique<ZipFile>(zipFilePath_.string());
+        if (!zipFile->isValid()) {
+            logger.severe("Failed to read the zip file: " + fs::absolute(zipFilePath_).string());
+            return nullptr;
+        }
+        return zipFile;
+    }
+
+public:
+    explicit ZipFileProcessor(const std::string& zipFileName) 
+        : zipFilePath_(zipFileName) {}
+    
+    bool extractAll(const std::string& outputDir) {
+        fs::path outputDirPath(outputDir);
+        
+        auto zipFile = readZipFile();
+        if (zipFile == nullptr) return false;
+        
+        if (!fs::exists(outputDirPath)) {
+            try {
+                fs::create_directories(outputDirPath);
+                logger.info("Created output directory: " + fs::absolute(outputDirPath).string());
+            } catch (const fs::filesystem_error& e) {
+                logger.severe("Failed to create output directory: " + fs::absolute(outputDirPath).string(), e.what());
+                return false;
+            }
+        }
+        
+        auto entries = zipFile->getEntries();
+        for (const auto& entry : entries) {
+            fs::path filePath = outputDirPath / entry.name;
+            try {
+                if (entry.is_directory) {
+                    if (!fs::exists(filePath)) {
+                        fs::create_directories(filePath);
+                        logger.info("Created directory: " + fs::absolute(filePath).string());
+                    }
+                } else {
+                    // Ensure parent directory exists
+                    if (filePath.has_parent_path() && !fs::exists(filePath.parent_path())) {
+                        fs::create_directories(filePath.parent_path());
+                    }
+                    
+                    if (zipFile->extractEntry(entry, filePath)) {
+                        logger.info("Extracted file: " + fs::absolute(filePath).string());
+                    } else {
+                        logger.severe("Failed to process entry: " + entry.name);
+                    }
+                }
+            } catch (const fs::filesystem_error& e) {
+                logger.severe("Failed to process entry: " + entry.name, e.what());
+            }
+        }
+        
+        return true;
+    }
+    
+    bool extractFile(const std::string& fileName, const std::string& outputDir) {
+        fs::path outputDirPath(outputDir);
+        fs::path filePath = outputDirPath / fileName;
+        
+        auto zipFile = readZipFile();
+        if (zipFile == nullptr) return false;
+        
+        auto entry = zipFile->getEntry(fileName);
+        if (entry.index == static_cast<zip_uint64_t>(-1)) {
+            logger.warning("File not found in zip: " + fileName);
+            return false;
+        }
+        
+        if (filePath.has_parent_path() && !fs::exists(filePath.parent_path())) {
+            try {
+                fs::create_directories(filePath.parent_path());
+                logger.info("Created parent directory: " + fs::absolute(filePath.parent_path()).string());
+            } catch (const fs::filesystem_error& e) {
+                logger.severe("Failed to create parent directory: " + fs::absolute(filePath.parent_path()).string(), e.what());
+                return false;
+            }
+        }
+        
+        if (zipFile->extractEntry(entry, filePath)) {
+            logger.info("Extracted file: " + fs::absolute(filePath).string());
+            return true;
+        } else {
+            logger.severe("Failed to extract file: " + fileName);
+            return false;
+        }
+    }
+};
+
+// Static logger definition
+Logger ZipFileProcessor::logger("ZipFileProcessor");
+```
+
+Wait, I need to reconsider some things:
+
+1. The Java code's `readZipFile()` returns a `ZipFile` object directly (which is AutoCloseable), and the callers use try-with-resources. In C++, I'm using `unique_ptr<ZipFile>` which provides RAII.
+
+2. In the Java `extractAll`, when an entry fails to process, it just logs the error but continues with other entries. The method still returns `true`. I need to preserve this behavior.
+
+3. In the Java `extractAll`, for non-directory entries, it doesn't explicitly create parent directories. But in practice, the Java code would fail if the parent directory doesn't exist. However, looking more carefully at the Java code - it does `Files.newOutputStream(filePath, ...)` which would throw if parent doesn't exist. The Java code catches this and logs it. In C++, I should match this behavior. But actually, looking at the Java code more carefully, it just catches the IOException and logs it. So if a file's parent directory doesn't exist, it'll fail and log an error, but continue with other entries.
+
+Actually wait - in the Java code, when iterating through entries, directories come first typically in a well-formed zip. So the parent directories would be created before the files. But if the zip is malformed and doesn't have directory entries, then the file extraction would fail.
+
+Let me reconsider - should I add parent directory creation for file entries? The Java code doesn't explicitly do this. Let me keep it faithful to the Java code and not add extra parent directory creation.
+
+Actually, let me re-read the Java code more carefully:
+
+```java
+zipFile.stream().forEach(entry -> {
+    Path filePath = outputDirPath.resolve(entry.getName());
+    try {
+        if (entry.isDirectory()) {
+            if (Files.notExists(filePath)) {
+                Files.createDirectories(filePath);
+                ...
+            }
+        } else {
+            try (InputStream in = zipFile.getInputStream(entry);
+                 OutputStream out = Files.newOutputStream(filePath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                ...
+            }
+        }
+    } catch (IOException e) {
+        logger.log(Level.SEVERE, "Failed to process entry: " + entry.getName(), e);
+    }
+});
+```
+
+So for non-directory entries, it doesn't create parent directories. If the parent doesn't exist, `Files.newOutputStream` will throw `NoSuchFileException` (an IOException), which is caught and logged. The iteration continues.
+
+I should match this behavior exactly. Let me not add the parent directory creation for file entries in `extractAll`.
+
+But wait, for `extractFile`, the Java code does create parent directories:
+```java
+if (Files.notExists(filePath.getParent())) {
+    try {
+        Files.createDirectories(filePath.getParent());
+        ...
+    }
+}
+```
+
+So I need to handle that in `extractFile` but not in `extractAll` for individual file entries.
+
+Let me also reconsider the `extractEntry` method. In the Java code, if `Files.newOutputStream` fails (e.g., parent doesn't exist), it throws an IOException. In my C++ version, `std::ofstream` would silently fail. Let me make sure I check if the file was opened successfully.
+
+Let me also think about the `extractAll` return value. In the Java code, even if some entries fail, it returns `true` (as long as the zip file was opened successfully). The only way it returns `false` is if `readZipFile()` returns null or if creating the output directory fails. The IOException from the try-with-resources on the ZipFile would also cause it to return false.
+
+Actually wait, let me re-read the Java code's structure more carefully:
+
+```java
+public boolean extractAll(String outputDir) {
+    Path outputDirPath = Paths.get(outputDir);
+    try (ZipFile zipFile = readZipFile()) {
+        if (zipFile == null) return false;
+
+        if (Files.notExists(outputDirPath)) {
+            try {
+                Files.createDirectories(outputDirPath);
+                ...
+            } catch (IOException e) {
+                ...
+                return false;
+            }
+        }
+
+        zipFile.stream().forEach(entry -> {
+            // ... individual entry processing, exceptions caught and logged
+        });
+
+        return true;
+    } catch (IOException e) {
+        // This catches IOException from the try-with-resources (closing the ZipFile)
+        logger.log(Level.SEVERE, "Failed to extract files from zip: " + zipFilePath.toAbsolutePath(), e);
+        return false;
+    }
+}
+```
+
+So the outer try-catch catches IOException from closing the ZipFile. In C++, closing a zip file (via `zip_close`) can fail, but it's less common. I should handle this.
+
+Actually, `zip_close` can return an error if there are issues. Let me handle that in the ZipFile destructor or make it checkable.
+
+Hmm, but in C++ destructors shouldn't throw. Let me just log the error in the destructor if `zip_close` fails.
+
+Let me also think about the static logger. In Java, it's:
+```java
+private static final Logger logger = Logger.getLogger(ZipFileProcessor.class.getName());
+```
+
+In C++, I'll use a static member. But to avoid the static initialization order fiasco, I could use a function-local static. Let me keep it simple with a static member.
+
+Actually, let me reconsider the overall structure. The Java code uses `java.util.zip.ZipFile` which is a standard library class. In C++, there's no standard zip library, so I need to use a third-party one. `libzip` is a good choice.
+
+Let me also think about the `readZipFile()` method. In Java, it's package-private (no access modifier). In C++, I'll make it private since there's no package concept.
+
+Wait, actually in Java, the absence of an access modifier means package-private. In C++, the closest equivalent would be making it private since we can't have package-level access. But since `readZipFile` is only used within the class, making it private is fine.
+
+Let me finalize the code. I also need to handle the case where `zipFilePath_.parent_path()` might be empty (e.g., if the zip file path is just a filename). The `fs::absolute()` function should handle this correctly.
+
+One more thing - in the Java code, `readZipFile()` returns `null` on failure. In my C++ code, I return `nullptr`. The behavior is equivalent.
+
+Let me also handle the `extractEntry` method more carefully. If `std::ofstream` fails to open, I should return false. Let me add that check.
+
+Also, I realize I should not add parent directory creation in `extractAll` for file entries since the Java code doesn't do that. But I should make sure the error handling is correct - if the output file can't be created because the parent directory doesn't exist, it should be caught and logged.
+
+Let me revise the code:
+
+```cpp
+bool extractEntry(const Entry& entry, const fs::path& outputPath) const {
+    if (!
+</think>
+
+=== RAW ANSWER ===
+
+
+=== TRANSLATED CODE (cpp) ===
+

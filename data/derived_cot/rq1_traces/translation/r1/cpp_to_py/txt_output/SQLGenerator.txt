@@ -1,0 +1,463 @@
+=== SOURCE CODE (cpp) ===
+
+#include <sstream>
+#include <algorithm>
+
+#include <string>
+#include <vector>
+#include <map>
+
+class SQLGenerator {
+public:
+    SQLGenerator(const std::string& table_name);
+
+    std::string select(const std::vector<std::string>& fields = {}, const std::string& condition = "") const;
+    std::string insert(const std::map<std::string, std::string>& data) const;
+    std::string update(const std::map<std::string, std::string>& data, const std::string& condition) const;
+    std::string delete_query(const std::string& condition) const;
+    std::string select_female_under_age(int age) const;
+    std::string select_by_age_range(int min_age, int max_age) const;
+
+private:
+    std::string table_name;
+};
+
+
+SQLGenerator::SQLGenerator(const std::string& table_name) : table_name(table_name) {}
+
+
+std::string SQLGenerator::select(const std::vector<std::string>& fields, const std::string& condition) const {
+    std::string fields_str = "*";
+    if (!fields.empty()) {
+        fields_str = fields[0];
+        for (size_t i = 1; i < fields.size(); ++i) {
+            fields_str += ", " + fields[i];
+        }
+    }
+
+    std::string sql = "SELECT " + fields_str + " FROM " + table_name;
+    if (!condition.empty()) {
+        sql += " WHERE " + condition;
+    }
+    return sql + ";";
+}
+
+
+std::string SQLGenerator::insert(const std::map<std::string, std::string>& data) const {
+    std::ostringstream fields_stream, values_stream;
+
+    for (auto it = data.begin(); it != data.end(); ++it) {
+        if (it != data.begin()) {
+            fields_stream << ", ";
+            values_stream << ", ";
+        }
+        fields_stream << it->first;
+        values_stream << "'" << it->second << "'";
+    }
+
+    std::string sql = "INSERT INTO " + table_name + " (" + fields_stream.str() + ") VALUES (" + values_stream.str() + ")";
+    return sql + ";";
+}
+
+
+std::string SQLGenerator::update(const std::map<std::string, std::string>& data, const std::string& condition) const {
+    std::ostringstream set_clause_stream;
+
+    for (auto it = data.begin(); it != data.end(); ++it) {
+        if (it != data.begin()) {
+            set_clause_stream << ", ";
+        }
+        set_clause_stream << it->first << " = '" << it->second << "'";
+    }
+
+    std::string sql = "UPDATE " + table_name + " SET " + set_clause_stream.str();
+    if (!condition.empty()) {
+        sql += " WHERE " + condition;
+    }
+    return sql + ";";
+}
+
+
+std::string SQLGenerator::delete_query(const std::string& condition) const {
+    std::string sql = "DELETE FROM " + table_name;
+    if (!condition.empty()) {
+        sql += " WHERE " + condition;
+    }
+    return sql + ";";
+}
+
+
+std::string SQLGenerator::select_female_under_age(int age) const {
+    std::string condition = "age < " + std::to_string(age) + " AND gender = 'female'";
+    return select({}, condition);
+}
+
+
+std::string SQLGenerator::select_by_age_range(int min_age, int max_age) const {
+    std::string condition = "age BETWEEN " + std::to_string(min_age) + " AND " + std::to_string(max_age);
+    return select({}, condition);
+}
+
+
+=== REASONING ===
+<think>
+
+We are translating a C++ class to a Python class.
+ The SQLGenerator class in C++ has a constructor and several methods for generating SQL queries.
+ We'll create a Python class with the same methods.
+
+ Important: We must maintain the same behavior. We are not changing the SQL generation logic.
+
+ Steps:
+ 1. The constructor takes a table_name and stores it.
+ 2. The methods: select, insert, update, delete_query, select_female_under_age, select_by_age_range.
+
+ Implementation notes:
+ - In C++, the `select` method has default parameters (empty vector and empty string). We can do the same in Python.
+ - The `insert` and `update` methods take a map (which in Python is a dictionary). We must iterate in the same order?
+   However, note: in C++, std::map is ordered by key (but the code does not depend on the order because it uses iterators and builds a string by iterating from begin to end, which in C++ for std::map is sorted by key). In Python, dictionaries are insertion ordered (as of Python 3.6+). However, the original C++ code uses the natural sorted order (by key) because std::map is sorted. To mimic this, we should sort the keys when iterating in the Python version for the `insert` and `update` methods? But note: the original C++ code does not sort explicitly; it uses the natural order of the map. In Python, if we want the same behavior (i.e., sorted by key), we should sort the keys. However, the problem says "Keep behavior identical". So we'll sort the keys to mimic std::map's ordering.
+
+ But note: the C++ code uses `std::map` which is sorted by the natural order of the keys (lexicographical for strings). So we will sort the keys in Python.
+
+ However, in the `insert` and `update` methods, the C++ code iterates from `begin()` to `end()`, which is sorted. Therefore, in Python, we should iterate the keys in sorted order.
+
+ Alternatively, we could note that the order of columns in SQL might not matter? But to be safe and identical, we sort.
+
+ But wait: the `insert` method builds two strings: one for the field names and one for the values. They must be in the same order. So we'll sort the keys and then use that sorted list to get both the field and the value.
+
+ Similarly for `update`.
+
+ For the `select` method, if a vector of fields is provided, we join them with commas. If empty, we use "*".
+
+ We'll use string formatting to build the SQL strings.
+
+ Edge: condition string might be empty.
+
+ Also note: in the `insert` and `update` methods, the C++ code escapes the string by putting single quotes around the value? Yes, it does: `values_stream << "'" << it->second << "'";` and similarly for update. So we must do the same in Python. However, note: this is not safe against SQL injection and the original C++ code does not escape quotes inside the string. We are just translating, so we do the same.
+
+ Steps for the methods:
+
+  select(fields, condition):
+      if fields is empty, then fields_str = "*"
+      else: fields_str = ", ".join(fields)
+
+      sql = "SELECT " + fields_str + " FROM " + self.table_name
+      if condition: add " WHERE " + condition
+      then add ";" at the end.
+
+  insert(data):
+      We'll get the keys of the dictionary and sort them.
+      Then we build two strings:
+          fields_str = ", ".join(keys)
+          values_str = ", ".join( [ "'" + data[key] + "'" for key in sorted_keys] )
+      sql = "INSERT INTO " + self.table_name + " (" + fields_str + ") VALUES (" + values_str + ");"
+
+  update(data, condition):
+      sorted_keys = sorted(data.keys())
+      set_clauses = []
+      for key in sorted_keys:
+          set_clauses.append(key + " = '" + data[key] + "'")
+      set_str = ", ".join(set_clauses)
+      sql = "UPDATE " + self.table_name + " SET " + set_str
+      if condition: add " WHERE " + condition
+      then add ";"
+
+  delete_query(condition):
+      sql = "DELETE FROM " + self.table_name
+      if condition: add " WHERE " + condition
+      then add ";"
+
+  select_female_under_age(age):
+      condition = "age < " + str(age) + " AND gender = 'female'"
+      return self.select([], condition)   # note: in C++ it calls select({}, condition) which is an empty vector and the condition string.
+
+  select_by_age_range(min_age, max_age):
+      condition = "age BETWEEN " + str(min_age) + " AND " + str(max_age)
+      return self.select([], condition)
+
+ Let's write the Python class accordingly.
+
+ Note: In Python, we can use default arguments. For the `select` method, we'll set the default for fields to None and condition to an empty string? But note: in C++ the default is an empty vector and an empty string. We can do:
+
+   def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        ... 
+
+ However, note: the C++ code uses an empty vector to mean "select *". We can also do:
+
+   def select(self, fields=None, condition=""):
+        if fields is None or len(fields) == 0:
+            fields_str = "*"
+        else:
+            fields_str = ", ".join(fields)
+
+ But note: the C++ code allows an empty vector explicitly. We can also set the default to an empty list? However, in Python, mutable defaults are usually avoided. But we can set default to None and then if None, use [].
+
+ Alternatively, we can set the default to an empty list? But note: the default argument is mutable. However, since we are not modifying it and just reading, it's safe? But the problem says "Keep behavior identical". Also, the C++ code uses a default empty vector. So we can do:
+
+   def select(self, fields=[], condition=""):
+
+ But note: the danger of mutable defaults: if someone modifies the default, then next call will see the change. However, the C++ code does not have that issue because it's a new empty vector each time? Actually, in C++ the default is constructed each time. In Python, the default is evaluated once at function definition. So to be safe, we use None and then set to [] if None.
+
+ However, the problem says: "Use idiomatic Python only when it doesn't change behavior." So we can use:
+
+   def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        ...
+
+ But note: the original C++ function can be called with an empty vector. In Python, we can also call with an empty list. So we'll do:
+
+   def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        ... 
+
+ But wait: the C++ function has a default of an empty vector. In Python, if we call without the `fields` argument, we want to use the default which is None and then we convert to []. Then fields_str becomes "*". That matches.
+
+ Alternatively, we can set the default to an empty list? But then the default is mutable. Since the function doesn't modify the list, and the caller is not supposed to rely on the same list being passed every time, it might be acceptable? But the problem says "edge cases". To be safe from mutable default side effects, we'll use None.
+
+ However, the C++ code does not have the mutable default issue because it's a new vector each time. So we'll do:
+
+   def select(self, fields=[], condition=""):   # This is acceptable if we don't modify the list? But the problem says we don't change behavior. The C++ code doesn't modify the vector? It only reads.
+
+ But note: if the caller passes a list and then modifies it later, that's the same in both languages. The issue is if the function modifies the default and then the next call sees the modification. We don't modify the list. We only read. So we can use:
+
+   def select(self, fields=[], condition=""):   # safe because we don't mutate fields
+
+ However, to be safe against unintended side effects (if someone uses the same list in multiple calls and mutates it, that's the same in both languages), but the default argument is shared. So to avoid that, we do:
+
+   def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        ...
+
+ But the problem says: "Use idiomatic Python only when it doesn't change behavior." - Using None is idiomatic for avoiding mutable default issues. And it doesn't change the behavior for the intended use (call without specifying fields).
+
+ However, note: in the C++ code, the default is an empty vector. In Python, if we set default to None and then convert to empty list, then:
+
+   - When called without fields, we use [] -> fields_str = "*"
+   - When called with an empty list, we use [] -> fields_str = "*"
+
+ That matches the C++.
+
+ So we'll use:
+
+   def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        ...
+
+ But wait: the C++ code also has a default condition of "". We'll keep that.
+
+ Let's code accordingly.
+
+ However, note: the two helper methods `select_female_under_age` and `select_by_age_range` call `select` with an empty vector explicitly. In Python, we can pass an empty list.
+
+ Implementation:
+
+  class SQLGenerator:
+      def __init__(self, table_name):
+          self.table_name = table_name
+
+      def select(self, fields=None, condition=""):
+          if fields is None:
+              fields = []
+          if not fields:
+              fields_str = "*"
+          else:
+              fields_str = ", ".join(fields)
+          sql = "SELECT " + fields_str + " FROM " + self.table_name
+          if condition:
+              sql += " WHERE " + condition
+          sql += ";"
+          return sql
+
+      def insert(self, data):
+          # We'll sort the keys
+          keys = sorted(data.keys())
+          fields_str = ", ".join(keys)
+          values_str = ", ".join(["'" + data[key] + "'" for key in keys])
+          sql = "INSERT INTO " + self.table_name + " (" + fields_str + ") VALUES (" + values_str + ");"
+          return sql
+
+      def update(self, data, condition):
+          keys = sorted(data.keys())
+          set_items = [key + " = '" + data[key] + "'" for key in keys]
+          set_str = ", ".join(set_items)
+          sql = "UPDATE " + self.table_name + " SET " + set_str
+          if condition:
+              sql += " WHERE " + condition
+          sql += ";"
+          return sql
+
+      def delete_query(self, condition):
+          sql = "DELETE FROM " + self.table_name
+          if condition:
+              sql += " WHERE " + condition
+          sql += ";"
+          return sql
+
+      def select_female_under_age(self, age):
+          condition = "age < " + str(age) + " AND gender = 'female'"
+          return self.select(condition=condition)   # fields is by default None (which becomes []) so we get "*"
+
+      def select_by_age_range(self, min_age, max_age):
+          condition = "age BETWEEN " + str(min_age) + " AND " + str(max_age)
+          return self.select(condition=condition)
+
+ However, note: in `select_female_under_age` and `select_by_age_range`, the C++ code passes an empty vector for fields. In Python, we are calling `self.select` without the `fields` argument, so it uses the default (None) which becomes []. That is the same as the C++.
+
+ But wait: in `select_female_under_age`, the condition string is built as in C++. We use `str(age)` to convert the integer.
+
+ However, note: the condition in `select_by_age_range` uses `BETWEEN` and two integers. We convert the integers to string.
+
+ Important: We are not escaping any special characters in the values. This is the same as the C++ code.
+
+ Let's test with an example.
+
+ Example for insert:
+   data = {"name": "John", "age": "25"}
+   In C++: 
+        fields_stream: "age, name" (sorted by key) -> because std::map sorts by key.
+        values_stream: "'25', 'John'"
+   In Python: we sort keys -> ['age','name'] -> fields_str = "age, name", values_str = "'25', 'John'"
+
+ Example for update: same.
+
+ We are done.
+
+ However, note: the C++ code uses `std::map` and we are using `dict`. The behavior for duplicate keys? But std::map doesn't have duplicates. Similarly, in Python, the keys in the dictionary are unique. So no problem.
+
+ Let's write the code accordingly.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ class that generates SQL queries into an equivalent Python class. The Python class should maintain identical behavior to the original C++ code, including handling inputs, outputs, side effects, and edge cases. The solution involves creating a Python class with methods that mirror the functionality of the C++ class, ensuring that the SQL queries generated are exactly the same.
+
+### Approach
+1. **Constructor Initialization**: The Python class `SQLGenerator` will initialize with a table name, similar to the C++ constructor.
+2. **Select Method**: This method generates a SELECT SQL query. If no fields are specified, it defaults to selecting all fields (`*`). An optional condition can be added to the query.
+3. **Insert Method**: This method generates an INSERT SQL query. The keys of the input dictionary are sorted to maintain the same order as in the C++ `std::map`, ensuring the field names and values are in lexicographical order.
+4. **Update Method**: This method generates an UPDATE SQL query. Similar to the insert method, the keys are sorted to maintain order. The method constructs a SET clause from the key-value pairs.
+5. **Delete Method**: This method generates a DELETE SQL query. An optional condition can be added to the query.
+6. **Specialized Select Methods**: The methods `select_female_under_age` and `select_by_age_range` generate SELECT queries with specific conditions based on age and gender.
+
+### Solution Code
+```python
+class SQLGenerator:
+    def __init__(self, table_name):
+        self.table_name = table_name
+
+    def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        if not fields:
+            fields_str = "*"
+        else:
+            fields_str = ", ".join(fields)
+        sql = "SELECT " + fields_str + " FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        sql += ";"
+        return sql
+
+    def insert(self, data):
+        keys = sorted(data.keys())
+        fields_str = ", ".join(keys)
+        values_str = ", ".join("'" + data[key] + "'" for key in keys)
+        sql = "INSERT INTO " + self.table_name + " (" + fields_str + ") VALUES (" + values_str + ");"
+        return sql
+
+    def update(self, data, condition):
+        keys = sorted(data.keys())
+        set_items = []
+        for key in keys:
+            set_items.append(f"{key} = '{data[key]}'")
+        set_str = ", ".join(set_items)
+        sql = "UPDATE " + self.table_name + " SET " + set_str
+        if condition:
+            sql += " WHERE " + condition
+        sql += ";"
+        return sql
+
+    def delete_query(self, condition):
+        sql = "DELETE FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        sql += ";"
+        return sql
+
+    def select_female_under_age(self, age):
+        condition = f"age < {age} AND gender = 'female'"
+        return self.select(condition=condition)
+
+    def select_by_age_range(self, min_age, max_age):
+        condition = f"age BETWEEN {min_age} AND {max_age}"
+        return self.select(condition=condition)
+```
+
+### Explanation
+- **Constructor**: The `__init__` method initializes the `SQLGenerator` instance with the provided table name.
+- **Select Method**: Constructs a SELECT query. If no fields are specified, it defaults to `*`. An optional condition can be appended using a WHERE clause.
+- **Insert Method**: Constructs an INSERT query by sorting the keys of the input dictionary to ensure consistent field order. The values are enclosed in single quotes as in the original C++ code.
+- **Update Method**: Constructs an UPDATE query by sorting the keys of the input dictionary. The SET clause is built from key-value pairs, with values enclosed in single quotes.
+- **Delete Method**: Constructs a DELETE query. An optional condition can be appended using a WHERE clause.
+- **Specialized Select Methods**: These methods (`select_female_under_age` and `select_by_age_range`) generate SELECT queries with pre-defined conditions based on age and gender parameters, leveraging the main `select` method for query construction.
+
+This approach ensures that the Python implementation behaves identically to the original C++ code, maintaining the same query structure and handling edge cases consistently.
+
+=== TRANSLATED CODE (py) ===
+class SQLGenerator:
+    def __init__(self, table_name):
+        self.table_name = table_name
+
+    def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        if not fields:
+            fields_str = "*"
+        else:
+            fields_str = ", ".join(fields)
+        sql = "SELECT " + fields_str + " FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        sql += ";"
+        return sql
+
+    def insert(self, data):
+        keys = sorted(data.keys())
+        fields_str = ", ".join(keys)
+        values_str = ", ".join("'" + data[key] + "'" for key in keys)
+        sql = "INSERT INTO " + self.table_name + " (" + fields_str + ") VALUES (" + values_str + ");"
+        return sql
+
+    def update(self, data, condition):
+        keys = sorted(data.keys())
+        set_items = []
+        for key in keys:
+            set_items.append(f"{key} = '{data[key]}'")
+        set_str = ", ".join(set_items)
+        sql = "UPDATE " + self.table_name + " SET " + set_str
+        if condition:
+            sql += " WHERE " + condition
+        sql += ";"
+        return sql
+
+    def delete_query(self, condition):
+        sql = "DELETE FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        sql += ";"
+        return sql
+
+    def select_female_under_age(self, age):
+        condition = f"age < {age} AND gender = 'female'"
+        return self.select(condition=condition)
+
+    def select_by_age_range(self, min_age, max_age):
+        condition = f"age BETWEEN {min_age} AND {max_age}"
+        return self.select(condition=condition)

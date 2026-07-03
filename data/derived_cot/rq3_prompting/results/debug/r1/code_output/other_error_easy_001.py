@@ -1,0 +1,23 @@
+class Solution:
+    def sortString(self, s: str) -> str:
+        freq = {}
+        for ch in s:
+            freq[ch] = freq.get(ch, 0) + 1
+        letters = sorted(freq.keys())
+        res = ""
+        while freq:
+            # forward pass (smallest to largest)
+            for ch in letters:
+                if ch in freq:
+                    res += ch
+                    freq[ch] -= 1
+                    if freq[ch] == 0:
+                        del freq[ch]
+            # backward pass (largest to smallest)
+            for ch in letters[::-1]:
+                if ch in freq:
+                    res += ch
+                    freq[ch] -= 1
+                    if freq[ch] == 0:
+                        del freq[ch]
+        return res

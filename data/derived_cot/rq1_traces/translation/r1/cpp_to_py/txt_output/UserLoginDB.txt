@@ -1,0 +1,577 @@
+=== SOURCE CODE (cpp) ===
+
+#include <stdexcept>
+#include <tuple>
+
+#include <winsqlite/winsqlite3.h>
+#include <string>
+#include <memory>
+
+class UserLoginDB {
+public:
+    explicit UserLoginDB(const std::string& db_name);
+    ~UserLoginDB();
+
+    void insert_user(const std::string& username, const std::string& password);
+    std::unique_ptr<std::tuple<std::string, std::string>> search_user_by_username(const std::string& username);
+    void delete_user_by_username(const std::string& username);
+    bool validate_user_login(const std::string& username, const std::string& password);
+
+    void close_connection();
+    void create_table();
+
+private:
+    sqlite3* connection;
+    sqlite3_stmt* stmt;
+    void prepare_statement(const std::string& query);
+    void finalize_statement();
+};
+
+UserLoginDB::UserLoginDB(const std::string& db_name) : connection(nullptr), stmt(nullptr) {
+    if (sqlite3_open(db_name.c_str(), &connection) != SQLITE_OK) {
+        throw std::runtime_error("Cannot open database: " + std::string(sqlite3_errmsg(connection)));
+    }
+    create_table(); 
+}
+
+UserLoginDB::~UserLoginDB() {
+    finalize_statement();
+    if (connection) {
+        sqlite3_close(connection);
+    }
+}
+
+void UserLoginDB::prepare_statement(const std::string& query) {
+    finalize_statement();
+    if (sqlite3_prepare_v2(connection, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+    }
+}
+
+void UserLoginDB::finalize_statement() {
+    if (stmt) {
+        sqlite3_finalize(stmt);
+        stmt = nullptr;
+    }
+}
+
+void UserLoginDB::insert_user(const std::string& username, const std::string& password) {
+    prepare_statement("INSERT INTO users (username, password) VALUES (?, ?)");
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to insert user: " + std::string(sqlite3_errmsg(connection)));
+    }
+    finalize_statement();
+}
+
+std::unique_ptr<std::tuple<std::string, std::string>> UserLoginDB::search_user_by_username(const std::string& username) {
+    prepare_statement("SELECT username, password FROM users WHERE username = ?");
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    std::unique_ptr<std::tuple<std::string, std::string>> user = nullptr;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        user = std::make_unique<std::tuple<std::string, std::string>>(
+            std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0))),
+            std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)))
+        );
+    }
+    finalize_statement();
+    return user;
+}
+
+void UserLoginDB::delete_user_by_username(const std::string& username) {
+    prepare_statement("DELETE FROM users WHERE username = ?");
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to delete user: " + std::string(sqlite3_errmsg(connection)));
+    }
+    finalize_statement();
+}
+
+bool UserLoginDB::validate_user_login(const std::string& username, const std::string& password) {
+    auto user = search_user_by_username(username);
+    if (user && std::get<1>(*user) == password) {
+        return true;
+    }
+    return false;
+}
+
+void UserLoginDB::create_table() {
+    const char* create_table_query = R"(
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT,
+            password TEXT
+        )
+    )";
+    if (sqlite3_exec(connection, create_table_query, nullptr, nullptr, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Cannot create table: " + std::string(sqlite3_errmsg(connection)));
+    }
+}
+
+void UserLoginDB::close_connection() {
+    if (connection) {
+        sqlite3_close(connection);
+        connection = nullptr;
+    }
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to use the built-in sqlite3 module in Python.
+ Since the C++ code uses the WinSQLite3 library, we can map the functionality to Python's sqlite3.
+
+ Important points:
+ - We'll create a class `UserLoginDB` with similar methods.
+ - We'll use the `sqlite3` module and its connection and cursor objects.
+ - In the C++ code, the `stmt` is reused and finalized after each operation. In Python, we typically use a cursor per operation (or we can reuse a cursor but the common practice is to create a cursor for each operation). However, note that the C++ class uses a single `stmt` and finalizes it after each use. We can mimic this by having a cursor as an instance variable, but the common Python practice is to use a new cursor for each operation. However, to keep the behavior identical (especially regarding the state of the prepared statement), we'll manage a single cursor and close it appropriately.
+
+ But note: the C++ code uses `sqlite3_stmt* stmt` and prepares a statement, then uses it, then finalizes it. In Python, we can use a cursor for each operation and then close it (which is similar to finalizing). However, the C++ class uses the same `stmt` variable for every operation and finalizes it before preparing a new one. We can do the same in Python by having a single cursor and reusing it, but note that the Python sqlite3 cursor is not designed to be reused after being closed. Instead, we can create a new cursor for each operation and then close it. This is safe and common.
+
+ However, the requirement says: "Keep behavior identical". The C++ code uses one prepared statement at a time and finalizes it after each operation. We can do the same in Python by having a cursor that we close after each operation and then create a new one for the next.
+
+ Alternatively, we can use the connection's `execute` method which creates a temporary cursor, but that doesn't allow parameter binding in the same way for all operations (especially step). Instead, we'll create a cursor for each operation and close it immediately after, which is the common practice.
+
+ Steps:
+
+ 1. We'll use the `sqlite3` module.
+ 2. In the constructor, we open the database and create the table.
+ 3. We'll have a connection object and a cursor object. However, note that the C++ code does not keep a cursor (statement) open for the entire lifetime of the object. Instead, it prepares, steps, and finalizes for each operation. Therefore, in Python we can create a cursor for each operation and then close it.
+
+ But note: the C++ class has a member `stmt` that is used for the current operation. We can have a member `cursor` that we use similarly. However, the Python cursor is not exactly the same as a prepared statement. We can prepare a statement and then execute it with parameters, but the Python DB-API does not separate prepare and step as explicitly. We can use `cursor.execute()` which both prepares and executes in one go for a single step. For operations that return multiple rows, we would use `fetchone` or `fetchall`. However, in our case, `search_user_by_username` expects at most one row.
+
+ Let's map the operations:
+
+ - `prepare_statement`: In Python, we don't explicitly prepare and then bind. We use `cursor.execute(query, parameters)` which does both. Therefore, we can avoid having a separate `prepare_statement` method.
+
+ However, the requirement says to keep behavior identical. We are allowed to change the internal structure as long as the external behavior (inputs, outputs, side effects, exceptions) remains the same.
+
+ We note that the C++ class throws exceptions on errors. We'll do the same in Python by raising exceptions.
+
+ Proposed changes:
+
+ - Instead of having a `stmt` member, we'll create a new cursor for each database operation and close it when done. This is safe and avoids state issues.
+
+ Alternatively, we can have a single cursor and reuse it, but then we must reset it and close it appropriately. However, the Python `cursor` doesn't have a `finalize` method, so we close it and then create a new one for the next operation.
+
+ But note: the C++ code does not keep the statement open between operations. So we can mimic by having a cursor that we close after each operation.
+
+ However, the C++ class has a `finalize_statement` method that is called at the beginning of `prepare_statement` and at the end of each operation. We'll do:
+
+   For each operation:
+      cursor = connection.cursor()
+      try:
+          execute the operation with cursor
+      finally:
+          cursor.close()
+
+ But note: the C++ class also finalizes the statement in the destructor. We'll do the same in the Python class's `__del__` method? However, in Python it's better to use context managers or explicit close. Also, the `close_connection` method is provided.
+
+ We'll design:
+
+   - `__init__`: opens the connection and creates the table.
+   - `close_connection`: closes the connection and sets it to None.
+   - `__del__`: calls `close_connection` and also if there's an open cursor, closes it? Actually, we are not keeping a cursor open beyond the life of a method. So we don't need to worry about the cursor in the destructor.
+
+ Let's implement:
+
+   We'll have:
+      self.conn   # the sqlite3 connection
+      self.cursor = None   # we won't keep it open, so we can remove this?
+
+ Actually, we don't need to keep a cursor as an instance variable because we create and close it in each method.
+
+ But note: the C++ code uses the same `stmt` for every operation. We don't need to mimic that exactly because the behavior of the database is independent of the cursor (as long as we commit appropriately, but the C++ code doesn't use transactions). The C++ code uses autocommit mode.
+
+ In Python, by default, sqlite3 uses autocommit mode? Actually, it uses a manual commit by default (unless you set `isolation_level=None`). But note: the C++ code does not explicitly commit because each operation is a single statement that auto-commits.
+
+ However, in Python, when we execute an INSERT or DELETE, we need to commit. But wait: by default, sqlite3 in Python operates in autocommit mode? Actually, no: the default is to open a transaction. We must commit after changes. But the C++ code does not commit explicitly because each statement is auto-commit? Actually, the C++ code uses `sqlite3_step` and then the statement is done and the change is committed? Yes, because in SQLite, each command runs in its own transaction unless you explicitly start a transaction.
+
+ To match the behavior, we should set the isolation level to `None` to enable autocommit. Alternatively, we can commit after each operation. But note: the C++ code does not commit explicitly. So we must set `isolation_level=None` when connecting.
+
+ How the C++ code works: 
+   It opens the database and then runs each command without explicit transactions, so each command is auto-commit.
+
+ In Python, we can do:
+   conn = sqlite3.connect(db_name, isolation_level=None)
+
+ This sets autocommit mode.
+
+ Steps:
+
+   In __init__:
+        self.conn = sqlite3.connect(db_name, isolation_level=None)
+        self.create_table()
+
+   Then for each method that does an operation:
+
+        We'll create a cursor, execute, and then close the cursor.
+
+   However, note: the C++ code uses `sqlite3_prepare_v2` and then binds and steps. In Python, we can do:
+
+        cursor = self.conn.cursor()
+        cursor.execute(query, (parameters,))
+        For SELECT: we fetch the row if exists.
+
+   But note: the C++ code for `search_user_by_username` returns a tuple only if a row exists, else nullptr. In Python, we can return a tuple if exists, else None.
+
+   We'll design:
+
+        def search_user_by_username(self, username):
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("SELECT username, password FROM users WHERE username = ?", (username,))
+                row = cursor.fetchone()
+                if row:
+                    return (row[0], row[1])   # but note: the C++ returns a unique_ptr to a tuple. We can return a tuple or None.
+                else:
+                    return None
+            finally:
+                cursor.close()
+
+   However, the C++ function returns `std::unique_ptr<std::tuple<std::string, std::string>>`. We can return a tuple when exists, else None. Since the caller in Python doesn't care about the smart pointer, we can return None to indicate not found.
+
+   Similarly, for `insert_user` and `delete_user`: we execute and then check the rowcount? Actually, in the C++ code, they throw an exception if `sqlite3_step` doesn't return SQLITE_DONE. In Python, we can check the cursor.rowcount? But note: rowcount might not be set for all operations. Alternatively, we can rely on the fact that if the execute doesn't raise, then it's done. However, the C++ code throws on failure.
+
+   In Python, the `execute` method will raise an exception on error. So we don't need to check. But note: the C++ code throws a specific message. We can catch the exception and re-raise with a similar message? Actually, the Python sqlite3 exceptions are already descriptive. However, to match the exact message, we might need to catch and re-raise. But the requirement says to keep behavior identical, including exceptions.
+
+   Let me see: the C++ code throws `std::runtime_error` with a string that includes the sqlite3 error message. In Python, the `sqlite3` module raises `sqlite3.Error` (and subclasses). We can catch these and raise a `RuntimeError` with the same message? But note: the requirement says to keep exceptions identical. The original code throws `std::runtime_error` which in Python we can map to `RuntimeError`.
+
+   We can do:
+
+        try:
+            ... execute ...
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to ...: {str(e)}")
+
+   But note: the original C++ code includes the error message from `sqlite3_errmsg(connection)`. In Python, the exception `e` should contain the same message? So we can do.
+
+   Alternatively, we can let the sqlite3 exception propagate? But the requirement says "identical". The original code throws `std::runtime_error`, so we should throw `RuntimeError`.
+
+   We'll wrap every operation that might cause an sqlite3 error in a try-except and convert to RuntimeError.
+
+   However, note that the C++ code does not catch exceptions in the destructor. We'll avoid doing anything that might throw in the Python destructor.
+
+   For `__del__` in Python, we should close the connection without throwing. But note: the C++ destructor does:
+        finalize_statement();   // which does nothing if stmt is null
+        if (connection) {
+            sqlite3_close(connection);   // this might fail? but they ignore the return code.
+
+        }
+
+   In Python, when we close the connection, it might raise? Actually, the `close` method of the connection can raise if there's a pending transaction? But we are in autocommit mode and we close the cursor after each operation, so there should be no pending transaction.
+
+   We can ignore any exception in `__del__`? But note: the C++ code ignores (by not checking the return value of `sqlite3_close`). So we can do:
+
+        try:
+            if self.conn:
+                self.conn.close()
+        except:
+            pass
+
+   But actually, the Python `sqlite3` connection's `close` method doesn't raise an exception if the connection is already closed? And if there's an error, it might set a warning? But we are not required to handle it.
+
+   Alternatively, we can call `close_connection` in the destructor? And `close_connection` in the C++ code sets the connection to nullptr after closing. We can do the same.
+
+   Implementation:
+
+        def close_connection(self):
+            if self.conn:
+                try:
+                    self.conn.close()
+                except sqlite3.Error:
+                    # ignore, as in C++ we don't check the error
+                    pass
+                self.conn = None
+
+        def __del__(self):
+            self.close_connection()
+
+   But note: the C++ destructor also finalizes the statement. We don't have a cursor at the instance level, so we don't need to worry.
+
+   However, in the C++ code, the destructor finalizes the statement and then closes the connection. We do the same: we don't have an open cursor at the instance level (because each operation closes its cursor) so we can safely close the connection.
+
+   Now, let's write the methods:
+
+        def create_table(self):
+            query = """
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT,
+                    password TEXT
+                )
+            """
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute(query)
+            except sqlite3.Error as e:
+                raise RuntimeError(f"Cannot create table: {str(e)}")
+            finally:
+                cursor.close()
+
+   Similarly for others.
+
+   But note: the C++ `insert_user` method uses bound parameters. In Python, we do:
+
+        cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+
+   This is safe and avoids SQL injection.
+
+   For `delete_user_by_username`:
+
+        cursor.execute("DELETE FROM users WHERE username = ?", (username,))
+
+   For `validate_user_login`: we call `search_user_by_username` and then compare the password.
+
+   We must note: the `search_user_by_username` returns a tuple (username, password) if found, else None. Then we compare the password.
+
+   However, the C++ code returns a unique_ptr to a tuple. We return a tuple or None, so:
+
+        if user is not None and user[1] == password: ...
+
+   But note: the C++ tuple is (username, password). Our tuple is in the same order.
+
+   One more thing: the C++ `search_user_by_username` returns a unique_ptr which is nullptr if not found. We return None.
+
+   Now, let's code accordingly.
+
+   We'll create the class accordingly.
+
+   Important: We must set the isolation_level to None for autocommit.
+
+   Let's code accordingly.
+
+   Also note: the C++ code uses `SQLITE_STATIC` for binding, meaning it doesn't copy the string and relies on the string being alive for the duration of the step. In Python, the parameters are passed and the cursor's execute method copies them appropriately, so we don't need to worry.
+
+   We'll write the entire class.
+
+   Edge: if the database is already closed? The C++ code does nothing in that case? Actually, the C++ code throws because the connection is invalid. We'll check in each method if the connection is open? Or let the sqlite3 operations fail and then catch? We'll do the latter.
+
+   We'll assume the connection is open until closed. After closing, any operation will fail because the connection is closed. The sqlite3 module will raise `sqlite3.ProgrammingError` if we try to use a closed connection. We can catch that and raise a RuntimeError? But the original C++ code would have undefined behavior if used after close? Actually, the C++ code would try to use the connection pointer which might be closed? And that might crash. We don't want a crash in Python. We can check at the beginning of each method if `self.conn` is None and then throw an exception? But the original C++ code doesn't check. We'll let the sqlite3 module throw and then we catch and convert to RuntimeError.
+
+   Alternatively, we can check at the beginning of each method:
+
+        if not self.conn:
+            raise RuntimeError("Database connection is closed")
+
+   But the original C++ code doesn't do that. It would try to use the connection and then fail with a sqlite error. So we'll rely on the underlying sqlite3 to throw and then convert.
+
+   However, note that the C++ code does not check the connection pointer for null? Actually, in the C++ code, the connection is set to nullptr only in `close_connection`. So after `close_connection`, the connection is nullptr. Then if we call a method, the C++ code would call `prepare_statement` which does `finalize_statement` and then `sqlite3_prepare_v2` on a null connection -> which would crash? Actually, the C++ code passes `connection` to `sqlite3_prepare_v2` which is nullptr -> then it would return an error code? And then throw an exception. We can mimic by not checking and letting the Python sqlite3 module throw when using a closed connection.
+
+   In Python, if we try to use a closed connection, we get:
+
+        sqlite3.ProgrammingError: Cannot operate on a closed database.
+
+   We can catch that and convert to RuntimeError with a similar message? But the original C++ code would throw "Failed to prepare statement: ..." and the message would be from sqlite. The sqlite error for a null connection? Actually, we don't know. So we'll do:
+
+        In each method that uses the connection, we do:
+
+            try:
+                ... use the connection ...
+            except sqlite3.Error as e:
+                raise RuntimeError(...) from e   # but note: we are matching the C++ exception message.
+
+   But wait: the C++ code throws different messages for different operations. We'll mimic that.
+
+   Example for insert_user:
+
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("INSERT ...", (username, password))
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to insert user: {str(e)}")
+
+   Similarly for others.
+
+   However, note: the `create_table` method uses `sqlite3_exec` in C++. In Python, we use `cursor.execute`.
+
+   We are ready to code.
+
+   We'll write the class accordingly.
+
+   Note: the C++ code has a `stmt` member that is used for the current operation. We are replacing that with a temporary cursor in each method.
+
+   We'll write the Python code accordingly.
+
+   One more note: the C++ `search_user_by_username` returns a tuple of two strings. In Python, we return a tuple of two strings? Yes.
+
+   Let's code.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ class that interacts with an SQLite database into Python while maintaining identical behavior. The C++ class manages user login operations such as inserting, searching, deleting, and validating users. The Python implementation should replicate this functionality using Python's `sqlite3` module.
+
+### Approach
+1. **Database Connection**: The Python class will open a connection to an SQLite database in autocommit mode (`isolation_level=None`) to mimic the C++ behavior where each operation is automatically committed.
+2. **Table Creation**: The `users` table will be created if it doesn't exist during initialization.
+3. **Statement Handling**: Each database operation will use a temporary cursor, which is closed immediately after use to avoid resource leaks.
+4. **Error Handling**: SQLite errors will be caught and re-raised as `RuntimeError` with descriptive messages, matching the C++ exception behavior.
+5. **Resource Management**: The database connection will be closed in the `close_connection` method and during garbage collection (`__del__`).
+
+### Solution Code
+```python
+import sqlite3
+
+class UserLoginDB:
+    def __init__(self, db_name):
+        self.conn = None
+        try:
+            self.conn = sqlite3.connect(db_name, isolation_level=None)
+            self.create_table()
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Cannot open database: {str(e)}")
+    
+    def __del__(self):
+        self.close_connection()
+    
+    def close_connection(self):
+        if self.conn:
+            try:
+                self.conn.close()
+            except sqlite3.Error:
+                pass
+            self.conn = None
+    
+    def create_table(self):
+        query = """
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT,
+                password TEXT
+            )
+        """
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(query)
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Cannot create table: {str(e)}")
+        finally:
+            cursor.close()
+    
+    def insert_user(self, username, password):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to insert user: {str(e)}")
+        finally:
+            cursor.close()
+    
+    def search_user_by_username(self, username):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("SELECT username, password FROM users WHERE username = ?", (username,))
+            row = cursor.fetchone()
+            if row:
+                return (row[0], row[1])
+            return None
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to search user: {str(e)}")
+        finally:
+            cursor.close()
+    
+    def delete_user_by_username(self, username):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("DELETE FROM users WHERE username = ?", (username,))
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to delete user: {str(e)}")
+        finally:
+            cursor.close()
+    
+    def validate_user_login(self, username, password):
+        user = self.search_user_by_username(username)
+        if user and user[1] == password:
+            return True
+        return False
+```
+
+### Explanation
+1. **Initialization**: The `__init__` method opens the database connection and creates the `users` table if it doesn't exist. Errors during connection or table creation raise a `RuntimeError`.
+2. **Resource Management**: The `close_connection` method closes the database connection if it's open. The `__del__` method ensures the connection is closed during garbage collection.
+3. **Table Creation**: The `create_table` method executes a SQL query to create the `users` table with `username` and `password` columns.
+4. **User Operations**: 
+   - `insert_user`: Inserts a new user into the database using parameterized queries to prevent SQL injection.
+   - `search_user_by_username`: Searches for a user by username and returns a tuple of (username, password) if found, otherwise `None`.
+   - `delete_user_by_username`: Deletes a user by username.
+   - `validate_user_login`: Validates a user's login credentials by checking if the username exists and the password matches.
+5. **Error Handling**: Each database operation is wrapped in a try-except block to catch SQLite errors and raise `RuntimeError` with a descriptive message, matching the C++ exception behavior.
+6. **Cursor Management**: A new cursor is created for each database operation and closed immediately after use to ensure resources are properly managed.
+
+This Python implementation faithfully replicates the functionality and behavior of the original C++ code while leveraging Python's idiomatic database interaction patterns.
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+
+class UserLoginDB:
+    def __init__(self, db_name):
+        self.conn = None
+        try:
+            self.conn = sqlite3.connect(db_name, isolation_level=None)
+            self.create_table()
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Cannot open database: {str(e)}")
+    
+    def __del__(self):
+        self.close_connection()
+    
+    def close_connection(self):
+        if self.conn:
+            try:
+                self.conn.close()
+            except sqlite3.Error:
+                pass
+            self.conn = None
+    
+    def create_table(self):
+        query = """
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT,
+                password TEXT
+            )
+        """
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(query)
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Cannot create table: {str(e)}")
+        finally:
+            cursor.close()
+    
+    def insert_user(self, username, password):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to insert user: {str(e)}")
+        finally:
+            cursor.close()
+    
+    def search_user_by_username(self, username):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("SELECT username, password FROM users WHERE username = ?", (username,))
+            row = cursor.fetchone()
+            if row:
+                return (row[0], row[1])
+            return None
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to search user: {str(e)}")
+        finally:
+            cursor.close()
+    
+    def delete_user_by_username(self, username):
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("DELETE FROM users WHERE username = ?", (username,))
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to delete user: {str(e)}")
+        finally:
+            cursor.close()
+    
+    def validate_user_login(self, username, password):
+        user = self.search_user_by_username(username)
+        if user and user[1] == password:
+            return True
+        return False

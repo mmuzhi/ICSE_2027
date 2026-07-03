@@ -1,0 +1,935 @@
+=== SOURCE CODE (cpp) ===
+
+#include <sstream>
+#include <utility>
+
+
+#include <string>
+#include <map>
+#include <set>
+#include <tuple>
+#include <functional>
+
+class ArgumentParser {
+public:
+    ArgumentParser();
+    std::tuple<bool, std::set<std::string>> parse_arguments(const std::string& command_string);
+    std::string get_argument(const std::string& key) const;
+    void add_argument(const std::string& arg, bool required = false, const std::string& type = "string");
+
+    std::map<std::string, std::string> arguments;
+    std::set<std::string> required;
+    std::map<std::string, std::string> types;
+    std::map<std::string, std::function<std::string(const std::string&)>> type_converters;
+
+    std::string convert_type(const std::string& arg, const std::string& value) const;
+    void initialize_converters();
+};
+
+ArgumentParser::ArgumentParser()
+{
+    initialize_converters();
+}
+
+std::tuple<bool, std::set<std::string>> ArgumentParser::parse_arguments(const std::string &command_string)
+{
+    std::istringstream iss(command_string);
+    std::string word;
+    std::getline(iss, word, ' '); 
+
+    while (iss >> word)
+    {
+        if (word.find("--") == 0)
+        {
+            auto key_value = word.substr(2);
+            size_t pos = key_value.find('=');
+            std::string key = key_value.substr(0, pos);
+            std::string value = pos == std::string::npos ? "" : key_value.substr(pos + 1);
+            arguments[key] = convert_type(key, value.empty() ? "1" : value);
+        }
+        else if (word.find("-") == 0)
+        {
+            std::string key = word.substr(1);
+            std::string value;
+            char nxt = iss.peek();
+            if (!iss.eof() && iss.peek() != '-')
+            {
+                iss >> value;
+                arguments[key] = convert_type(key, value);
+            }
+            else
+            {
+                arguments[key] = convert_type(key, "1");
+            }
+        }
+    }
+
+    std::set<std::string> missing_args;
+    for (const auto &req : required)
+    {
+        if (arguments.find(req) == arguments.end())
+        {
+            missing_args.insert(req);
+        }
+    }
+
+    return {missing_args.empty(), missing_args};
+}
+
+std::string ArgumentParser::get_argument(const std::string &key) const
+{
+    auto it = arguments.find(key);
+    if (it != arguments.end())
+    {
+        return it->second;
+    }
+    return "";
+}
+
+void ArgumentParser::add_argument(const std::string &arg, bool required, const std::string &type)
+{
+    if (required)
+    {
+        this->required.insert(arg);
+    }
+    types[arg] = type;
+}
+
+std::string ArgumentParser::convert_type(const std::string &arg, const std::string &value) const
+{
+    if (types.find(arg) == types.end())
+    {
+        return value;
+    }
+    auto it = type_converters.find(types.at(arg));
+    if (it != type_converters.end())
+    {
+        return it->second(value);
+    }
+    return value;
+}
+
+void ArgumentParser::initialize_converters()
+{
+    type_converters["int"] = [](const std::string &value)
+    {
+        try
+        {
+            return std::to_string(std::stoi(value));
+        }
+        catch (...)
+        {
+            return value;
+        }
+    };
+
+    type_converters["bool"] = [](const std::string &value)
+    {
+        std::string tmp = value;
+        if (tmp == "True")
+            tmp = "1";
+        if (tmp == "False")
+            tmp = "0";
+        return tmp;
+    };
+}
+
+
+=== REASONING ===
+<think>
+
+We are translating a C++ class `ArgumentParser` to Python.
+ The C++ code uses standard library features and a custom class.
+ We'll create a Python class with the same functionality.
+
+ Steps:
+ 1. The class should have an __init__ method to initialize_converters (if needed).
+ 2. We'll have methods to parse arguments, get an argument, and add an argument.
+ 3. We need to maintain the same behavior for inputs, outputs, and edge cases.
+
+ Note: The C++ code uses a command string and parses for two types of arguments:
+   - Long options: --key=value or --key
+   - Short options: -kvalue or -k
+
+ However, note that the C++ code for short options is a bit non-standard: 
+   - It expects that after a short option, if the next token is not a dash, then that token is the value.
+   - But note: the code uses `iss >> value` which will skip any whitespace. Also, if the next character is a dash, it treats the next token as the value? Actually, the code checks with `iss.peek()` for non '-' and then reads the next token.
+
+ Let's break down the C++ parsing:
+
+   while (iss >> word, ' '):
+      if word starts with "--":
+          Then it expects a key-value pair: key=value or key= or key
+          Actually, the code does: 
+            key_value = word.substr(2)
+            then splits by '='
+
+      else if word starts with "-":
+          Then it checks if the next token (without consuming) is a dash. If not, then it consumes the next token as value.
+
+ But note: the C++ code uses `iss` which is a string stream. The `iss >> word` advances the stream. Then, for the short option, it uses `iss.peek()` to check the next character without consuming it.
+
+ In Python, we'll have to simulate the same behavior.
+
+ However, note: the C++ code for short options does not support multiple short options. For example, `-ab` is not supported because after reading `-a`, the next token is `b` and then the code would try to read the next token (which is `b`) as the value for `a`. Then for `b`, it would see that the next token is not available (or if there is, it would try to read it). But the C++ code does not handle multiple short options.
+
+ Since the problem says to keep behavior identical, we must note that the C++ code does not handle multiple short options. We'll design the Python parser to handle the same.
+
+ Let's design the Python parser:
+
+   We'll split the command string by spaces, but note: the C++ code uses `iss >> word` which skips leading whitespace and uses space as delimiter.
+
+   Steps for parsing:
+
+   tokens = command_string.split()   (this is equivalent to the C++ while (iss >> word))
+
+   Then, for each token:
+
+     if token starts with '--':
+         Let rest = token[2:]
+         Then, split rest by '='. If there's no '=', then the key is rest and value is "" (so we use "1" as per the C++ code? Actually, the C++ code uses "1" for the default value for long options when no value is provided, but note: the C++ code does:
+
+            std::string value = pos == std::string::npos ? "" : key_value.substr(pos + 1);
+
+         Then, in convert_type, if the type is not provided, it returns the value (which is empty string for no value). But note: the add_argument sets a type, and then the conversion is done. However, the C++ code does not set a type for the long option without an equals? Actually, the type is set per key via add_argument.
+
+         But note: the C++ code uses the type map to convert the value. For long options without an equals, the value is taken as empty string. Then, if the type is set, it tries to convert. But if the type is not set, it returns the value (which is empty string). However, the default type is "string", so it would return the empty string.
+
+         But in the C++ code, for long options without an equals, the value is set to "" (empty string) and then converted. The conversion function for a type might not handle empty string.
+
+         The problem says: keep behavior identical. So we must do the same.
+
+     else if token starts with '-' and length>1:
+         Then, it's a short option. We need to extract the key (the part after '-') and then check if there is a value following.
+
+         The C++ code does:
+
+            std::string key = word.substr(1);
+            std::string value;
+            char nxt = iss.peek();
+            if (!iss.eof() && iss.peek() != '-')
+            {
+                iss >> value;
+                arguments[key] = convert_type(key, value);
+            }
+            else
+            {
+                arguments[key] = convert_type(key, "1");
+            }
+
+         However, note: the C++ code uses the same `iss` and has already read the token (the word). Then, it uses `iss.peek()` to look at the next character. But note: the `iss` is at the beginning of the next token. So if the next token is a dash, then it treats it as the end of the short option and uses the default value "1". Otherwise, it reads the next token as the value.
+
+         But note: the C++ code does not handle multiple short options. For example, `-ab` is one token? Actually, in C++ the command string is split by spaces, so `-ab` is one token. Then, the code would take the entire `-ab` as a short option and then try to see if the next character (after reading the token) is a dash. But the next token is the next word. So if the command string is `"-ab"` (without spaces) then the token is `-ab`. Then, the code would set key = "ab", and then look at the next character (which is the next token, if any, or eof). But wait, the token is `-ab` and then the stream is at the next token (if any) or eof.
+
+         Actually, the C++ code does not handle multiple short options. It expects that a short option is a single dash followed by a single letter. So `-ab` is not allowed. The C++ code would treat `-ab` as a token starting with '-' and then set key = "ab", and then try to read the next token as the value (if available) or use the default.
+
+         But note: the C++ code uses `iss` which has already read the token `-ab`. Then, the `iss.peek()` would look at the next token. So if the command string is `"-ab value"`, then the token is `-ab` and the next token is "value". Then, the code would read "value" as the value for "ab". But that is not standard. Standard short options allow `-ab` to mean two options: -a and -b.
+
+         Since the problem says to keep behavior identical, we must note that the C++ code does not support multiple short options. So we don't have to handle that.
+
+         However, let's check the C++ code: the token `-ab` is one token. The code expects that a short option is a single dash followed by one or more letters? Actually, the code does not specify. But note: the code for long options uses two dashes and then the key. For short options, it uses one dash and then the key. The key in the short option is the substring starting from index 1. So if the token is `-ab`, then key becomes "ab". This is not standard. Standard would be to split into two options: -a and -b.
+
+         But the problem says: keep behavior identical. So we must parse the same way as the C++ code. The C++ code does not split multiple letters in a short option. So we are safe.
+
+         However, note: the C++ code does not handle short options with multiple letters as separate options. So if we want to support `-a` and `-b` as two separate options, we cannot because the C++ code would require two tokens: `-a` and `-b`. But if we have `-ab`, it is one token and is treated as one key.
+
+         So in Python, we'll do the same.
+
+ 4. We must also note the required arguments and type conversion.
+
+ Let's design the Python class:
+
+   class ArgumentParser:
+        def __init__(self):
+            self.arguments = {}          # map from key to string value
+            self.required = set()        # set of required keys
+            self.types = {}              # map from key to type string
+            self.type_converters = {}    # map from type string to conversion function
+
+            self.initialize_converters()
+
+        def initialize_converters(self):
+            # We'll define the same converters as in C++
+            self.type_converters = {
+                "int": lambda value: self._convert_int(value),
+                "bool": lambda value: self._convert_bool(value)
+            }
+
+        But note: the C++ code uses a function that might throw, but in Python we can't throw exceptions arbitrarily? Actually, the C++ code catches any exception and returns the original value. We'll do the same.
+
+        However, note: the C++ code uses `std::stoi` which throws if the conversion fails. We'll catch and return the original string.
+
+        But wait, the C++ code for int conversion:
+
+            try
+            {
+                return std::to_string(std::stoi(value));
+            }
+            catch (...)
+            {
+                return value;
+            }
+
+        This returns a string of the integer. But note: the input is a string, and we are converting to an integer and then converting back to string? Actually, the purpose is to convert the string to an integer. But the function returns a string. So it returns the integer as a string.
+
+        However, in the C++ code, the `convert_type` function returns a string. So when we set the argument, it's a string. But the type is "int", so we convert the string to an integer and then back to string? That doesn't change the value. Actually, the conversion for int in C++ code does:
+
+            "123" -> convert to int 123, then to string "123"
+
+        But note: the conversion for bool:
+
+            "True" -> "1", "False" -> "0"
+
+        However, the C++ code for bool returns a string that is either "1" or "0", but note that the type is still string. The conversion function for bool returns a string.
+
+        So in Python, we'll do the same.
+
+        But note: the C++ code for int returns a string. So the type conversion functions must return a string.
+
+        We can define helper functions for the conversion, but note: the type_converters map is from type string to function that takes a string and returns a string.
+
+        Let's define:
+
+            def _convert_int(self, value):
+                try:
+                    return str(int(value))
+                except (ValueError, TypeError):
+                    return value
+
+            def _convert_bool(self, value):
+                if value == "True":
+                    return "1"
+                elif value == "False":
+                    return "0"
+                else:
+                    return value
+
+        But note: the C++ code for bool does not handle other cases. It only changes "True" to "1" and "False" to "0". Otherwise, it returns the value.
+
+        However, note: the C++ code for bool does not handle case sensitivity? The C++ code uses exact string match. In Python, we should do the same.
+
+        But wait, the C++ code for bool:
+
+            std::string tmp = value;
+            if (tmp == "True")
+                tmp = "1";
+            if (tmp == "False")
+                tmp = "0";
+
+        So it's case sensitive. We'll do the same.
+
+        However, note: the C++ code does not handle other boolean values like "true", "TRUE", etc. We stick to the same.
+
+ 5. The parse_arguments method:
+
+        We are given a command_string.
+
+        Steps:
+
+          tokens = command_string.split()
+
+          for token in tokens:
+            if token.startswith('--'):
+                # Extract the rest after '--'
+                rest = token[2:]
+                # Now, split rest by '='
+                if '=' in rest:
+                    key, value_str = rest.split('=', 1)  # split at the first equals
+                else:
+                    key = rest
+                    value_str = ""   # but note: in C++ code, if there's no equals, then value is set to "" and then converted. But the C++ code uses "1" for the default value? Actually, no: in the C++ code, if there's no equals, then value is set to "" and then passed to convert_type. The convert_type function uses the type map to convert. If the type is set, then it uses the converter. But note: the type might be set to "int", then we try to convert "" to int -> which fails and returns "".
+
+                However, note: the C++ code does:
+
+                    std::string value = pos == std::string::npos ? "" : key_value.substr(pos + 1);
+
+                So if there's no '=', then value is "".
+
+                Then, we set the argument for key to the converted value (using convert_type).
+
+            elif token.startswith('-') and len(token) > 1:
+                # Short option
+                key = token[1:]
+                # Now, check the next token (if exists) and if the next character is not a dash.
+
+                # But note: the C++ code uses the same string stream and has already read the token. We are in a new token, so we need to look at the next token.
+
+                # We are iterating tokens. So we can check the next token by looking at the next element in the tokens list.
+
+                # However, note: the C++ code uses the stream's peek. We can simulate by checking the next token.
+
+                # But note: the C++ code reads the next token if it exists and is not a dash. But in our token list, the next token might be a dash. We cannot look at the next token without affecting the iteration.
+
+                # Alternatively, we can use the same method as C++: after the current token, check the next token (if any) and if it starts with a dash, then use the default value "1", else use that token as the value and then remove it from the token list? But note: we are iterating and we don't want to alter the token list.
+
+                # We can do:
+
+                #   if there is a next token and the next token starts with a dash, then use default value "1"
+                #   else, the next token is the value.
+
+                # But note: the C++ code does not remove the next token. It uses the same stream. In our case, we are iterating tokens. We can't remove tokens, so we must change the iteration.
+
+                # Alternatively, we can parse the tokens in a different way: by using a while loop and keeping an index.
+
+                # Let's change the approach: we'll use an iterator and keep track of the current index.
+
+                # However, note: the problem says to keep behavior identical. The C++ code uses a string stream and reads the tokens. We are splitting the string and then iterating. We can do:
+
+                #   tokens = command_string.split()
+                #   i = 0
+                #   while i < len(tokens):
+                #       token = tokens[i]
+                #       i += 1
+                #       ... then for short option, we check tokens[i] if exists and if it starts with '-' then use default, else use tokens[i] as value and then i += 1
+
+                # But note: the C++ code does not remove the token. So if we use the next token as the value, then we must skip it.
+
+                # We can do:
+
+                #   if token starts with '-' and length>1:
+                #       key = token[1:]
+                #       if i+1 < len(tokens) and tokens[i+1].startswith('-'):
+                #           value_str = ""
+                #       else:
+                #           value_str = tokens[i+1]   # but then we must increment i by one more time? Actually, we are already at i, then we take tokens[i+1] and then we set i to i+2.
+
+                # But wait, we are in a for loop. We cannot easily change the index.
+
+                # We can change the loop to a while loop and use an index.
+
+                # Let's restructure the parse_arguments method to use an index.
+
+                # Alternatively, we can use an iterator and then for the short option, if there is a next token and it starts with '-', then use default, else use the next token and then continue.
+
+                # But note: the C++ code does not require the value to be a separate token for short options? Actually, it does: it reads the next token if it exists and is not a dash.
+
+                # We can do:
+
+                #   if token starts with '-' and length>1:
+                #       key = token[1:]
+                #       if there is a next token and the next token starts with '-':
+                #           value_str = ""
+                #       else:
+                #           value_str = tokens[i+1]   # but then we must skip the next token by incrementing i by 1 more time.
+
+                # But we are in a for loop, so we can do:
+
+                #   i = 0
+                #   tokens = command_string.split()
+                #   while i < len(tokens):
+                #       token = tokens[i]
+                #       i += 1
+                #       if token starts with '--':
+                #           ... (long option)
+                #       elif token starts with '-' and len(token)>1:
+                #           key = token[1:]
+                #           if i < len(tokens) and tokens[i].startswith('-'):
+                #               value_str = ""
+                #           else:
+                #               value_str = tokens[i]
+                #               i += 1   # skip the value token
+                #           ... then set the argument
+
+                # But note: the C++ code does not skip the token if it is a short option with a value. It uses the same stream and reads the next token. Then, the next token is consumed. So we must skip it.
+
+                # However, note: the C++ code does not require the value to be a separate token? Actually, it does: the example `-k value` has two tokens.
+
+                # Let's do:
+
+                #   tokens = command_string.split()
+                #   i = 0
+                #   while i < len(tokens):
+                #       token = tokens[i]
+                #       i += 1
+                #       if token.startswith('--'):
+                #           ... (long option)
+                #       elif token.startswith('-') and len(token)>1:
+                #           key = token[1:]
+                #           if i < len(tokens) and tokens[i].startswith('-'):
+                #               value_str = ""
+                #           else:
+                #               value_str = tokens[i]
+                #               i += 1   # we have consumed the value token
+                #           self.arguments[key] = self.convert_type(key, value_str)
+
+                # But note: the C++ code for long options does not use the next token if there is an equals in the same token. We are handling long options separately.
+
+                # However, note: the C++ code for long options does not require the next token if there is an equals. So we are safe.
+
+                # But wait, the C++ code for long options does:
+
+                #   word = token (which is "--key=value")
+                #   then splits the part after "--" by '='.
+
+                # We are doing the same.
+
+                # So let's change the parse_arguments method to use an index.
+
+                # Alternatively, we can use the same method as C++: use a string stream and then read tokens one by one, but then we can use the `peek` method. However, we are splitting the string, so we don't have a stream.
+
+                # Since we are splitting, we can use an index.
+
+ 6. We must also note: the C++ code for long options without an equals sign sets the value to empty string. Then, in convert_type, if the type is set, we try to convert. But note: the type might be "int", then we try to convert empty string to int -> which fails and returns empty string.
+
+ 7. The get_argument method: returns the argument value if exists, else empty string.
+
+ 8. The add_argument method: adds the argument and marks it as required if needed.
+
+ 9. The convert_type method: uses the type_converters dictionary. If the type is not in the type_converters, then it returns the value.
+
+ 10. The required set: we must check at the end which required arguments are missing.
+
+ Let's code accordingly.
+
+ However, note: the C++ code uses a map for arguments, and we are using a dictionary. We must set the argument value for each key.
+
+ Implementation:
+
+   We'll change the parse_arguments method to use an index.
+
+   Steps in parse_arguments:
+
+        tokens = command_string.split()
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            i += 1
+            if token.startswith('--'):
+                # Long option
+                rest = token[2:]
+                if '=' in rest:
+                    # Split the rest into key and value
+                    parts = rest.split('=', 1)
+                    key = parts[0]
+                    value_str = parts[1] if len(parts) > 1 else ""
+                else:
+                    key = rest
+                    value_str = ""
+                # Now, convert the value_str and set the argument
+                self.arguments[key] = self.convert_type(key, value_str)
+
+            elif token.startswith('-') and len(token) > 1:
+                # Short option
+                key = token[1:]
+                if i < len(tokens) and tokens[i].startswith('-'):
+                    # The next token is a short option or a long option? Actually, the C++ code only checks for dash.
+                    value_str = ""
+                else:
+                    value_str = tokens[i]
+                    i += 1   # skip the value token
+                self.arguments[key] = self.convert_type(key, value_str)
+
+            else:
+                # This is not an option? The C++ code doesn't handle it. So we ignore.
+                pass
+
+        Then, check required arguments.
+
+        missing_args = set()
+        for arg in self.required:
+            if arg not in self.arguments:
+                missing_args.add(arg)
+
+        return (missing_args.empty(), missing_args)
+
+ 11. But note: the C++ code does not ignore non-option tokens. It only parses options. So non-option tokens are ignored.
+
+ 12. However, note: the C++ code does not handle short options with multiple letters as separate options. We are not handling that.
+
+ 13. Let's test with a command string:
+
+        Example 1: "--foo=123" -> key="foo", value_str="123", then convert to int -> "123"
+
+        Example 2: "--foo" -> key="foo", value_str="", then convert: if type is int, then convert_type returns "" (because converting empty string to int fails).
+
+        Example 3: "-f5" -> key="f", value_str="5", then convert to int -> "5"
+
+        Example 4: "-f" -> key="f", then check next token: if exists and starts with '-'? In the command string " -f -g", then next token is "-g", which starts with '-', so value_str is empty.
+
+        Example 5: "-f abc" -> key="f", value_str="abc", then convert to int -> "abc"
+
+ 14. But note: the C++ code for short options does not require the value to be a separate token if there is no dash. So in example 5, it uses the next token.
+
+ 15. We must be cautious: the C++ code does not handle short options with multiple letters in one token. So if we have "-ab", then key becomes "ab", and then we check the next token. If there is a next token, we use it, else we use default.
+
+ 16. Now, note: the C++ code does not allow mixing of short and long options in the same token. We are following the same.
+
+ 17. Let's code accordingly.
+
+ 18. One more thing: the C++ code uses `std::istringstream` and `std::getline` with space delimiter. But note: the `iss >> word` reads tokens (with space delimiter). So we are safe with splitting by space.
+
+ 19. We'll now code the Python class.
+
+ 20. We must note: the C++ code initializes the type_converters in the constructor. We do the same.
+
+ 21. We'll define the type_converters as a dictionary in __init__ and then define helper functions for conversion.
+
+ However, note: the C++ code uses a function object for type_converters. We can define the conversion functions as lambda or as helper methods.
+
+ Let's code:
+
+   class ArgumentParser:
+        def __init__(self):
+            self.arguments = {}          # map from key to string value
+            self.required = set()        # set of required keys
+            self.types = {}              # map from key to type string
+            self.type_converters = {}    # map from type string to function that takes string and returns string
+
+            self.initialize_converters()
+
+        def initialize_converters(self):
+            # Define the converters for "int" and "bool"
+            def convert_int(value):
+                try:
+                    return str(int(value))
+                except (ValueError, TypeError):
+                    return value
+
+            def convert_bool(value):
+                if value == "True":
+                    return "1"
+                elif value == "False":
+                    return "0"
+                else:
+                    return value
+
+            self.type_converters = {
+                "int": convert_int,
+                "bool": convert_bool
+            }
+
+        def parse_arguments(self, command_string):
+            tokens = command_string.split()
+            i = 0
+            n = len(tokens)
+            while i < n:
+                token = tokens[i]
+                i += 1
+                if token.startswith('--'):
+                    # Long option
+                    rest = token[2:]
+                    if '=' in rest:
+                        parts = rest.split('=', 1)
+                        key = parts[0]
+                        value_str = parts[1] if len(parts) > 1 else ""
+                    else:
+                        key = rest
+                        value_str = ""
+                    # Convert and set the argument
+                    self.arguments[key] = self.convert_type(key, value_str)
+                elif token.startswith('-') and len(token) > 1:
+                    # Short option
+                    key = token[1:]
+                    if i < n and tokens[i].startswith('-'):
+                        value_str = ""
+                    else:
+                        value_str = tokens[i]
+                        i += 1
+                    self.arguments[key] = self.convert_type(key, value_str)
+                else:
+                    # Not an option, ignore
+                    continue
+
+            # Check for required arguments
+            missing = set()
+            for req in self.required:
+                if req not in self.arguments:
+                    missing.add(req)
+
+            return (len(missing) == 0, missing)
+
+        def get_argument(self, key):
+            return self.arguments.get(key, "")
+
+        def add_argument(self, arg, required=False, type_str="string"):
+            if required:
+                self.required.add(arg)
+            self.types[arg] = type_str
+
+        def convert_type(self, key, value):
+            # If the key is in self.types, then use the corresponding converter.
+            if key in self.types:
+                t = self.types[key]
+                if t in self.type_converters:
+                    return self.type_converters[t](value)
+            return value
+
+ 22. But note: the C++ code does not set the type for a key until add_argument is called. So if we try to convert a key that was not added, then we return the value.
+
+ 23. However, note: the C++ code uses the types map to convert, and if the type is not found, it returns the value. We are doing the same.
+
+ 24. Let's test with a simple example.
+
+ 25. One more note: the C++ code for long options without an equals sign sets the value to empty string. Then, if the type is set, it tries to convert. But note: the type might be set to "int", then we try to convert empty string to int -> which fails and returns empty string.
+
+ 26. In our code, if the type is set to "int", then we call convert_int on empty string -> returns empty string.
+
+ 27. But note: the C++ code for long options without an equals sign sets the value to "" and then passes to convert_type. Our code does the same.
+
+ 28. However, note: the C++ code for long options without an equals sign does:
+
+        std::string value = pos == std::string::npos ? "" : key_value.substr(pos+1);
+
+    This is the same as our code.
+
+ 29. We must note: the C++ code does not require the type to be set for every key. If the type is not set, then the conversion returns the value. We are doing the same.
+
+ 30. Let's run a test case:
+
+        parser = ArgumentParser()
+        parser.add_argument("foo", required=True, type="int")
+        success, missing = parser.parse_arguments("--foo=123")
+        assert success and missing == set() and parser.get_argument("foo") == "123"
+
+        success, missing = parser.parse_arguments("--foo")
+        assert not success and missing == {"foo"} and parser.get_argument("foo") == ""   # but note: the type is int, so converting empty string to int returns "".
+
+        success, missing = parser.parse_arguments("-f123")
+        assert success and missing == set() and parser.get_argument("foo") == "123"
+
+        success, missing = parser.parse_arguments("-f")
+        assert not success and missing == {"foo"} and parser.get_argument("foo") == ""
+
+        success, missing = parser.parse_arguments("-f abc")
+        assert not success and missing == {"foo"} and parser.get_argument("foo") == "abc"
+
+        success, missing = parser.parse_arguments("--foo=abc")
+        assert not success and missing == set() and parser.get_argument("foo") == "abc"
+
+        success, missing = parser.parse_arguments("--foo=123 --bar")
+        # This should parse two options? But note: the bar is not an option we added, so it's ignored.
+
+        But note: the C++ code does not require the option to be recognized. We are only setting the required set for the keys we added.
+
+ 31. One more test for bool:
+
+        parser = ArgumentParser()
+        parser.add_argument("flag", required=True, type="bool")
+        success, missing = parser.parse_arguments("--flag=True")
+        assert success and parser.get_argument("flag") == "1"
+
+        success, missing = parser.parse_arguments("--flag=false")
+        assert not success and parser.get_argument("flag") == "false"
+
+        success, missing = parser.parse_arguments("-ftrue")
+        assert not success and parser.get_argument("flag") == "true"
+
+        success, missing = parser.parse_arguments("-ffalse")
+        assert not success and parser.get_argument("flag") == "false"
+
+        success, missing = parser.parse_arguments("-f")
+        assert not success and parser.get_argument("flag") == ""
+
+ 32. But note: the C++ code for bool does not handle "true" and "false" with different cases. We are matching exactly "True" and "False".
+
+ 33. We are done.
+
+ However, note: the C++ code for the bool conversion function does:
+
+        std::string tmp = value;
+        if (tmp == "True")
+            tmp = "1";
+        if (tmp == "False")
+            tmp = "0";
+
+    We are doing the same.
+
+ 34. Let's code accordingly.
+
+ 35. One more note: the C++ code uses a map for the arguments and for the types. We are using dictionaries.
+
+ 36. We must note: the keys in the arguments and types are the same as the argument names.
+
+ 37. We'll now write the code.
+
+ 38. We must note: the C++ code uses a map for the arguments, which is ordered. But in Python, we are using a dictionary which is unordered. However, the problem does not require order. We are only using the keys.
+
+ 39. We are ready.
+
+ Let's write the code.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ class `ArgumentParser` into an equivalent Python class that maintains the same behavior, including handling command-line arguments, required options, and type conversions. The solution involves creating a Python class with methods that replicate the functionality of the C++ class, ensuring that all edge cases and exceptions are handled identically.
+
+### Approach
+1. **Initialization**: The `__init__` method initializes the necessary data structures (dictionaries for arguments, required keys, types, and type converters) and sets up the default type converters for "int" and "bool".
+
+2. **Parsing Arguments**: The `parse_arguments` method processes the input command string by splitting it into tokens. It handles both long options (e.g., `--key=value`) and short options (e.g., `-kvalue`). For each option, it extracts the key and value, converts the value according to the specified type, and checks for missing required arguments.
+
+3. **Type Conversion**: The `convert_type` method uses a dictionary of converters to transform values based on their specified types. If no converter exists for a type, the value remains unchanged.
+
+4. **Adding Arguments**: The `add_argument` method allows adding keys with optional requirements and types, populating the required set and type map.
+
+5. **Getting Arguments**: The `get_argument` method retrieves the value of a specified key, returning an empty string if the key does not exist.
+
+### Solution Code
+```python
+class ArgumentParser:
+    def __init__(self):
+        self.arguments = {}
+        self.required = set()
+        self.types = {}
+        self.type_converters = {}
+        self.initialize_converters()
+
+    def initialize_converters(self):
+        def convert_int(value):
+            try:
+                return str(int(value))
+            except (ValueError, TypeError):
+                return value
+
+        def convert_bool(value):
+            if value == "True":
+                return "1"
+            elif value == "False":
+                return "0"
+            else:
+                return value
+
+        self.type_converters = {
+            "int": convert_int,
+            "bool": convert_bool
+        }
+
+    def parse_arguments(self, command_string):
+        tokens = command_string.split()
+        i = 0
+        n = len(tokens)
+        while i < n:
+            token = tokens[i]
+            i += 1
+            if token.startswith('--'):
+                rest = token[2:]
+                if '=' in rest:
+                    parts = rest.split('=', 1)
+                    key = parts[0]
+                    value_str = parts[1] if len(parts) > 1 else ""
+                else:
+                    key = rest
+                    value_str = ""
+                self.arguments[key] = self.convert_type(key, value_str)
+            elif token.startswith('-') and len(token) > 1:
+                key = token[1:]
+                if i < n and tokens[i].startswith('-'):
+                    value_str = ""
+                else:
+                    value_str = tokens[i]
+                    i += 1
+                self.arguments[key] = self.convert_type(key, value_str)
+            else:
+                continue
+
+        missing = set()
+        for req in self.required:
+            if req not in self.arguments:
+                missing.add(req)
+
+        return (len(missing) == 0, missing)
+
+    def get_argument(self, key):
+        return self.arguments.get(key, "")
+
+    def add_argument(self, arg, required=False, type_str="string"):
+        if required:
+            self.required.add(arg)
+        self.types[arg] = type_str
+
+    def convert_type(self, key, value):
+        if key in self.types:
+            t = self.types[key]
+            if t in self.type_converters:
+                return self.type_converters[t](value)
+        return value
+```
+
+### Explanation
+- **Initialization**: The `__init__` method sets up the data structures needed for argument parsing and initializes the type converters for "int" and "bool".
+- **Parsing Arguments**: The `parse_arguments` method processes each token from the command string. Long options (starting with `--`) and short options (starting with `-`) are handled separately. The method checks if a value follows the option and converts it using the appropriate type converter.
+- **Type Conversion**: The `convert_type` method uses the registered converters to transform values. If a type is specified but no converter exists, the value remains unchanged.
+- **Adding Arguments**: The `add_argument` method allows specifying required arguments and their types, which are stored for later use during parsing.
+- **Getting Arguments**: The `get_argument` method retrieves the value of a specified key, returning an empty string if the key does not exist.
+
+This solution ensures that the Python class behaves identically to the original C++ class, handling all specified edge cases and maintaining the same functionality.
+
+=== TRANSLATED CODE (py) ===
+class ArgumentParser:
+    def __init__(self):
+        self.arguments = {}
+        self.required = set()
+        self.types = {}
+        self.type_converters = {}
+        self.initialize_converters()
+
+    def initialize_converters(self):
+        def convert_int(value):
+            try:
+                return str(int(value))
+            except (ValueError, TypeError):
+                return value
+
+        def convert_bool(value):
+            if value == "True":
+                return "1"
+            elif value == "False":
+                return "0"
+            else:
+                return value
+
+        self.type_converters = {
+            "int": convert_int,
+            "bool": convert_bool
+        }
+
+    def parse_arguments(self, command_string):
+        tokens = command_string.split()
+        i = 0
+        n = len(tokens)
+        while i < n:
+            token = tokens[i]
+            i += 1
+            if token.startswith('--'):
+                rest = token[2:]
+                if '=' in rest:
+                    parts = rest.split('=', 1)
+                    key = parts[0]
+                    value_str = parts[1] if len(parts) > 1 else ""
+                else:
+                    key = rest
+                    value_str = ""
+                self.arguments[key] = self.convert_type(key, value_str)
+            elif token.startswith('-') and len(token) > 1:
+                key = token[1:]
+                if i < n and tokens[i].startswith('-'):
+                    value_str = ""
+                else:
+                    value_str = tokens[i]
+                    i += 1
+                self.arguments[key] = self.convert_type(key, value_str)
+            else:
+                continue
+
+        missing = set()
+        for req in self.required:
+            if req not in self.arguments:
+                missing.add(req)
+
+        return (len(missing) == 0, missing)
+
+    def get_argument(self, key):
+        return self.arguments.get(key, "")
+
+    def add_argument(self, arg, required=False, type_str="string"):
+        if required:
+            self.required.add(arg)
+        self.types[arg] = type_str
+
+    def convert_type(self, key, value):
+        if key in self.types:
+            t = self.types[key]
+            if t in self.type_converters:
+                return self.type_converters[t](value)
+        return value

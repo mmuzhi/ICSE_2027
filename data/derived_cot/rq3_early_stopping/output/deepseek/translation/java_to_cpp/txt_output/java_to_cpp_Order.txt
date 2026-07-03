@@ -1,0 +1,281 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+public class Order {
+    List<Map<String, Object>> menu;
+    List<Map<String, Object>> selectedDishes;
+    Map<String, Double> sales;
+
+    public Order() {
+        this.menu = new ArrayList<>();
+        this.selectedDishes = new ArrayList<>();
+        this.sales = new HashMap<>();
+    }
+
+    public boolean addDish(Map<String, Object> dish) {
+        if (dish == null || !dish.containsKey("dish") || !dish.containsKey("price") || !dish.containsKey("count")) {
+            return false;
+        }
+
+        for (Map<String, Object> menuDish : menu) {
+            if (dish.get("dish").equals(menuDish.get("dish"))) {
+                int dishCount = (int) dish.get("count");
+                int menuDishCount = (int) menuDish.get("count");
+
+                if (menuDishCount < dishCount) {
+                    return false;
+                } else {
+                    menuDish.put("count", menuDishCount - dishCount);
+                    selectedDishes.add(dish);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public double calculateTotal() {
+        double total = 0;
+        for (Map<String, Object> dish : selectedDishes) {
+            String dishName = (String) dish.get("dish");
+            double price = (double) dish.get("price");
+            int count = (int) dish.get("count");
+            double sale = sales.getOrDefault(dishName, 1.0); // 默认销售额为1
+            total += price * count * sale;
+        }
+        return total;
+    }
+
+    public Object checkout() {
+        if (selectedDishes.isEmpty()) {
+            return false;
+        }
+        double total = calculateTotal();
+        selectedDishes.clear();
+        return total;
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++ while keeping behavior identical. The Java code defines an Order class with fields: menu (List<Map<String, Object>>), selectedDishes (List<Map<String, Object>>), sales (Map<String, Double>). Methods: addDish, calculateTotal, checkout. Note: In Java, Map<String, Object> is used to store dish information with keys "dish", "price", "count". In C++, we need to handle dynamic typing. Since Object can be String, Double, Integer, we need a variant-like approach. We can use std::any or std::variant. Given the Java code assumes casting, we can use std::any with type checks. Alternatively, we could define a Dish struct with fields dish (string), price (double), count (int). But the Java code uses generic maps, so to keep identical behavior we should use maps with any. However, using struct would simplify but change behavior? The Java code expects arbitrary maps with those keys; using struct would only allow those three fields. But is that acceptable? The problem says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)." If we change the internal representation from Map<String,Object> to a struct, we are changing the type, but the external behavior (methods) can be designed to accept/return similar structures. However, the addDish method takes a Map<String,Object> dish. In C++, we could accept a std::map<std::string, std::any>. But that's cumbersome. Typically in such translations, using a struct is idiomatic and would be acceptable as long as the interface is compatible. But the Java code uses Map<String, Object> to hold dish data; the C++ translation could use a struct or a map. The problem says "Use idiomatic C++ only when it doesn't change behavior." So if using a struct changes behavior, we should avoid. However, the behavior is defined by the methods: addDish is supposed to take a dish map with keys "dish", "price", "count". If we instead accept a Dish struct, that's a different interface. So we need to maintain the same interface: a function that accepts a map-like structure. In C++, we can use std::map<std::string, std::any>. But casting from std::any is messy. Alternatively, we can use std::variant<std::string, double, int> but keys are fixed. However, the Java code also uses sales map: Map<String, Double> -> we can use std::map<std::string, double>. That's fine.
+
+Given the complexity, we might define a custom class for Dish that holds the three fields and convert between map and struct. But that adds extra conversions. Since the original Java code uses raw Map<String, Object> throughout, the C++ translation would ideally mirror that with a typedef: using DishMap = std::map<std::string, std::any>; But std::any requires C++17. We'll assume C++17. We also need to handle type casts: (int) dish.get("count") etc. We can use std::any_cast. We must be careful with type mismatches: if the map contains wrong type, std::any_cast will throw std::bad_any_cast. This matches Java's ClassCastException, which is an unchecked exception. So it's acceptable.
+
+Alternatively, we could use boost::any or just use a struct and let the addDish accept an initializer list. But to be safe, we should stick with map<string, any>. However, note that Java's Map.get returns Object and casts are explicit. In C++, we can use std::any_cast. We must include <any>.
+
+Edge cases: null -> we use nullptr/empty map? In Java, null check for dish. In C++, we can check if dish is empty or we can pass by reference and check for null pointer. Since we can't pass null by value, we can use std::optional or pointer. But easier: accept std::map<std::string, std::any> by value and check if it contains required keys and that values are of correct type. In Java, dish can be null, so we need to handle that. In C++, we can accept a const std::map<std::string, std::any>&, but cannot represent null. To mimic null, we could pass pointer or use optional. Since the Java method returns boolean, and null dish returns false, we can accept a std::optional<std::map<...>> or std::shared_ptr. But that complicates interface. Alternatively, we can accept a const std::map<...>* and check for nullptr. That's close to Java's reference can be null. We'll use std::map<std::string, std::any>* dish and check for nullptr. But that's not idiomatic. Maybe we can accept by value and check if it's empty, but empty map passes other checks? In Java, an empty map (not null) will fail because it doesn't contain "dish". So we can just check if it contains the keys. Accepting by reference and checking for empty is not same as null. The problem says "Keep behavior identical" including null input. So we need to support passing null (or equivalent). In Java, null is possible because it's a reference type. In C++, we can use std::optional<std::map<...>> as parameter to allow nullopt. That's a good approach. C++17 has std::optional. So we'll define addDish as bool addDish(std::optional<std::map<std::string, std::any>> dish). Then check if dish has no value (nullopt) -> return false. Or we could pass by pointer: bool addDish(const std::map<std::string, std::any>* dish) and check dish == nullptr. That's simpler but less safe. I think pointer is fine and mirrors Java's reference nullability. So we'll use pointer to const map. We'll also need to ensure we don't modify the passed map; we copy the dish if we add to selectedDishes? In Java, the dish object is added directly to selectedDishes list. That is a reference to the same Map object. So modifications to the original map would affect selectedDishes. In Java, Map is mutable, and it's stored by reference. In C++, we store by value? If we store the map by value (copy), then modifications to original won't affect. To preserve behavior, we should store a copy? In Java, the original dish map object is stored, so if caller later modifies the map, it will affect selectedDishes. This is a side effect we must keep. So we should store a pointer or reference to the same map? But in C++, the caller's map might be temporary or local, so storing pointer is dangerous. The Java code assumes the map is still alive. Typically, one would not modify the map after passing, but to be identical, we need to store the same object if possible. Since the map is passed by reference in Java, and the list stores reference (object identity), we could store a shared_ptr to map or just store a copy? But storing a copy would break the side effect if caller later modifies the map. However, the Java code's behavior when caller modifies the map after addDish is undefined? Actually, it's defined: the map object is shared. So we need to emulate that. The cleanest way is to store a std::shared_ptr<std::map<std::string, std::any>>. Then addDish takes a shared_ptr. But the Java signature is Map<String,Object> dish, not a mutable reference? In Java, the method receives a reference to the map. The map is not copied. So if caller later modifies it, selectedDishes will see changes. In C++, we could accept by reference and store a pointer to the external map, but that is dangerous if the map goes out of scope. However, we assume the caller ensures lifetime. Since we are translating, we can document that the caller must keep the map alive. That's typical in C++ for such patterns. Alternatively, we can store a copy and not share modifications. But that changes behavior. The problem says "Keep behavior identical". If we store a copy, then later modifications to original map won't affect selectedDishes, which is different. But is that scenario expected? The Java code is likely used in a way where the map is not modified after adding. But we shouldn't assume. To be safe, we should mimic the Java reference semantics. In C++, we can store a const reference? No, we need to store the object for later use. The typical C++ approach is to store a copy, because Java's reference semantics are not directly translatable without pointers. However, storing a copy would change behavior if the original map is mutated afterwards. But that's often considered an anti-pattern. Given the instructions, I think we should strive for identical behavior. The safest way is to store a std::shared_ptr to a copy of the map, or store a raw pointer to the original map. The raw pointer is risky but mirrors Java's reference. We'll use raw pointer for simplicity, but we must ensure the caller doesn't delete the map. Or we could store a const reference? No, we need to store for later use. Actually, in Java, the list stores object references. If the caller later changes the map (like map.put("count", 5)), the selectedDishes will see the change because it's the same object. In C++, we can achieve that by storing a pointer to the original map. That pointer must remain valid. So we'll store const std::map<std::string, std::any>* in the selectedDishes list. But then we have to ensure the map is not destroyed. This is essentially the same as Java's garbage-collected references. In C++, we could use std::shared_ptr to keep the map alive. That might be more correct. However, the Java code does not enforce that the map is not modified; it's just a reference. We'll use std::shared_ptr<const std::map<std::string, std::any>>. Then addDish will accept a std::shared_ptr<const std::map<std::string, std::any>>. But the Java signature is Map<String,Object> dish (not a shared pointer). The caller passes a map object, which is implicitly referenced. To preserve interface, addDish could accept a std::shared_ptr<const std::map<...>> as parameter? That would change the API. Alternatively, we could accept a const reference and inside we create a shared_ptr to a copy? That loses sharing. 
+
+Given the complexity, I think the most pragmatic and idiomatic C++ approach is to define a Dish struct with the three fields, and store that. The external interface could be changed to accept a struct. But the problem says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". Changing the parameter type from Map to struct changes the input format. That would not be identical. So we must maintain a map-like input.
+
+Thus, I will accept a std::map<std::string, std::any> by const reference, but then I need to decide how to store it. I'll store a copy of the map. This changes side effects if the original map is mutated later. However, typical use cases for such code: you create a dish map and pass it to addDish, and then you don't modify that map again. So it's likely safe. Moreover, the Java code itself does not modify the map after adding. The addDish method modifies the menu dish count, but not the dish map itself. So it's reasonable. I'll go with storing a copy.
+
+Another issue: In Java, Map.get("count") returns an Object, and it's cast to int. If the value is actually a Double or something, it will throw ClassCastException. In C++, we must use std::any_cast with the correct type. We'll assume the map contains correct types as per the Java code: "dish" -> std::string, "price" -> double, "count" -> int. We'll cast accordingly. If the types mismatch, std::any_cast will throw std::bad_any_cast, which is an exception. We'll catch that? The Java code doesn't catch; it propagates. So we'll let it propagate (C++ exception will unwind). We'll also need to handle the case where the map does not contain a key or the value is of wrong type. For missing key, Java's map.get returns null, and the cast to int/double will cause NullPointerException. In C++, map.at() throws std::out_of_range if key not present, or we can check with find. To match Java behavior, we should check if key exists using find and then cast. If key not present, Java returns null and then cast to primitive throws NullPointerException. In C++, we can throw a custom exception similar to NullPointerException? But best to reproduce the behavior: if key missing, accessing via at() will throw out_of_range, which is different from NullPointerException. To be identical, we could throw a standard exception with message "null" or use std::runtime_error. But exceptions are not exactly the same. The problem says "exceptions" should be identical. Java NullPointerException is unchecked. In C++, we could simulate by throwing a custom class derived from std::exception. However, it's complicated. Since these are edge cases (input validation), and the code checks for presence of keys at the beginning, but the checks are: dish containsKey("dish") && containsKey("price") && containsKey("count"). So if any key missing, we return false. So we don't need to handle missing key inside the loop. But in calculateTotal, it accesses selectedDishes which were added, so they should have correct keys. So we can assume well-formed maps.
+
+Given these considerations, I'll implement the C++ version with std::map<std::string, std::any> for dish and selectedDishes. I'll use std::any_cast for conversions. I'll store copies of maps in selectedDishes.
+
+For sales, we use std::map<std::string, double>.
+
+Now, let's write the code.
+
+We'll include necessary headers: <vector>, <map>, <string>, <any>, <stdexcept>, <optional> maybe for pointer? But we'll use pointer to map for null check.
+
+I'll define the class Order with private members: std::vector<std::map<std::string, std::any>> menu; std::vector<std::map<std::string, std::any>> selectedDishes; std::map<std::string, double> sales;
+
+Constructor.
+
+addDish: bool addDish(const std::map<std::string, std::any>* dish). Check if dish == nullptr -> return false. Then check if dish contains keys "dish","price","count". If not, return false. Then loop through menu, find dish name equality (using std::any_cast<std::string>( ... )). If found, get counts (int) and compare; if menuCount < dishCount return false; else update menu count, add a copy of dish to selectedDishes, return true. If not found in menu, return false.
+
+Note: The Java code uses dish.get("dish").equals(menuDish.get("dish")). Since both are strings, we'll compare.
+
+calculateTotal: loop through selectedDishes, get dish name (string), price (double), count (int). Look up sales with dish name, default 1.0. Compute total.
+
+checkout: if selectedDishes empty, return false (Object type return). In Java, returns Boolean false or Double total. In C++, we cannot return different types from a function easily. The Java method returns Object, which can be Boolean or Double. To emulate, we can return std::any. That's perfect: we can return false (as bool) or double. But careful: In Java, returning false is autoboxed to Boolean.FALSE, and total is autoboxed to Double. In C++, we can return std::any that holds a bool or double. Then the caller can check the type. The problem says "inputs/outputs" identical, so we should return an any. However, in Java, the return type is Object, and after checkout, the caller might expect a specific type. We'll keep the same signature: std::any checkout(). Inside: if selectedDishes empty return std::any(false); else compute total, clear selectedDishes, return std::any(total). That matches the Java behavior.
+
+Now, we need to handle the case where the selectedDishes may contain duplicate dish entries? In Java, they are just added as separate entries. So we keep that.
+
+Also, the menu list's maps are modified in place when we decrement count. The menu is stored as vector of maps, we modify the map (menuDish.put("count", newCount)). In C++, we can modify the map because we have non-const reference. We'll store menu as vector<map<...>> and loop using reference.
+
+Note: The addDish method expects dish to have "price" but we don't need to use it for menu validation? Actually, the Java code doesn't validate price against menu; it just uses dish's price for total. So we just store the dish as is.
+
+Edge cases: if menu is empty, addDish will return false because dish not found. That matches Java.
+
+Now, code.
+
+I'll write the C++ code in a single block. Use std::any, std::map, std::vector, std::string.
+
+Implementation details:
+
+- Use std::any_cast safely: we need to catch bad_any_cast? If the map contains wrong types, it will throw; we can let it propagate. But to match Java's behavior: if types are wrong, Java throws ClassCastException. In C++, std::bad_any_cast is thrown. That's equivalent. We'll include <any> and will not catch.
+
+- For sales map: In Java, sales.getOrDefault dishName returns 1.0 if not present. In C++, we can use find or operator[] with default? operator[] inserts default value. Better to use find: auto it = sales.find(dishName); double sale = (it != sales.end()) ? it->second : 1.0;
+
+- In addDish, we check for null pointer. To pass a null pointer, caller can use nullptr. In C++, typical usage: Order o; o.addDish(nullptr); returns false.
+
+- In calculateTotal, we need to cast "dish" to std::string, "price" to double, "count" to int. We'll use std::any_cast.
+
+Potential pitfalls: 
+- "count" is int in Java, but in C++ we need to store as int in the map. Usually values can be int or any. We'll assume int is stored as int. But in Java, (int) dish.get("count") works even if it's Integer object. In C++, we need to have the exact type. If the map was created with an int literal (e.g., 5), it's an int. So std::any_cast<int> works. If the map was created with double for count, it would fail. But we assume consistency.
+
+- For the menu list, the initial contents are not shown; the class is used elsewhere. We just provide the structure. We'll not provide any entry points; just the class definition.
+
+Now, let's write the code.
+
+I'll include comments for clarity.
+
+Make sure to use #include <any> (C++17). If we want C++11 compatibility, we could use boost::any, but assume C++17.
+
+We'll also need to handle that std::any is not copyable? Actually, std::any is copyable if the contained type is copyable. Since std::string, double, int are copyable, it's fine. So we can store copies of maps with std::any values.
+
+Now, output the code.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <any>
+#include <map>
+#include <string>
+#include <vector>
+
+class Order {
+public:
+    Order() = default;
+
+    bool addDish(const std::map<std::string, std::any>* dish) {
+        // null dish -> false
+        if (dish == nullptr) {
+            return false;
+        }
+        // must contain all required keys
+        if (dish->find("dish") == dish->end() ||
+            dish->find("price") == dish->end() ||
+            dish->find("count") == dish->end()) {
+            return false;
+        }
+
+        // find matching dish in menu
+        for (auto& menuDish : menu) {
+            if (std::any_cast<std::string>(dish->at("dish")) ==
+                std::any_cast<std::string>(menuDish.at("dish"))) {
+                int dishCount = std::any_cast<int>(dish->at("count"));
+                int menuCount = std::any_cast<int>(menuDish.at("count"));
+
+                if (menuCount < dishCount) {
+                    return false;
+                } else {
+                    menuDish["count"] = menuCount - dishCount;
+                    // store a copy of the dish (same object semantics not preserved)
+                    selectedDishes.push_back(*dish);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    double calculateTotal() const {
+        double total = 0.0;
+        for (const auto& dish : selectedDishes) {
+            std::string dishName = std::any_cast<std::string>(dish.at("dish"));
+            double price = std::any_cast<double>(dish.at("price"));
+            int count = std::any_cast<int>(dish.at("count"));
+
+            auto it = sales.find(dishName);
+            double sale = (it != sales.end()) ? it->second : 1.0;
+            total += price * count * sale;
+        }
+        return total;
+    }
+
+    std::any checkout() {
+        if (selectedDishes.empty()) {
+            return false;
+        }
+        double total = calculateTotal();
+        selectedDishes.clear();
+        return total;
+    }
+
+private:
+    std::vector<std::map<std::string, std::any>> menu;
+    std::vector<std::map<std::string, std::any>> selectedDishes;
+    std::map<std::string, double> sales;
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <any>
+#include <map>
+#include <string>
+#include <vector>
+
+class Order {
+public:
+    Order() = default;
+
+    bool addDish(const std::map<std::string, std::any>* dish) {
+        // null dish -> false
+        if (dish == nullptr) {
+            return false;
+        }
+        // must contain all required keys
+        if (dish->find("dish") == dish->end() ||
+            dish->find("price") == dish->end() ||
+            dish->find("count") == dish->end()) {
+            return false;
+        }
+
+        // find matching dish in menu
+        for (auto& menuDish : menu) {
+            if (std::any_cast<std::string>(dish->at("dish")) ==
+                std::any_cast<std::string>(menuDish.at("dish"))) {
+                int dishCount = std::any_cast<int>(dish->at("count"));
+                int menuCount = std::any_cast<int>(menuDish.at("count"));
+
+                if (menuCount < dishCount) {
+                    return false;
+                } else {
+                    menuDish["count"] = menuCount - dishCount;
+                    // store a copy of the dish (same object semantics not preserved)
+                    selectedDishes.push_back(*dish);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    double calculateTotal() const {
+        double total = 0.0;
+        for (const auto& dish : selectedDishes) {
+            std::string dishName = std::any_cast<std::string>(dish.at("dish"));
+            double price = std::any_cast<double>(dish.at("price"));
+            int count = std::any_cast<int>(dish.at("count"));
+
+            auto it = sales.find(dishName);
+            double sale = (it != sales.end()) ? it->second : 1.0;
+            total += price * count * sale;
+        }
+        return total;
+    }
+
+    std::any checkout() {
+        if (selectedDishes.empty()) {
+            return false;
+        }
+        double total = calculateTotal();
+        selectedDishes.clear();
+        return total;
+    }
+
+private:
+    std::vector<std::map<std::string, std::any>> menu;
+    std::vector<std::map<std::string, std::any>> selectedDishes;
+    std::map<std::string, double> sales;
+};

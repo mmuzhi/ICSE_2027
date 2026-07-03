@@ -1,0 +1,336 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.io.*;
+import java.util.*;
+
+public class CSVProcessor {
+
+    public void readCSV(String fileName, List<String> title, List<List<String>> data) throws IOException {
+        try (BufferedReader reader = new BufferedReader(new FileReader(fileName))) {
+            String line = reader.readLine();
+            if (line != null) {
+                title.addAll(Arrays.asList(line.split(",")));
+
+                String lineData;
+                while ((lineData = reader.readLine()) != null) {
+                    data.add(Arrays.asList(lineData.split(",")));
+                }
+            }
+        }
+    }
+
+    public int writeCSV(List<String> title, List<List<String>> data, String fileName) {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName))) {
+            writer.write(String.join(",", title));
+            writer.newLine();
+
+            for (List<String> row : data) {
+                writer.write(String.join(",", row));
+                writer.newLine();
+            }
+            return 1;
+        } catch (IOException e) {
+            return 0;
+        }
+    }
+
+    public int writeCSV(List<List<String>> data, String fileName) {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileName))) {
+            for (List<String> row : data) {
+                writer.write(String.join(",", row));
+                writer.newLine();
+            }
+            return 1;
+        } catch (IOException e) {
+            return 0;
+        }
+    }
+
+    public int processCSVData(int N, String saveFileName) throws IOException {
+        List<String> title = new ArrayList<>();
+        List<List<String>> data = new ArrayList<>();
+        readCSV(saveFileName, title, data);
+
+        List<String> columnData = new ArrayList<>();
+        for (List<String> row : data) {
+            if (N < row.size()) {
+                columnData.add(row.get(N).toUpperCase());
+            }
+        }
+
+        List<List<String>> newData = new ArrayList<>();
+        newData.add(columnData);
+
+        return writeCSV(title, newData, saveFileName.split("\\.")[0] + "_process.csv");
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate the given Java code to C++. The Java code defines a class CSVProcessor with methods: readCSV, writeCSV (two overloads), and processCSVData. We must maintain identical behavior, including inputs/outputs, side effects, edge cases, and exceptions. Use idiomatic C++ only if it doesn't change behavior.
+
+Key aspects:
+- Java's BufferedReader, FileReader, BufferedWriter, FileWriter.
+- String.split(",") -> in C++, we can use stringstream or manual splitting. However, we need to handle CSV with possible commas inside quotes? The Java code simply splits by comma, no quote handling. So we can use simple splitting.
+- Java's List<String> and List<List<String>>. In C++, we can use std::vector<std::string> and std::vector<std::vector<std::string>>.
+- Exceptions: Java throws IOException; in C++ we can throw exceptions (std::ios_base::failure, or use custom). But the Java code catches exceptions in writeCSV and returns 0. In readCSV, exception propagates. We need to replicate that: readCSV throws on failure (use std::ifstream, check fail, can throw std::runtime_error). writeCSV catches and returns 0 or 1. In processCSVData, writeCSV returns int, and readCSV throws.
+- Method signatures: readCSV takes fileName, title (List<String>), data (List<List<String>>). In C++, we pass by reference. Similarly, writeCSV returns int.
+- processCSVData: reads, extracts column N, uppercases, writes new file. Java's toUpperCase() uses Locale default? In C++, we can use std::toupper or std::transform with ::toupper. Need to match behavior: Java's toUpperCase uses default locale, but for simple ASCII it's fine. We'll assume ASCII.
+- File extension: saveFileName.split("\\.")[0] + "_process.csv". In C++, we can find last dot and extract substring.
+
+Edge cases:
+- readCSV: if first line is null (empty file), title stays empty, no data.
+- For each row, split by comma -> in C++, we need to handle empty fields correctly (e.g., "a,,c" gives ["a","","c"]). Java's split removes trailing empty strings? Actually Java's String.split with single-character delimiter does not discard trailing empty strings. Example: "a," split gives ["a"]? No, Java's split("[,]") by default discards trailing empty strings. But we need to match Java's behavior: In Java, "a,".split(",") returns ["a"] because trailing empty strings are omitted. However, the code does not specify behavior for empty fields. We need to replicate Java's split exactly. But Java's split with a one-char regex discards trailing empty strings. We'll implement that: split and then remove trailing empty strings. However, to be precise, we could use a simple loop that splits and then trims trailing empties. But the exact behavior: In Java, "a,b,".split(",") yields ["a","b"] (trailing empty omitted). "a,,b".split(",") yields ["a","","b"]. So we can implement a split function that replicates Java's behavior: split at delimiter, but if the string ends with delimiter, drop the trailing empty strings. Also, if string is empty, returns single empty string? Actually "".split(",") returns [""]? In Java, "".split(",") returns an array of length 1 containing empty string. That's because the split finds no delimiter, so the whole string is one element. So we need to handle that.
+- We'll implement a utility function split(const std::string& s, char delim) that returns std::vector<std::string> matching Java's behavior regarding trailing empty strings.
+- WriteCSV: uses String.join(",", ...). In C++, we can write a join function for vector of strings. Also for vector<vector<string>> we loop.
+
+- writeCSV overloads: one takes title and data, the other just data (no title). Java's BufferedWriter writes lines. We'll use std::ofstream.
+
+- Exception handling: In readCSV, if file cannot be opened, it will throw IOException from FileReader constructor. In C++, we can throw std::runtime_error. In processCSVData, readCSV exception propagates, so method declares throws IOException in Java; in C++ we can let it throw.
+
+- writeCSV catches IOException and returns 0. In C++, we catch std::exception (or std::ios_base::failure) and return 0. Note: BufferedWriter's write may also throw. We'll catch in same way.
+
+- Note: In Java, try-with-resources automatically closes readers/writers. In C++, we can use RAII (std::ifstream destructor closes). So we don't need explicit try-catch for closing, but we need to handle open failure.
+
+- processCSVData: columnData is built from data rows; then newData is a list with one element (columnData). Then writeCSV with title and newData. So output file has header row (title) and then one row of columnData. Also if N >= row.size(), skip row.
+
+
+</think>
+
+=== RAW ANSWER ===
+```
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+#include <stdexcept>
+
+class CSVProcessor {
+public:
+    void readCSV(const std::string& fileName, std::vector<std::string>& title, std::vector<std::vector<std::string>>& data) {
+        std::ifstream reader(fileName);
+        if (!reader.is_open()) {
+            throw std::runtime_error("Cannot open file: " + fileName);
+        }
+
+        std::string line;
+        if (std::getline(reader, line)) {
+            title = split(line, ',');
+            while (std::getline(reader, line)) {
+                data.push_back(split(line, ','));
+            }
+        }
+        reader.close();
+    }
+
+    int writeCSV(const std::vector<std::string>& title, const std::vector<std::vector<std::string>>& data, const std::string& fileName) {
+        try {
+            std::ofstream writer(fileName);
+            if (!writer.is_open()) {
+                return 0;
+            }
+            writer << join(title, ",") << "\n";
+            for (const auto& row : data) {
+                writer << join(row, ",") << "\n";
+            }
+            writer.close();
+            return 1;
+        } catch (...) {
+            return 0;
+        }
+    }
+
+    int writeCSV(const std::vector<std::vector<std::string>>& data, const std::string& fileName) {
+        try {
+            std::ofstream writer(fileName);
+            if (!writer.is_open()) {
+                return 0;
+            }
+            for (const auto& row : data) {
+                writer << join(row, ",") << "\n";
+            }
+            writer.close();
+            return 1;
+        } catch (...) {
+            return 0;
+        }
+    }
+
+    int processCSVData(int N, const std::string& saveFileName) {
+        std::vector<std::string> title;
+        std::vector<std::vector<std::string>> data;
+        readCSV(saveFileName, title, data);
+
+        std::vector<std::string> columnData;
+        for (const auto& row : data) {
+            if (N < static_cast<int>(row.size())) {
+                std::string cell = row[N];
+                std::transform(cell.begin(), cell.end(), cell.begin(), ::toupper);
+                columnData.push_back(cell);
+            }
+        }
+
+        std::vector<std::vector<std::string>> newData;
+        newData.push_back(columnData);
+
+        std::string baseName = saveFileName;
+        size_t dotPos = baseName.rfind('.');
+        if (dotPos != std::string::npos) {
+            baseName = baseName.substr(0, dotPos);
+        }
+        return writeCSV(title, newData, baseName + "_process.csv");
+    }
+
+private:
+    static std::vector<std::string> split(const std::string& s, char delimiter) {
+        std::vector<std::string> tokens;
+        std::string token;
+        std::istringstream tokenStream(s);
+        while (std::getline(tokenStream, token, delimiter)) {
+            tokens.push_back(token);
+        }
+        // Handle trailing empty strings matching Java's split behavior
+        // Java's split with one-char regex discards trailing empty strings.
+        // But also empty string input gives one empty token.
+        if (s.empty()) {
+            tokens.clear();
+            tokens.push_back("");
+        } else if (!s.empty() && s.back() == delimiter) {
+            while (!tokens.empty() && tokens.back().empty()) {
+                tokens.pop_back();
+            }
+        }
+        return tokens;
+    }
+
+    static std::string join(const std::vector<std::string>& strings, const std::string& delimiter) {
+        std::ostringstream oss;
+        for (size_t i = 0; i < strings.size(); ++i) {
+            if (i != 0) oss << delimiter;
+            oss << strings[i];
+        }
+        return oss.str();
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+#include <stdexcept>
+
+class CSVProcessor {
+public:
+    void readCSV(const std::string& fileName, std::vector<std::string>& title, std::vector<std::vector<std::string>>& data) {
+        std::ifstream reader(fileName);
+        if (!reader.is_open()) {
+            throw std::runtime_error("Cannot open file: " + fileName);
+        }
+
+        std::string line;
+        if (std::getline(reader, line)) {
+            title = split(line, ',');
+            while (std::getline(reader, line)) {
+                data.push_back(split(line, ','));
+            }
+        }
+        reader.close();
+    }
+
+    int writeCSV(const std::vector<std::string>& title, const std::vector<std::vector<std::string>>& data, const std::string& fileName) {
+        try {
+            std::ofstream writer(fileName);
+            if (!writer.is_open()) {
+                return 0;
+            }
+            writer << join(title, ",") << "\n";
+            for (const auto& row : data) {
+                writer << join(row, ",") << "\n";
+            }
+            writer.close();
+            return 1;
+        } catch (...) {
+            return 0;
+        }
+    }
+
+    int writeCSV(const std::vector<std::vector<std::string>>& data, const std::string& fileName) {
+        try {
+            std::ofstream writer(fileName);
+            if (!writer.is_open()) {
+                return 0;
+            }
+            for (const auto& row : data) {
+                writer << join(row, ",") << "\n";
+            }
+            writer.close();
+            return 1;
+        } catch (...) {
+            return 0;
+        }
+    }
+
+    int processCSVData(int N, const std::string& saveFileName) {
+        std::vector<std::string> title;
+        std::vector<std::vector<std::string>> data;
+        readCSV(saveFileName, title, data);
+
+        std::vector<std::string> columnData;
+        for (const auto& row : data) {
+            if (N < static_cast<int>(row.size())) {
+                std::string cell = row[N];
+                std::transform(cell.begin(), cell.end(), cell.begin(), ::toupper);
+                columnData.push_back(cell);
+            }
+        }
+
+        std::vector<std::vector<std::string>> newData;
+        newData.push_back(columnData);
+
+        std::string baseName = saveFileName;
+        size_t dotPos = baseName.rfind('.');
+        if (dotPos != std::string::npos) {
+            baseName = baseName.substr(0, dotPos);
+        }
+        return writeCSV(title, newData, baseName + "_process.csv");
+    }
+
+private:
+    static std::vector<std::string> split(const std::string& s, char delimiter) {
+        std::vector<std::string> tokens;
+        std::string token;
+        std::istringstream tokenStream(s);
+        while (std::getline(tokenStream, token, delimiter)) {
+            tokens.push_back(token);
+        }
+        // Handle trailing empty strings matching Java's split behavior
+        // Java's split with one-char regex discards trailing empty strings.
+        // But also empty string input gives one empty token.
+        if (s.empty()) {
+            tokens.clear();
+            tokens.push_back("");
+        } else if (!s.empty() && s.back() == delimiter) {
+            while (!tokens.empty() && tokens.back().empty()) {
+                tokens.pop_back();
+            }
+        }
+        return tokens;
+    }
+
+    static std::string join(const std::vector<std::string>& strings, const std::string& delimiter) {
+        std::ostringstream oss;
+        for (size_t i = 0; i < strings.size(); ++i) {
+            if (i != 0) oss << delimiter;
+            oss << strings[i];
+        }
+        return oss.str();
+    }
+};

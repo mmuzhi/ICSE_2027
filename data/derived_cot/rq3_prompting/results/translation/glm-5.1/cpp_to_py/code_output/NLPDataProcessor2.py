@@ -1,0 +1,49 @@
+import re
+
+
+class NLPDataProcessor2:
+    def process_data(self, string_list):
+        words_list = []
+        for s in string_list:
+            processed = self._to_lowercase(self._remove_non_alpha(s))
+            words = [w for w in re.split(r'\s+', processed) if w]
+            words_list.append(words)
+        return words_list
+
+    def calculate_word_frequency(self, words_list):
+        word_frequency = {}
+        first_appear = {}
+        js = 0
+        for words in words_list:
+            for word in words:
+                if word not in word_frequency:
+                    js += 1
+                    first_appear[word] = js
+                word_frequency[word] = word_frequency.get(word, 0) + 1
+
+        sorted_word_frequency = sorted(
+            word_frequency.items(),
+            key=lambda x: (-x[1], first_appear[x[0]])
+        )
+
+        top_5_word_frequency = {}
+        for i in range(min(5, len(sorted_word_frequency))):
+            top_5_word_frequency[sorted_word_frequency[i][0]] = sorted_word_frequency[i][1]
+
+        return top_5_word_frequency
+
+    def process(self, string_list):
+        words_list = self.process_data(string_list)
+        return self.calculate_word_frequency(words_list)
+
+    @staticmethod
+    def _to_lowercase(s):
+        return s.lower()
+
+    @staticmethod
+    def _remove_non_alpha(s):
+        result = []
+        for c in s:
+            if c.isalpha() or c.isspace():
+                result.append(c)
+        return ''.join(result)

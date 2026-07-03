@@ -1,0 +1,443 @@
+=== SOURCE CODE (cpp) ===
+#include <vector>
+#include <map>
+#include <algorithm>
+#include <numeric>
+#include <cmath>
+#include <stdexcept>
+
+class DataStatistics {
+public:
+    double mean(const std::vector<double>& data) const;
+
+    double median(std::vector<double> data) const;
+
+    std::vector<int> mode(const std::vector<int>& data) const;
+};
+
+
+double DataStatistics::mean(const std::vector<double>& data) const {
+    if (data.empty()) {
+        throw std::invalid_argument("Data vector is empty.");
+    }
+    double sum = std::accumulate(data.begin(), data.end(), 0.0);
+    return std::round(sum / data.size() * 100) / 100; 
+}
+
+
+double DataStatistics::median(std::vector<double> data) const {
+    if (data.empty()) {
+        throw std::invalid_argument("Data vector is empty.");
+    }
+    std::sort(data.begin(), data.end());
+    size_t n = data.size();
+    if (n % 2 == 0) {
+        return std::round(((data[n / 2 - 1] + data[n / 2]) / 2) * 100) / 100; 
+    }
+    else {
+        return data[n / 2];
+    }
+}
+
+
+std::vector<int> DataStatistics::mode(const std::vector<int>& data) const {
+    if (data.empty()) {
+        throw std::invalid_argument("Data vector is empty.");
+    }
+
+    std::map<int, int> count_map;
+    for (int num : data) {
+        ++count_map[num];
+    }
+
+    int max_count = 0;
+    for (const auto& pair : count_map) {
+        if (pair.second > max_count) {
+            max_count = pair.second;
+        }
+    }
+
+    std::vector<int> modes;
+    for (const auto& pair : count_map) {
+        if (pair.second == max_count) {
+            modes.push_back(pair.first);
+        }
+    }
+
+    return modes;
+}
+
+
+=== REASONING ===
+<think>
+1.  **Understand the Goal**: The objective is to translate a C++ class `DataStatistics` with three methods (`mean`, `median`, `mode`) into Python while preserving identical behavior (inputs, outputs, side effects, edge cases, exceptions).
+
+2.  **Analyze the C++ Code**:
+    *   **Class**: `DataStatistics`
+    *   **Method `mean`**:
+        *   Input: `const std::vector<double>& data`
+        *   Behavior: Throws `std::invalid_argument` if empty. Calculates sum, divides by size, rounds to 2 decimal places using `std::round(val * 100) / 100`.
+        *   Output: `double`
+    *   **Method `median`**:
+        *   Input: `std::vector<double> data` (passed by value, so sort doesn't affect caller's vector, but in Python lists are passed by reference, so we should copy it to match the "no side-effect on caller" implicit behavior, although Python doesn't strictly have pass-by-value for lists. Actually, let's copy the list before sorting to be safe and match the C++ pass-by-value semantics).
+        *   Behavior: Throws `std::invalid_argument` if empty. Sorts the data. If even length, average of two middle elements, rounded to 2 decimal places. If odd length, middle element (no rounding applied in C++! Wait, `data[n/2]` is returned directly, no rounding).
+        *   Output: `double`
+    *   **Method `mode`**:
+        *   Input: `const std::vector<int>& data`
+        *   Behavior: Throws `std::invalid_argument` if empty. Uses `std::map<int, int>` to count frequencies. Finds max frequency. Collects all keys with max frequency. Since `std::map` is ordered, the modes will be in ascending sorted order.
+        *   Output: `std::vector<int>`
+
+3.  **Translate to Python**:
+    *   **Exceptions**: `std::invalid_argument` maps well to `ValueError`.
+    *   **Rounding**: C++ `std::round(x * 100) / 100` does round half away from zero. Python's built-in `round(x, 2)` uses round half to even (banker's rounding). To exactly match C++ `std::round`, we should use the `decimal` module or implement a custom round-half-away-from-zero, or just use `math.floor(x * 100 + 0.5) / 100` for positive, but `round` in C++ is symmetric. Let's use `Decimal` or just write a small helper. Actually, Python's `round` behaves differently for `.5`. Let's see if we can just use `int(x * 100 + (0.5 if x > 0 else -0.5)) / 100`. Or `round(x, 2)` might be acceptable if we assume standard inputs, but the prompt says "Keep behavior identical". Let's use `Decimal` with `ROUND_HALF_UP` to be strictly identical, or `math.floor(abs(x) * 100 + 0.5) * (1 if x >= 0 else -1) / 100`. Wait, C++ `std::round` returns the nearest integer. So `round(val * 100) / 100`. Let's just use Python's `round(val, 2)` but note the difference. Actually, the easiest way to mimic C++ `round(x * 100) / 100` exactly is:
+        ```python
+        import math
+        def cpp_round(x, decimals=2):
+            multiplier = 10 ** decimals
+            return math.copysign(round(abs(x) * multiplier), x) / multiplier
+        ```
+        Wait, Python's `round` on integers/ints does round half to even. `round(2.5)` -> 2.
+        Let's use `Decimal`:
+        ```python
+        from decimal import Decimal, ROUND_HALF_UP
+        def cpp_round(x, decimals=2):
+            d = Decimal(str(x))
+            rounded = d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            return float(rounded)
+        ```
+        This is bulletproof for exact C++ behavior.
+        Wait, is it necessary? The prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". C++ `std::round` rounds half away from zero. Python `round` rounds half to even. I will implement a helper for C++ style rounding to be safe.
+
+    *   **Class Definition**:
+        ```python
+        class DataStatistics:
+            def mean(self, data):
+                if not data:
+                    raise ValueError("Data vector is empty.")
+                sum_val = sum(data)
+                return self._round_cpp(sum_val / len(data))
+
+            def median(self, data):
+                if not data:
+                    raise ValueError("Data vector is empty.")
+                # Copy to avoid modifying caller's list, matching C++ pass-by-value
+                sorted_data = sorted(data)
+                n = len(sorted_data)
+                if n % 2 == 0:
+                    return self._round_cpp((sorted_data[n // 2 - 1] + sorted_data[n // 2]) / 2)
+                else:
+                    return sorted_data[n // 2]
+
+            def mode(self, data):
+                if not data:
+                    raise ValueError("Data vector is empty.")
+                
+                # std::map automatically sorts by key, so we must return sorted modes
+                count_map = {}
+                for num in data:
+                    count_map[num] = count_map.get(num, 0) + 1
+                
+                max_count = max(count_map.values())
+                
+                modes = [key for key, count in count_map.items() if count == max_count]
+                
+                # C++ std::map iterates in sorted order, so modes are sorted.
+                # To be strictly identical, we should sort the modes.
+                modes.sort()
+                
+                return modes
+
+            def _round_cpp(self, x):
+                import math
+                # C++ std::round rounds half away from zero
+                return math.copysign(round(abs(x) * 100), x) / 100
+        ```
+        Wait, Python's `round` on integers still rounds half to even.
+        Example: `round(2.5)` -> 2. `round(3.5)` -> 4.
+        If `abs(x) * 100` is `2.5`, `round(2.5)` is `2`. But C++ `std::round(2.5)` is `3`.
+        So `math.copysign(round(abs(x) * 100), x)` is NOT equivalent to C++ `std::round`.
+        We must use `Decimal` or `math.floor`.
+        ```python
+        def _round_cpp(self, x):
+            import math
+            # Equivalent to C++ std::round(x * 100) / 100
+            return math.copysign(math.floor(abs(x) * 100 + 0.5), x) / 100
+        ```
+        Let's trace `x = 1.235`.
+        `abs(x) * 100 = 123.5`.
+        `123.5 + 0.5 = 124.0`.
+        `math.floor(124.0) = 124`.
+        `copysign(124, 1.235) = 124.0`.
+        `124.0 / 100 = 1.24`. Matches C++.
+        `x = -1.235`.
+        `abs(x) * 100 = 123.5`.
+        `123.5 + 0.5 = 124.0`.
+        `math.floor(124.0) = 124`.
+        `copysign(124, -1.235) = -124.0`.
+        `-124.0 / 100 = -1.24`. Matches C++.
+        This perfectly mimics C++ `std::round` which rounds half away from zero.
+
+    *   **Wait, let's look at `median` for odd `n`**:
+        C++ returns `data[n / 2]`. Since `data` is `vector<double>`, it returns a `double`. Python returns a float from a list of floats, or int if the list had ints. Wait, C++ `median` takes `vector<double>`. So it returns `double`. Python's `sorted_data[n // 2]` will return whatever type was in the list. Since the input is `vector<double>` in C++, it's a float. In Python, if the user passes a list of floats, it returns a float. If they pass a list of ints, it returns an int. This is fine, Python is dynamically typed. But wait, `mean` returns a float. `median` even length returns a float. For odd length, it returns the element type. C++ returns `double`. I'll leave it as is, it's idiomatic Python and respects the dynamic typing.
+
+    *   **Wait, `median` pass by value vs reference**:
+        C++ `median(std::vector<double> data)` takes by value, so the original vector is not modified.
+        Python `def median(self, data):` takes by reference. If I do `data.sort()`, it modifies the caller's list.
+        To match C++ behavior (no side effects on the input), I should use `sorted_data = sorted(data)`. This creates a new list.
+
+    *   **`mode` return type**:
+        C++ `mode` returns `std::vector<int>`. The order of elements in the C++ vector is the iteration order of `std::map<int, int>`, which is sorted ascending by key.
+        In Python, `dict` preserves insertion order (Python 3.7+). If we just iterate over `count_map.items()`, it might not be sorted by key.
+        Therefore, I must explicitly sort the `modes` list to match `std::map`'s behavior.
+        `modes.sort()` handles this.
+
+    *   **Exception message**:
+        C++ throws `std::invalid_argument("Data vector is empty.")`.
+        Python should throw `ValueError("Data vector is empty.")`.
+
+4.  **Refining the Python Code**:
+
+    ```python
+    import math
+
+    class DataStatistics:
+        def mean(self, data):
+            if not data:
+                raise ValueError("Data vector is empty.")
+            sum_val = sum(data)
+            return self._round_half_away_from_zero(sum_val / len(data), 2)
+
+        def median(self, data):
+            if not data:
+                raise ValueError("Data vector is empty.")
+            sorted_data = sorted(data)
+            n = len(sorted_data)
+            if n % 2 == 0:
+                return self._round_half_away_from_zero((sorted_data[n // 2 - 1] + sorted_data[n // 2]) / 2, 2)
+            else:
+                return sorted_data[n // 2]
+
+        def mode(self, data):
+            if not data:
+                raise ValueError("Data vector is empty.")
+
+            count_map = {}
+            for num in data:
+                count_map[num] = count_map.get(num, 0) + 1
+
+            max_count = 0
+            for count in count_map.values():
+                if count > max_count:
+                    max_count = count
+
+            modes = []
+            for num, count in count_map.items():
+                if count == max_count:
+                    modes.append(num)
+
+            modes.sort()
+            return modes
+
+        def _round_half_away_from_zero(self, x, decimals):
+            multiplier = 10 ** decimals
+            return math.copysign(math.floor(abs(x) * multiplier + 0.5), x) / multiplier
+    ```
+
+5.  **Re-evaluating the rounding logic**:
+    Is there any edge case where `math.floor(abs(x) * multiplier + 0.5)` fails due to floating point precision?
+    Yes, `1.005 * 100` might be `100.49999999999999`.
+    In C++, `1.005 * 100` might also be `100.49999999999999`, resulting in `100.0` instead of `101.0`.
+    Since we want identical behavior, floating point quirks should ideally match, but it's hard to guarantee across languages. However, using `Decimal` might over-correct and not match C++ floating point inaccuracies. I will stick to the `math.floor` approach as it directly mimics the floating point arithmetic and `std::round` logic in C++.
+
+6.  **Double check C++ `mode` logic**:
+    ```cpp
+    int max_count = 0;
+    for (const auto& pair : count_map) {
+        if (pair.second > max_count) {
+            max_count = pair.second;
+        }
+    }
+    ```
+    If all counts are 0? Not possible since `data.empty()` is checked first. Counts are at least 1.
+    My python logic:
+    ```python
+    max_count = 0
+    for count in count_map.values():
+        if count > max_count:
+            max_count = count
+    ```
+    Or just `max_count = max(count_map.values())`. The prompt says "Use idiomatic Python only when it doesn't change behavior". Using `max()` doesn't change behavior and is idiomatic. I'll use `max(count_map.values())`.
+
+7.  **Double check C++ `median` logic**:
+    ```cpp
+    if (n % 2 == 0) {
+        return std::round(((data[n / 2 - 1] + data[n / 2]) / 2) * 100) / 100; 
+    }
+    else {
+        return data[n / 2];
+    }
+    ```
+    Python:
+    ```python
+    if n % 2 == 0:
+        return self._round_half_away_from_zero((sorted_data[n // 2 - 1] + sorted_data[n // 2]) / 2, 2)
+    else:
+        return sorted_data[n // 2]
+    ```
+    This is a perfect match.
+
+8.  **Double check C++ `mean` logic**:
+    ```cpp
+    double sum = std::accumulate(data.begin(), data.end(), 0.0);
+    return std::round(sum / data.size() * 100) / 100; 
+    ```
+    Python:
+    ```python
+    sum_val = sum(data)
+    return self._round_half_away_from_zero(sum_val / len(data), 2)
+    ```
+    Perfect match.
+
+9.  **Consider `DataStatistics` instantiation**:
+    The C++ methods are `const` member functions. In Python, we just use `self`. They don't rely on any instance state, so `self` is fine.
+
+10. **Final Polish**:
+    - Ensure `ValueError` is raised with the exact string "Data vector is empty."
+    - Ensure the helper function is well-defined.
+    - Add docstrings or comments if helpful, but keep it clean.
+    - Make sure `mode` returns a list of ints, which naturally happens if input is list of ints.
+
+    ```python
+    import math
+
+    class DataStatistics:
+        def mean(self, data):
+            if not data:
+                raise ValueError("Data vector is empty.")
+            total = sum(data)
+            return self._round_half_away_from_zero(total / len(data), 2)
+
+        def median(self, data):
+            if not data:
+                raise ValueError("Data vector is empty.")
+            # Copy and sort to mimic C++ pass-by-value and std::sort
+            sorted_data = sorted(data)
+            n = len(sorted_data)
+            if n % 2 == 0:
+                return self._round_half_away_from_zero((sorted_data[n // 2 - 1] + sorted_data[n // 2]) / 2, 2)
+            else:
+                return sorted_data[n // 2]
+
+        def mode(self, data):
+            if not data:
+                raise ValueError("Data vector is empty.")
+
+            count_map = {}
+            for num in data:
+                count_map[num] = count_map.get(num, 0) + 1
+
+            max_count = max(count_map.values())
+
+            modes = [key for key, count in count_map.items() if count == max_count]
+            
+            # std::map iterates in sorted order of keys
+            modes.sort()
+
+            return modes
+
+        def _round_half_away_from_zero(self, x, decimals):
+            # C++ std::round rounds half away from zero, unlike Python's built-in round
+            multiplier = 10 ** decimals
+            return math.copysign(math.floor(abs(x) * multiplier + 0.5), x) / multiplier
+    ```
+
+    Wait, what if `data` contains integers in `mean`? `sum(data) / len(data)` in Python 3 performs true division, returning a float. This matches C++ `sum / data.size()` which returns `double`. So that's correct.
+
+    What if `data` contains integers in `median`? `sorted_data[n // 2]` returns an integer. C++ `data[n / 2]` returns `double` because `data` is `std::vector<double>`. In Python, the function signature doesn't enforce types. If we strictly want to return a float for `median` even when the input is a list of ints, we could cast it, but Python convention is to not enforce types unless necessary. The prompt says "Keep behavior identical... Use idiomatic Python only when it doesn't change behavior". Returning an int when the input is a list of ints is idiomatic Python and doesn't violate the C++ behavior since C++ enforces `vector<double>` at compile time. I'll leave it as is.
+
+    Let's review the prompt: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)."
+    Side effects: `median` modifies a copy in Python, just like C++ modifies a copy (passed by value). No side effects on the caller's list. Match.
+    Edge cases: empty lists throw `ValueError`. Match.
+    Exceptions: `ValueError` matches `std::invalid_argument`. Match.
+    Outputs: `mode` returns a sorted list.
+</think>
+
+=== RAW ANSWER ===
+```python
+import math
+
+class DataStatistics:
+    def mean(self, data):
+        if not data:
+            raise ValueError("Data vector is empty.")
+        total = sum(data)
+        return self._round_half_away_from_zero(total / len(data), 2)
+
+    def median(self, data):
+        if not data:
+            raise ValueError("Data vector is empty.")
+        sorted_data = sorted(data)
+        n = len(sorted_data)
+        if n % 2 == 0:
+            return self._round_half_away_from_zero((sorted_data[n // 2 - 1] + sorted_data[n // 2]) / 2, 2)
+        else:
+            return sorted_data[n // 2]
+
+    def mode(self, data):
+        if not data:
+            raise ValueError("Data vector is empty.")
+
+        count_map = {}
+        for num in data:
+            count_map[num] = count_map.get(num, 0) + 1
+
+        max_count = max(count_map.values())
+
+        modes = [key for key, count in count_map.items() if count == max_count]
+        modes.sort()
+
+        return modes
+
+    def _round_half_away_from_zero(self, x, decimals):
+        multiplier = 10 ** decimals
+        return math.copysign(math.floor(abs(x) * multiplier + 0.5), x) / multiplier
+```
+
+=== TRANSLATED CODE (py) ===
+import math
+
+class DataStatistics:
+    def mean(self, data):
+        if not data:
+            raise ValueError("Data vector is empty.")
+        total = sum(data)
+        return self._round_half_away_from_zero(total / len(data), 2)
+
+    def median(self, data):
+        if not data:
+            raise ValueError("Data vector is empty.")
+        sorted_data = sorted(data)
+        n = len(sorted_data)
+        if n % 2 == 0:
+            return self._round_half_away_from_zero((sorted_data[n // 2 - 1] + sorted_data[n // 2]) / 2, 2)
+        else:
+            return sorted_data[n // 2]
+
+    def mode(self, data):
+        if not data:
+            raise ValueError("Data vector is empty.")
+
+        count_map = {}
+        for num in data:
+            count_map[num] = count_map.get(num, 0) + 1
+
+        max_count = max(count_map.values())
+
+        modes = [key for key, count in count_map.items() if count == max_count]
+        modes.sort()
+
+        return modes
+
+    def _round_half_away_from_zero(self, x, decimals):
+        multiplier = 10 ** decimals
+        return math.copysign(math.floor(abs(x) * multiplier + 0.5), x) / multiplier

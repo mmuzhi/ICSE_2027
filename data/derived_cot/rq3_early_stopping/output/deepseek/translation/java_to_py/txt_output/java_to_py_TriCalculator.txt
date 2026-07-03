@@ -1,0 +1,276 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+
+public class TriCalculator {
+
+    public TriCalculator() {
+    }
+
+    public double cos(double x) {
+        return round(taylor(x, 50), 10);
+    }
+
+    public BigDecimal factorial(int a) {
+        BigDecimal result = BigDecimal.ONE;
+        while (a > 1) {
+            result = result.multiply(BigDecimal.valueOf(a));
+            a--;
+        }
+        return result;
+    }
+
+    public double taylor(double x, int n) {
+        BigDecimal a = BigDecimal.ONE;
+        x = x / 180 * Math.PI;
+        int count = 1;
+        for (int k = 1; k < n; k++) {
+            BigDecimal term = BigDecimal.valueOf(Math.pow(x, 2 * k))
+                    .divide(factorial(2 * k), MathContext.DECIMAL128);
+            if (count % 2 != 0) {
+                a = a.subtract(term);
+            } else {
+                a = a.add(term);
+            }
+            count++;
+        }
+        return a.doubleValue();
+    }
+
+    public double sin(double x) {
+        x = x / 180 * Math.PI;
+        double g = 0;
+        double t = x;
+        int n = 1;
+
+        while (Math.abs(t) >= 1e-15) {
+            g += t;
+            n += 1;
+            t = -t * x * x / (2 * n - 1) / (2 * n - 2);
+        }
+        return round(g, 10);
+    }
+
+    public Double tan(double x) {
+        double cosValue = cos(x);
+        if (cosValue != 0) {
+            return round(sin(x) / cosValue, 10);
+        } else {
+            return Double.NaN;
+        }
+    }
+
+    private double round(double value, int places) {
+        BigDecimal bd = BigDecimal.valueOf(value);
+        bd = bd.setScale(places, RoundingMode.HALF_UP);
+        return bd.doubleValue();
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate this Java code to Python. The code is a "TriCalculator" class with methods cos, factorial, taylor, sin, tan, and a private round method. It uses BigDecimal for high precision in factorial and taylor, and MathContext.DECIMAL128. In Python, we can use the decimal module for arbitrary precision. But note that the Java code uses double for some intermediate calculations (Math.pow, etc.), but then uses BigDecimal for division and addition in taylor. The sin method uses a series with double precision. The round method uses BigDecimal with HALF_UP rounding.
+
+We need to keep behavior identical, including rounding to 10 decimal places, and handling of NaN for tan when cos=0.
+
+Important: The taylor method divides x by 180 and multiplies by PI to convert degrees to radians. The sin method does the same conversion. The cos method calls taylor with n=50.
+
+We'll translate methods:
+
+- cos(x): calls taylor(x, 50) and rounds to 10 decimal places.
+- factorial(a): returns decimal.Decimal factorial.
+- taylor(x, n): compute Taylor series for cos(x) (since the series is 1 - x^2/2! + x^4/4! - ...) using BigDecimal precision. The loop runs k from 1 to n-1, computes term = x^(2k) / (2k)! using Decimal, then subtracts or adds based on count (starting at 1, odd index subtracts, even adds). Returns a double (float). But note: they use BigDecimal for a and term, but then convert a to double at the end. The intermediate Math.pow(x,2*k) uses double, which may lose precision. But we'll replicate that: compute x_rad = x / 180 * math.pi, then for each k, compute x_rad**(2*k) as float, then convert to Decimal and divide by factorial(2k) as Decimal. The division uses MathContext.DECIMAL128 (34 digits of precision). We'll use decimal.getcontext().prec = 34 and do division with that context.
+
+However, using float for x_rad**(2k) may be less precise than Java's Math.pow which returns double (same as float in Python). So okay.
+
+- sin(x): uses a series with while loop, term t starts at x (radians), then for each step, t = -t * x * x / (2*n - 1) / (2*n - 2). This is efficient. It accumulates g until |t| < 1e-15. Then rounds to 10 places.
+
+- tan(x): compute cos(x), if !=0 return round(sin(x)/cos(x), 10), else return float('nan').
+
+- round(value, places): using Decimal with quantize or setScale equivalent. In Python, we can do: Decimal(str(value)).quantize(Decimal('0.' + '0'*places), rounding=ROUND_HALF_UP). Or simply use round() built-in? But the Java uses BigDecimal.setScale with HALF_UP, which is like Python's ROUND_HALF_UP. However, Python's built-in round() uses bankers rounding (round half to even) for floats, so we cannot rely on that. We should use decimal module to replicate exactly. Note: The round method in Java is private, but we can implement it as a helper.
+
+Edge cases: NaN propagation, division by zero, factorial of 0? factorial method loops while a>1, so factorial(0) returns BigDecimal.ONE (since while condition false). Factorial(1) also returns 1. Good.
+
+We'll import math, decimal. Use decimal.getcontext().prec = 34 for DECIMAL128 equivalent. But note: Java's MathContext.DECIMAL128 has precision 34 and rounding mode HALF_EVEN? Actually, MathContext.DECIMAL128 has precision 34 and rounding mode HALF_UP? Wait, Java's BigDecimal division uses MathContext with precision and rounding mode. MathContext.DECIMAL128 is a predefined constant with precision 34 and rounding mode HALF_EVEN. But the Java code uses MathContext.DECIMAL128 in the division: .divide(factorial(2*k), MathContext.DECIMAL128). That means it will use precision 34 and rounding mode HALF_EVEN. However, the overall result is later rounded to 10 places using HALF_UP in the round method. To be precise, we should replicate the same context: precision 34, rounding HALF_EVEN for internal division. Then final round uses HALF_UP.
+
+Thus we need to set decimal context accordingly. We'll use decimal.getcontext().prec = 34, and decimal.ROUND_HALF_EVEN for divisions? Actually decimal default rounding is ROUND_HALF_EVEN. But we need to ensure that the division operation within taylor uses that context. We'll use decimal.localcontext() to temporarily set precision for the division, but the default context is global. We'll set global precision to 34.
+
+But careful: factorial returns Decimal. Multiplying and dividing Decimal with context. We'll use Decimal.quantize for final rounding.
+
+Also, note that the Java code computes factorial using BigDecimal, which is exact for integers. So factorial(2*k) as Decimal will be exact if we use int multiplication. We'll compute factorial using Decimal multiply.
+
+We'll write class TriCalculator with methods.
+
+Potential issue: In taylor, they compute term = BigDecimal.valueOf(Math.pow(x, 2*k)).divide(factorial(2*k), MathContext.DECIMAL128). Since Math.pow returns double, converting to BigDecimal may lose precision. But it's okay. In Python, we'll do Decimal(str(x_rad**(2*k))) but that may be imprecise for large exponents. Alternatively, we could compute power using Decimal but that would be too slow. We'll follow same approach: compute float power, convert to Decimal.
+
+Also note: x is given in degrees, but conversion to radians is done inside taylor and sin. So cos(0) returns 1, cos(90) returns 0? Actually cos(90°) should be 0, but due to rounding may be small. fine.
+
+Let's implement.
+
+We'll need to import decimal, math.
+
+Define class TriCalculator.
+
+Implement:
+
+def __init__(self): pass
+
+def cos(self, x): return self.round(self.taylor(x, 50), 10)
+
+def factorial(self, a): 
+    result = Decimal(1)
+    while a > 1:
+        result *= Decimal(a)
+        a -= 1
+    return result
+
+def taylor(self, x, n):
+    from decimal import Decimal, getcontext
+    # Set global precision to 34 (DECIMAL128)
+    getcontext().prec = 34
+    a = Decimal(1)
+    x_rad = x / 180.0 * math.pi
+    count = 1
+    for k in range(1, n):
+        # compute term
+        term = Decimal(str(math.pow(x_rad, 2*k))) / self.factorial(2*k)   # division will use current context precision (34) and rounding HALF_EVEN
+        if count % 2 != 0:
+            a -= term
+        else:
+            a += term
+        count += 1
+    return float(a)  # convert to double
+
+But careful: In Java, they use .divide(factorial(2*k), MathContext.DECIMAL128) which is a division with specified context. In Python, dividing two Decimals uses the current context's precision and rounding. So we should ensure that the context's precision is set properly. However, if we set getcontext().prec = 34 globally, and use default rounding (ROUND_HALF_EVEN), that should match. But note that any other operations (like multiplication) also use that context. But that's fine because it matches Java's BigDecimal operations with MathContext.DECIMAL128? Actually Java's BigDecimal operations without an explicit MathContext use unlimited precision and exact results (like addition/subtraction of BigDecimal). But in our Python Decimal, addition/subtraction are exact? Decimal arithmetic with context may round intermediate results if precision is limited. However, Java's BigDecimal addition/subtraction do not use MathContext by default, they are exact (unless there is overflow?). In Java, BigDecimal addition is exact, no rounding. In Python, Decimal addition is also exact because it doesn't rely on rounding for addition/subtraction (unless the result has more digits than the current precision? Actually, the decimal module's operations are subject to the context precision for results that have more digits than precision, including addition and subtraction. For example, Decimal('1.00000000000000000000000000000000001') + Decimal('0') might be rounded to precision 34 if it exceeds 34 digits. But Java's BigDecimal addition does not have a precision limit; it's exact. To exactly mimic Java, we might need to avoid setting global precision for addition/subtraction, because Java's BigDecimal operations on the 'a' variable in taylor are exact (no rounding). Only the division step uses MathContext.DECIMAL128. So we should only apply the precision context to the division operation, not to the entire Taylor series accumulation.
+
+Thus, we should use decimal.localcontext() with precision 34 and rounding HALF_EVEN only for the division. Or we can use Decimal.quantize or / with context argument? In Python, Decimal division can accept a context parameter: Decimal / Decimal with context argument? Actually, the division operation uses the current context. We can temporarily set the context for the division using a with block. Let's do:
+
+with localcontext() as ctx:
+    ctx.prec = 34
+    ctx.rounding = ROUND_HALF_EVEN
+    term = Decimal(str(math.pow(x_rad, 2*k))) / self.factorial(2*k)
+
+But factorial is computed without context (exact). The division is within the local context, so it will use precision 34. That matches Java's division with MathContext.DECIMAL128. Then a += term and a -= term will be exact (no precision limit) because they are outside the local context, using the default context which has high precision (default 28? Actually default precision is 28). That might cause differences because Java's BigDecimal addition/subtraction are exact, while Python's Decimal addition/subtraction under default precision 28 may round if the number of digits exceeds 28. But the 'a' variable is a Decimal, and we accumulate terms that are results of division with precision 34. The results could have up to 34 significant digits, then adding them may produce numbers with more than 28 digits, which would be rounded under default precision. That would be different from Java. So we need to ensure that the addition/subtraction operations also support at least 34 digits of precision. We could set the global context precision to a high value, say 50, but that might affect other calculations. Better to set the global context precision to something >=34 and use ROUND_HALF_EVEN? But Java's addition/subtraction are exact, not rounded, so precision should be unlimited. However, Python's Decimal cannot be unlimited; but we can set prec very high to avoid rounding. 34 is enough for the result we care about (final rounding to 10 places). But we need to be careful:
+</think>
+
+=== RAW ANSWER ===
+```
+import math
+from decimal import Decimal, getcontext, localcontext, ROUND_HALF_EVEN, ROUND_HALF_UP
+
+class TriCalculator:
+    def __init__(self):
+        pass
+
+    def cos(self, x):
+        return self.round(self.taylor(x, 50), 10)
+
+    def factorial(self, a):
+        result = Decimal(1)
+        while a > 1:
+            result *= Decimal(a)
+            a -= 1
+        return result
+
+    def taylor(self, x, n):
+        a = Decimal(1)
+        x_rad = x / 180.0 * math.pi
+        count = 1
+        for k in range(1, n):
+            with localcontext() as ctx:
+                ctx.prec = 34
+                ctx.rounding = ROUND_HALF_EVEN
+                term = Decimal(str(math.pow(x_rad, 2 * k))) / self.factorial(2 * k)
+            if count % 2 != 0:
+                a -= term
+            else:
+                a += term
+            count += 1
+        return float(a)
+
+    def sin(self, x):
+        x_rad = x / 180.0 * math.pi
+        g = 0.0
+        t = x_rad
+        n = 1
+        while abs(t) >= 1e-15:
+            g += t
+            n += 1
+            t = -t * x_rad * x_rad / (2 * n - 1) / (2 * n - 2)
+        return self.round(g, 10)
+
+    def tan(self, x):
+        cos_val = self.cos(x)
+        if cos_val != 0:
+            return self.round(self.sin(x) / cos_val, 10)
+        else:
+            return float('nan')
+
+    def round(self, value, places):
+        bd = Decimal(str(value))
+        quantize_str = '0.' + '0' * places
+        bd = bd.quantize(Decimal(quantize_str), rounding=ROUND_HALF_UP)
+        return float(bd)
+```
+
+=== TRANSLATED CODE (py) ===
+import math
+from decimal import Decimal, getcontext, localcontext, ROUND_HALF_EVEN, ROUND_HALF_UP
+
+class TriCalculator:
+    def __init__(self):
+        pass
+
+    def cos(self, x):
+        return self.round(self.taylor(x, 50), 10)
+
+    def factorial(self, a):
+        result = Decimal(1)
+        while a > 1:
+            result *= Decimal(a)
+            a -= 1
+        return result
+
+    def taylor(self, x, n):
+        a = Decimal(1)
+        x_rad = x / 180.0 * math.pi
+        count = 1
+        for k in range(1, n):
+            with localcontext() as ctx:
+                ctx.prec = 34
+                ctx.rounding = ROUND_HALF_EVEN
+                term = Decimal(str(math.pow(x_rad, 2 * k))) / self.factorial(2 * k)
+            if count % 2 != 0:
+                a -= term
+            else:
+                a += term
+            count += 1
+        return float(a)
+
+    def sin(self, x):
+        x_rad = x / 180.0 * math.pi
+        g = 0.0
+        t = x_rad
+        n = 1
+        while abs(t) >= 1e-15:
+            g += t
+            n += 1
+            t = -t * x_rad * x_rad / (2 * n - 1) / (2 * n - 2)
+        return self.round(g, 10)
+
+    def tan(self, x):
+        cos_val = self.cos(x)
+        if cos_val != 0:
+            return self.round(self.sin(x) / cos_val, 10)
+        else:
+            return float('nan')
+
+    def round(self, value, places):
+        bd = Decimal(str(value))
+        quantize_str = '0.' + '0' * places
+        bd = bd.quantize(Decimal(quantize_str), rounding=ROUND_HALF_UP)
+        return float(bd)

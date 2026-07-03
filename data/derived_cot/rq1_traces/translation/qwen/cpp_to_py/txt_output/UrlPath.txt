@@ -1,0 +1,634 @@
+=== SOURCE CODE (cpp) ===
+
+#include <algorithm>
+#include <cctype>
+#include <sstream>
+#include <iomanip>
+#include <locale>
+#include <codecvt>
+
+#include <string>
+#include <vector>
+
+class UrlPath {
+public:
+    UrlPath();
+
+    void add(const std::string& segment);
+    void parse(const std::string& path, const std::string& charset);
+    static std::string fix_path(const std::string& path);
+
+    const std::vector<std::string>& get_segments() const;
+    bool with_end_tag() const;
+
+private:
+    std::vector<std::string> segments;
+    bool _with_end_tag;
+};
+
+
+UrlPath::UrlPath() : _with_end_tag(false) {}
+
+void UrlPath::add(const std::string& segment) {
+    segments.push_back(fix_path(segment));
+}
+
+void UrlPath::parse(const std::string& path, const std::string& charset) {
+    if (!path.empty()) {
+        if (path.back() == '/') {
+            _with_end_tag = true;
+        }
+
+        std::string fixed_path = fix_path(path);
+        if (!fixed_path.empty()) {
+            std::istringstream ss(fixed_path);
+            std::string segment;
+            while (std::getline(ss, segment, '/')) {
+                std::string decoded_seg;
+                std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+                std::wstring wide_segment = converter.from_bytes(segment);
+                for (wchar_t ch : wide_segment) {
+                    if (ch == '%') {
+
+                    }
+                    else {
+                        decoded_seg.push_back(static_cast<char>(ch));
+                    }
+                }
+                segments.push_back(decoded_seg);
+            }
+        }
+    }
+}
+
+std::string UrlPath::fix_path(const std::string& path) {
+    if (path.empty()) {
+        return "";
+    }
+
+    std::string segment_str = path;
+    if (segment_str.front() == '/') {
+        segment_str.erase(segment_str.begin());
+    }
+    if (segment_str.back() == '/') {
+        segment_str.pop_back();
+    }
+    return segment_str;
+}
+
+const std::vector<std::string>& UrlPath::get_segments() const {
+    return segments;
+}
+
+bool UrlPath::with_end_tag() const {
+    return _with_end_tag;
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to translate the C++ code to Python, maintaining the same behavior.
+ We note that the C++ code uses standard libraries and some specific C++11 features (like std::string, vector, and the wstring_convert for decoding).
+ However, note that the function `parse` in the C++ code uses a conversion from bytes to wide string and then decodes the segment by handling '%' and other characters.
+ But note: the C++ code does not actually decode the percent-encoded characters. It only removes the leading and trailing slashes and then in the parse function, it attempts to decode by converting to wide string and then back to char, but only if the character is not '%'. This is not standard percent decoding.
+
+ Let's analyze the behavior:
+
+ In the C++ code, the `fix_path` function removes the leading and trailing slashes from the entire path string. Then in the `parse` function, it splits the fixed_path by '/' and then for each segment, it does:
+
+   std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+   std::wstring wide_segment = converter.from_bytes(segment);
+   for (wchar_t ch : wide_segment) {
+        if (ch == '%') {
+            // do nothing
+        } else {
+            decoded_seg.push_back(static_cast<char>(ch));
+        }
+   }
+
+ This is incorrect because it does not handle percent-encoding. The original C++ code does not decode the percent-encoded segments, it just removes the '%' and treats it as a normal character.
+
+ However, note the original C++ code's `fix_path` function is applied to the entire path string, and then split by '/'. The `add` function also uses `fix_path` for each segment.
+
+ The problem says: "Keep behavior identical", so we must not change the behavior. Therefore, we must not decode the percent-encoded segments. The C++ code does not decode them, so we will not either.
+
+ But wait: the C++ code in the `parse` function does:
+
+   segments.push_back(decoded_seg);
+
+ And `decoded_seg` is built by taking each character that is not '%' and converting from wide to char. This is effectively removing the '%' characters and converting the string to a narrow string (which is the same as the input since the input is already in the system's encoding?).
+
+ However, note that the `fix_path` function returns a string (which is in the system's encoding) and then in `parse` we convert that string to wide string and then back to char, but skipping '%'. This is not standard and might be a mistake.
+
+ Let's look at the original intent: the `UrlPath` class is meant to represent a URL path. In the `parse` function, it is splitting the path and then trying to "fix" the segments by removing the '%' characters? That doesn't sound right.
+
+ But note: the problem says to keep behavior identical. So if the original C++ code does not decode percent-encoding, then we don't either.
+
+ However, let's check the `add` function: it uses `fix_path` and then stores the string. The `parse` function also uses `fix_path` and then does this decoding by skipping '%'. But note that the `parse` function is called with a path and a charset, but the charset is not used in the C++ code. The `fix_path` function does not use the charset.
+
+ So, what is the behavior?
+
+ The `fix_path` function removes the leading and trailing slashes from the entire path string. Then the `parse` function splits the string by '/' and then processes each segment by removing '%' and then converting to a string (which is the same as the original segment without the '%' characters and without the leading/trailing slashes).
+
+ But note: the `fix_path` function is called on the entire path, so the leading and trailing slashes are removed from the entire path. Then the path is split by '/'. This means that the first segment might be empty if the path starts with a slash? Actually, the `fix_path` function removes the first character if it's a slash, so if the path is "/a/b", then `fix_path` returns "a/b", then split gives ["a", "b"].
+
+ However, note that the `parse` function also checks if the last character of the original path is a slash and sets `_with_end_tag` to true.
+
+ Let's now translate to Python.
+
+ Steps:
+
+ 1. We'll create a class `UrlPath` in Python.
+
+ 2. We need to mimic the behavior of the C++ code.
+
+ 3. We note that the C++ code uses `std::string` and `std::vector<std::string>`. In Python, we can use `str` and `list[str]`.
+
+ 4. The `fix_path` function in C++ removes the first and last character if they are '/'. We can do the same in Python.
+
+ 5. The `parse` function in C++ splits the fixed_path by '/' and then processes each segment by removing '%' characters and converting to a string (but note: the conversion is done via wide string conversion, which in Python we don't have. However, the input is a string in the system's encoding, so we can just remove the '%' and then use the string as is).
+
+ 6. But wait: the C++ code uses `std::wstring_convert` to convert from bytes to wide string. This is because the `fix_path` returns a string that might have been in a different encoding? Actually, the `parse` function is given a `path` and a `charset`, but the charset is not used. So the C++ code is not actually using the charset.
+
+ 7. We are told to use idiomatic Python only when it doesn't change behavior. So we can use Python's string methods.
+
+ 8. The `parse` function in C++ does:
+
+        std::string fixed_path = fix_path(path);
+        if (!fixed_path.empty()) {
+            std::istringstream ss(fixed_path);
+            std::string segment;
+            while (std::getline(ss, segment, '/')) {
+                ... process segment ...
+
+ 9. We can do the same in Python by splitting the fixed_path by '/'.
+
+ 10. However, note that the C++ code removes the leading and trailing slashes from the entire path. Then splits by '/'. In Python, we can do:
+
+        fixed_path = fix_path(path)   # which removes leading and trailing slashes if present
+
+        if fixed_path:
+            segments = fixed_path.split('/')
+            # But note: if the original path had multiple consecutive slashes, then split will create empty strings? 
+            # The C++ code does not handle that. In C++, if the path is "///a//b", then fixed_path becomes "/a//b" (if we remove the first and last slash) but wait:
+
+            Actually, the C++ `fix_path` function removes the first character if it's '/' and the last if it's '/'. So for "///a//b", it becomes "/a//b". Then split by '/' gives: ["", "a", "", "b"].
+
+            But in the C++ code, the `parse` function would then process each of these segments. The empty string is passed through the decoding (which does nothing) and becomes an empty string.
+
+            We must preserve this behavior.
+
+ 11. The `_with_end_tag` flag is set if the original path ends with a '/'. We can set that in Python.
+
+ 12. The `add` function just adds a fixed segment. We can do the same.
+
+ 13. The `get_segments` returns a reference to the vector. In Python, we can return a list and we don't have references, so we return a copy? But the problem says: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)."
+
+     In C++, `get_segments` returns a const reference. In Python, we can return the list. But note that in C++, the list is mutable and the caller can modify it. However, the C++ code does not allow modification because it's const reference. But in Python, we are returning a list and the caller can modify it. This is a difference.
+
+     However, the problem says: "Use idiomatic Python only when it doesn't change behavior." 
+
+     We must consider: the C++ code does not allow modification of the segments because it's a const reference. But in Python, we are returning a list that the caller can modify. This is a change in behavior.
+
+     But note: the C++ code does not have any const correctness in the class for the segments. The `segments` member is not const. So in C++, the caller can modify the segments. The `get_segments` returns a const reference to prevent modification? Actually, no: the const reference does not prevent modification of the elements, only that the caller cannot reassign the reference. So in C++, the caller can modify the elements.
+
+     However, in Python, we are returning the list and the caller can modify the elements. This is the same as C++. But note: the C++ code does not allow the caller to modify the reference (because it's const reference) but the elements are mutable. So the behavior is the same.
+
+     But wait: in C++, the const reference does not prevent modification of the elements. So the caller can do:
+
+        UrlPath u;
+        const std::vector<std::string>& vec = u.get_segments();
+        vec[0] = "new";
+
+     This is allowed. In Python, we are returning a list and the caller can do:
+
+        up = UrlPath()
+        segments = up.get_segments()
+        segments[0] = "new"
+
+     This is allowed. So the behavior is the same.
+
+ 14. The `with_end_tag` returns a bool.
+
+ Implementation:
+
+ Let's write the Python class.
+
+ We'll have:
+
+    class UrlPath:
+        def __init__(self):
+            self.segments = []   # list of strings
+            self._with_end_tag = False
+
+        def add(self, segment):
+            # We fix the segment and then add
+            fixed_segment = self._fix_path(segment)
+            self.segments.append(fixed_segment)
+
+        def parse(self, path, charset):
+            # We don't use charset, so ignore.
+            if path and path[-1] == '/':
+                self._with_end_tag = True
+            else:
+                self._with_end_tag = False
+
+            fixed_path = self._fix_path(path)
+            if fixed_path:
+                # Split the fixed_path by '/'
+                segments_list = fixed_path.split('/')
+                for seg in segments_list:
+                    # Process each segment: remove '%' characters and then convert to string (but note: the C++ code does a wide conversion, but we don't need that if the input is in the system's encoding)
+                    # We'll just remove '%' and then use the string.
+                    # But note: the C++ code does a conversion from bytes to wide string and then back to char, but only skipping '%'. This is not standard.
+                    # We are not decoding percent-encoding, so we just remove the '%' and then use the string as is.
+                    # However, the C++ code does not remove the '%' in the `add` function, only in the `parse` function. But note: the `add` function uses `fix_path` and then stores. The `parse` function uses `fix_path` and then the decoding step.
+
+                    # But wait: the `add` function does not do the decoding step. The `parse` function does. So the `parse` function is the one that does the decoding.
+
+                    # In the C++ code, the `parse` function does:
+
+                    #   std::string decoded_seg;
+                    #   ... convert to wide string ...
+                    #   for each wchar_t ch in wide_segment:
+                    #       if ch != '%': decoded_seg += static_cast<char>(ch)
+
+                    # This is equivalent to: remove all '%' and then convert the string to the system's encoding (which is the same as the input if the input is already in the system's encoding). 
+
+                    # In Python, we can do:
+
+                    #   decoded_seg = ''.join(ch for ch in seg if ch != '%')
+
+                    # But note: the C++ code does the conversion from the fixed_path string (which is in the system's encoding) to wide string and then back. This is a no-op for non-ASCII characters? Actually, no: because the fixed_path string might contain non-ASCII characters. But the C++ code is not doing any percent decoding, just removing '%'.
+
+                    # However, the problem says: keep behavior identical. So we must not change the encoding. The C++ code does not decode the percent-encoding, so we don't either.
+
+                    # But note: the C++ code does not handle percent-encoding at all. It just removes the '%' characters and leaves the rest. So we do the same.
+
+                    # However, what if the segment contains a '%'? We remove it. This is the same as the C++ code.
+
+                    decoded_seg = seg.replace('%', '')
+                    self.segments.append(decoded_seg)
+
+        @staticmethod
+        def _fix_path(path):
+            # Remove leading and trailing slashes if present
+            if not path:
+                return ""
+            if path[0] == '/':
+                path = path[1:]
+            if path and path[-1] == '/':
+                path = path[:-1]
+            return path
+
+        def get_segments(self):
+            return self.segments
+
+        def with_end_tag(self):
+            return self._with_end_tag
+
+ However, wait: the C++ code's `parse` function does:
+
+        std::string fixed_path = fix_path(path);
+        if (!fixed_path.empty()) {
+            ... split and process ...
+
+        So if fixed_path is empty, we do nothing.
+
+        In our Python code, we do:
+
+            fixed_path = self._fix_path(path)
+            if fixed_path:
+                ... split and process ...
+
+        But note: the condition in C++ is `if (!fixed_path.empty())`. In Python, we can use `if fixed_path` because an empty string is False.
+
+        However, what if the fixed_path is a string with spaces? That's okay.
+
+        But note: the C++ code does not check for empty fixed_path in the split loop. It still splits an empty string? Actually, if fixed_path is empty, then the split will return a list with one empty string? Let's test:
+
+            "".split('/') -> ['']
+
+        Then we would process an empty string and remove the '%' (which does nothing) and then append an empty string.
+
+        But in C++, if fixed_path is empty, the while loop condition fails because the string stream would be empty.
+
+        So we must avoid processing empty fixed_path.
+
+        In Python, we can do:
+
+            if fixed_path:
+                segments_list = fixed_path.split('/')
+                for seg in segments_list:
+                    # process seg
+            else:
+                # nothing
+
+        This matches the C++ behavior.
+
+ 15. But wait: the C++ code does not remove empty segments. For example, if the path is "//", then fixed_path becomes "" (because first and last are removed, but there are two slashes: remove first -> "/", then remove last -> ""). Then the split would be done on an empty string? Actually, in C++:
+
+        path = "//"
+        fix_path(path) -> remove first '/' -> "/", then remove last '/' -> "" -> fixed_path is empty.
+
+        Then the while loop does not run.
+
+        In Python, we do the same.
+
+ 16. However, consider the path "///a//b" in C++:
+
+        Original: "///a//b"
+        fix_path: remove first '/' -> "/a//b", then remove last '/' -> "/a//b" (because the last character is 'b', not '/') -> fixed_path = "/a//b"
+
+        Then split by '/' -> ["", "a", "", "b"]
+
+        Then each segment is processed:
+
+            "" -> becomes "" (by removing '%')
+            "a" -> "a"
+            "" -> ""
+            "b" -> "b"
+
+        In Python, we do the same.
+
+ 17. But note: the C++ code does not remove empty segments. So we are not changing that.
+
+ 18. One more thing: the `add` function in C++ uses `fix_path` and then stores. In Python, we do the same.
+
+ 19. The `parse` function sets `_with_end_tag` based on the original path's last character.
+
+ 20. We are not using the charset, so we ignore.
+
+ 21. Let's test with a simple example.
+
+ Example in C++:
+
+        UrlPath u;
+        u.parse("/a/b/", "UTF-8");
+        // This should set _with_end_tag to true, and then fixed_path = fix_path("/a/b/") -> "a/b"
+        // Then split: ["a", "b"] -> then each segment: "a" and "b" (no '%' so unchanged)
+
+        Then u.get_segments() should be ["a", "b"]
+
+ Example in Python:
+
+        up = UrlPath()
+        up.parse("/a/b/", "UTF-8")
+        segments = up.get_segments()   # ['a', 'b']
+
+ Example 2:
+
+        up = UrlPath()
+        up.add("a")
+        up.add("b")
+        segments = up.get_segments()   # ['a', 'b']
+
+ Example 3: with percent
+
+        up = UrlPath()
+        up.parse("/%25hello/", "UTF-8")
+        // In C++, the segment would be "%25hello" -> then converted to wide string and then remove '%' -> "25hello"
+
+        In Python, we do:
+
+            fixed_path = fix_path("/%25hello/") -> "%25hello" without the leading and trailing slashes -> "%25hello"
+            Then split: ["%25hello"] -> then remove '%' from "%25hello" -> "25hello"
+
+        So we get "25hello", which is the same as the C++ code.
+
+ 22. But wait: the C++ code does not decode the percent-encoding, it just removes the '%' characters. So in the above example, the segment "%25hello" becomes "25hello". This is not the correct percent decoding. However, the problem says to keep behavior identical. So we are doing the same.
+
+ 23. However, note that the original C++ code does not use the charset and does not decode. So we are following.
+
+ 24. There is one more edge case: the entire path is a single slash.
+
+        In C++:
+            path = "/"
+            fix_path: remove first -> "" -> fixed_path is empty -> so no segments are added, and _with_end_tag is set to true.
+
+        In Python:
+            path = "/"
+            self._fix_path(path) -> remove first -> "" -> then fixed_path is empty -> so no segments, and _with_end_tag is True.
+
+ 25. Another edge case: empty string.
+
+        In C++:
+            path = ""
+            fix_path returns "" -> then no segments, and _with_end_tag is false (because path is empty, so last character is not '/'? Actually, the condition in parse: if (!path.empty()) { ... } so if path is empty, we don't set _with_end_tag to true.
+
+        In Python:
+            if path and path[-1] == '/': 
+            For empty string, the condition is not entered, so _with_end_tag remains False.
+
+ 26. We must be cautious with the `parse` function: the condition for setting `_with_end_tag` is:
+
+        if path and path[-1] == '/':   # but note: if path is empty, then path[-1] would throw an exception.
+
+        We should check for non-empty path first.
+
+        In the C++ code, the condition is:
+
+            if (!path.empty()) {
+                if (path.back() == '/') {
+                    _with_end_tag = true;
+                }
+
+        So we must do the same in Python.
+
+        We can change the condition in Python to:
+
+            if path != "":
+                if path[-1] == '/':
+                    self._with_end_tag = True
+                else:
+                    self._with_end_tag = False
+            else:
+                self._with_end_tag = False
+
+        But note: the original condition in C++ does not set _with_end_tag to false if the last character is not '/'. It only sets it to true if the last character is '/'. Otherwise, it leaves it as false.
+
+        We can do:
+
+            if path and path[-1] == '/':
+                self._with_end_tag = True
+            else:
+                self._with_end_tag = False
+
+        But wait: what if the path is empty? Then the condition `path` is false, so we set _with_end_tag to False. That is correct.
+
+        However, we must avoid indexing an empty string. So we check `if path` first, then check the last character.
+
+        We can write:
+
+            if path:
+                if path[-1] == '/':
+                    self._with_end_tag = True
+                else:
+                    self._with_end_tag = False
+            else:
+                self._with_end_tag = False
+
+        But note: the condition in C++ does not set _with_end_tag to true if the path is empty and the last character is '/', because the path is empty and the condition is skipped. So we set _with_end_tag to false for empty path.
+
+        Alternatively, we can write:
+
+            self._with_end_tag = (path and path[-1] == '/')
+
+        But note: if path is empty, then the condition is false. So:
+
+            self._with_end_tag = (path != "" and path[-1] == '/')
+
+        But wait: if path is not empty and the last character is '/', then true. Otherwise, false.
+
+        However, we must avoid the empty string index. So we can do:
+
+            self._with_end_tag = False
+            if path and path[-1] == '/':
+                self._with_end_tag = True
+
+        This is safe.
+
+ 27. Let's adjust the `parse` function.
+
+ 28. One more thing: the `parse` function in C++ does:
+
+        std::string fixed_path = fix_path(path);
+
+        Then if fixed_path is not empty, it splits and processes.
+
+        In Python, we do the same.
+
+ 29. We are done.
+
+ Let's write the code accordingly.
+
+ However, note: the `_fix_path` function in C++ is a member function and is called from `parse` and `add`. We are making it a static method because it doesn't use `self`.
+
+ But note: the C++ `fix_path` function is a member function but it doesn't use `this`. We can make it static.
+
+ 30. We'll write the code accordingly.
+
+ 31. One more edge: what if the path is a single slash with a trailing slash? 
+
+        In C++:
+            path = "//"
+            fix_path: remove first -> "/", then remove last -> "" -> fixed_path empty -> no segments, and _with_end_tag is set to true because the original path is "//", which is not empty and the last character is '/'.
+
+        In Python:
+
+            path = "//"
+            self._with_end_tag = (path and path[-1]=='/') -> True
+            fixed_path = self._fix_path(path) -> remove first '/' -> "/", then remove last '/' -> "" -> empty -> no segments.
+
+        This matches.
+
+ 32. We are ready.
+
+ Let's code accordingly.
+
+ However, note: the C++ code does not use the charset in `parse` or `fix_path`. So we ignore.
+
+ Let's write the Python code.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ class `UrlPath` into Python while maintaining identical behavior, including handling inputs, outputs, side effects, and edge cases. The class processes URL paths by splitting them into segments, removing leading and trailing slashes, and optionally marking if the path ended with a slash. The solution involves translating each method of the C++ class into Python, ensuring that the behavior remains consistent.
+
+### Approach
+1. **Class Initialization**: The `UrlPath` class in Python initializes with an empty list of segments and a flag indicating if the path ends with a slash.
+2. **Adding Segments**: The `add` method processes a segment by removing leading/trailing slashes and adds it to the segments list.
+3. **Parsing Paths**: The `parse` method processes a URL path by checking if it ends with a slash and then splits the path into segments after removing leading/trailing slashes. Each segment is processed to remove '%' characters.
+4. **Fixing Paths**: The `fix_path` method is a static helper that removes leading and trailing slashes from a path.
+5. **Accessors**: The `get_segments` method returns the list of segments, and `with_end_tag` returns the flag indicating if the path ended with a slash.
+
+### Solution Code
+```python
+class UrlPath:
+    def __init__(self):
+        self.segments = []
+        self._with_end_tag = False
+
+    def add(self, segment):
+        fixed_segment = self._fix_path(segment)
+        self.segments.append(fixed_segment)
+
+    def parse(self, path, charset):
+        if path and path[-1] == '/':
+            self._with_end_tag = True
+        else:
+            self._with_end_tag = False
+
+        fixed_path = self._fix_path(path)
+        if fixed_path:
+            segments_list = fixed_path.split('/')
+            for seg in segments_list:
+                decoded_seg = seg.replace('%', '')
+                self.segments.append(decoded_seg)
+
+    @staticmethod
+    def _fix_path(path):
+        if not path:
+            return ""
+        if path[0] == '/':
+            path = path[1:]
+        if path and path[-1] == '/':
+            path = path[:-1]
+        return path
+
+    def get_segments(self):
+        return self.segments
+
+    def with_end_tag(self):
+        return self._with_end_tag
+```
+
+### Explanation
+1. **Initialization**: The `__init__` method initializes the segments list and the `_with_end_tag` flag to `False`.
+2. **Adding Segments**: The `add` method processes each segment by removing any leading or trailing slashes and adds it to the segments list.
+3. **Parsing Paths**: The `parse` method checks if the input path ends with a slash and sets the `_with_end_tag` flag accordingly. It then processes the path by removing leading/trailing slashes and splitting it into segments. Each segment is processed to remove '%' characters before being added to the segments list.
+4. **Fixing Paths**: The `_fix_path` method is a static helper that removes leading and trailing slashes from a given path.
+5. **Accessors**: The `get_segments` method returns the list of segments, and `with_end_tag` returns the flag indicating if the path ended with a slash.
+
+This solution ensures that all behaviors from the original C++ code are replicated in Python, including handling edge cases and maintaining the same input/output characteristics.
+
+=== TRANSLATED CODE (py) ===
+class UrlPath:
+    def __init__(self):
+        self.segments = []
+        self._with_end_tag = False
+
+    def add(self, segment):
+        fixed_segment = self._fix_path(segment)
+        self.segments.append(fixed_segment)
+
+    def parse(self, path, charset):
+        if path and path[-1] == '/':
+            self._with_end_tag = True
+        else:
+            self._with_end_tag = False
+
+        fixed_path = self._fix_path(path)
+        if fixed_path:
+            segments_list = fixed_path.split('/')
+            for seg in segments_list:
+                decoded_seg = seg.replace('%', '')
+                self.segments.append(decoded_seg)
+
+    @staticmethod
+    def _fix_path(path):
+        if not path:
+            return ""
+        if path[0] == '/':
+            path = path[1:]
+        if path and path[-1] == '/':
+            path = path[:-1]
+        return path
+
+    def get_segments(self):
+        return self.segments
+
+    def with_end_tag(self):
+        return self._with_end_tag

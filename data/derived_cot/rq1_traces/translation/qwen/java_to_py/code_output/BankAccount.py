@@ -1,0 +1,35 @@
+class IllegalArgumentException(Exception):
+    pass
+
+class BankAccount:
+    def __init__(self, balance=0):
+        self.balance = balance
+
+    def deposit(self, amount):
+        if amount < 0:
+            raise IllegalArgumentException("Invalid amount")
+        self.balance += amount
+        return self.balance
+
+    def withdraw(self, amount):
+        if amount < 0:
+            raise IllegalArgumentException("Invalid amount")
+        if amount > self.balance:
+            raise IllegalArgumentException("Insufficient balance.")
+        self.balance -= amount
+        return self.balance
+
+    def view_balance(self):
+        return self.balance
+
+    def transfer(self, other_account, amount):
+        self.withdraw(amount)
+        other_account.deposit(amount)
+
+if __name__ == '__main__':
+    account1 = BankAccount()
+    account2 = BankAccount()
+    account1.deposit(1000)
+    account1.transfer(account2, 300)
+    print("account1.balance =", account1.view_balance())
+    print("account2.balance =", account2.view_balance())

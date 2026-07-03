@@ -1,0 +1,329 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+public class MovieBookingSystem {
+
+    private List<Map<String, Object>> movies;
+
+    public MovieBookingSystem() {
+        this.movies = new ArrayList<>();
+    }
+
+    public void addMovie(String name, double price, String startTime, String endTime, int n) {
+        Map<String, Object> movie = new HashMap<>();
+        movie.put("name", name);
+        movie.put("price", price);
+        movie.put("start_time", LocalTime.parse(startTime));
+        movie.put("end_time", LocalTime.parse(endTime));
+        movie.put("seats", new int[n][n]);
+        movies.add(movie);
+    }
+
+    public String bookTicket(String name, int[][] seatsToBook) {
+        for (Map<String, Object> movie : movies) {
+            if (movie.get("name").equals(name)) {
+                int[][] seats = (int[][]) movie.get("seats");
+                for (int[] seat : seatsToBook) {
+                    int row = seat[0];
+                    int col = seat[1];
+                    if (seats[row][col] == 0) {
+                        seats[row][col] = 1;
+                    } else {
+                        return "Booking failed.";
+                    }
+                }
+                return "Booking success.";
+            }
+        }
+        return "Movie not found.";
+    }
+
+    public List<String> availableMovies(String startTime, String endTime) {
+        LocalTime start = LocalTime.parse(startTime);
+        LocalTime end = LocalTime.parse(endTime);
+
+        return movies.stream()
+                .filter(movie -> {
+                    LocalTime movieStart = (LocalTime) movie.get("start_time");
+                    LocalTime movieEnd = (LocalTime) movie.get("end_time");
+                    return !movieStart.isBefore(start) && !movieEnd.isAfter(end);
+                })
+                .map(movie -> (String) movie.get("name"))
+                .collect(Collectors.toList());
+    }
+
+    public List<Map<String, Object>> getMovies() {
+        return movies;
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate this Java code to C++. The Java class is MovieBookingSystem with:
+
+- Private member: List<Map<String, Object>> movies. In Java, it's a list of maps with string keys and object values. In C++, we need a suitable equivalent. Since values are heterogeneous (String, double, LocalTime, int[][]), we could use a struct/class for Movie, or use std::variant or boost::any. But the Java code uses unchecked casts and raw maps. For a faithful translation, we can use a map with string keys and std::any (C++17) or use a custom struct. However, "seats" is int[][] (2D array). In C++, we could use std::vector<std::vector<int>> or a flat 2D array. Also, LocalTime in Java. In C++, we can use std::chrono::hours:minutes:seconds or a simple struct for time (int hours, minutes). But we need to parse "HH:mm" format. We'll use a custom Time class or std::chrono with parsing. Simpler: create a struct Movie with name (std::string), price (double), start_time, end_time (using a Time struct), seats (std::vector<std::vector<int>>). That's more idiomatic and avoids unsafe casts.
+
+But the requirement says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions). Use idiomatic C++ only when it doesn't change behavior." So we must replicate the behavior exactly. That includes:
+
+- addMovie: creates a map with string keys, uses LocalTime.parse. In C++, we need to parse time. We'll create a Time struct with hours and minutes, parse from string. If format wrong, behavior? Java's LocalTime.parse throws DateTimeParseException. We can throw std::invalid_argument or similar. But the problem doesn't specify handling exceptions; we can assume valid input.
+
+- bookTicket: iterates movies, if name matches, gets seats (int[][]) and checks if each seat is 0, then sets to 1. If any already booked, returns "Booking failed." else "Booking success." If movie not found, returns "Movie not found." In Java, it returns after first match. Also seats are stored as int[][]. In C++, we'll store as vector<vector<int>>.
+
+- availableMovies: filters movies where movieStart not before start AND movieEnd not after end. Returns list of movie names. Note: Java uses stream API. In C++, we can loop.
+
+- getMovies: returns the list of maps. In C++, we could return a const reference or copy. But Java returns reference to internal list. In C++, returning a reference might be similar but careful with constness. However, to keep identical behavior (return mutable list), we can return a non-const reference. But that's dangerous. Alternatively, we can return a copy. Java's List<Map<String,Object>> is mutable; callers can modify it. To be exact, we should return by reference (non-const) to allow modifications. But that's not idiomatic; but requirement says "Use idiomatic C++ only when it doesn't change behavior." So if we return by const ref, behavior changes: caller cannot modify. So we must return non-const reference. We'll store movies as vector<unordered_map<string, any>>? That's messy. Better to store as vector<Movie> and have getMovies return vector<Movie>&. But in Java, getMovies returns the raw list of maps; the caller can modify and affect internal state. To replicate exactly, we can store as vector<unordered_map<string, any>>, but then we need to handle any casting. That's complex and error-prone. Alternatively, we can create a class Movie that holds the data and provide getters/setters. But Java code uses direct map access. To be faithful, we should store maps. However, C++ doesn't have a built-in heterogeneous map like Java's Map<Object>. We could use std::map<std::string, std::any> or boost::any for each value. But we need to store int[][] as seats. In C++, we can store std::any with std::vector<std::vector<int>>. That's doable. But we need to cast when retrieving. Example: movie["seats"] = std::vector<std::vector<int>>(n, std::vector<int>(n,0)); Then when retrieving: auto& seats = std::any_cast<std::vector<std::vector<int>>&>(movie["seats"]); That's similar to Java's cast. So it's acceptable.
+
+But using std::any requires careful lifetime and type safety. We'll need to ensure we always cast to the correct type. Alternatively, we could use a struct to avoid all casts. That would be more idiomatic C++ and still produce same behavior at the interface level (since the class methods produce same outputs). However, the internal representation differs. Does that change behavior? The Java code's internal state is mutable via getMovies(). If we change internal representation to a struct, we still have the same mutability via the returned reference. The external behavior (interaction via public methods) is identical. The internal implementation is different, but that's fine as long as the observable behavior (inputs/outputs, side effects, exceptions) is identical. Since the Java code's public API is defined by the method signatures and behavior, we can use a different internal representation. It's not required to replicate the exact internal map structure. The requirement says "Keep behavior identical". So we can use a struct.
+
+Thus, I'll use:
+
+- struct Movie { std::string name; double price; Time start_time; Time end_time; std::vector<std::vector<int>> seats; };
+- Time: simple struct with int hours, minutes; static parse(string) -> Time; static toString? We don't need.
+- Store movies as std::vector<Movie>
+- getMovies returns a reference to the vector (non-const) to allow modification like Java.
+
+We also need to handle the return of list of movie names (vector<string>) in availableMovies.
+
+We'll include <iostream>, <string>, <vector>, <algorithm>, <sstream>, <stdexcept> etc.
+
+Edge cases: seat indexing? Java assumes valid row,col? If invalid, it will throw ArrayIndexOutOfBoundsException. In C++, vector.at() or [] can throw. We'll mimic by using .at() for bounds checking and throwing std::out_of_range. But Java doesn't catch; it propagates. So we should not catch, just let it throw. Same for time parsing: we'll parse and throw on invalid format.
+
+One nuance: Java's LocalTime.parse uses ISO-8601 time format (HH:mm or HH:mm:ss). We'll parse "HH:mm" only. Consider "startTime" and "endTime" format. In the code, they are parsed. We'll assume format like "10:30". We'll implement parsing splitting by ':'.
+
+Also, in Java, seats are stored as int[n][n]. In C++, vector<vector<int>> with n rows each of size n.
+
+Now, write C++ code with class MovieBookingSystem.
+
+Let's produce final answer.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <string>
+#include <vector>
+#include <stdexcept>
+#include <sstream>
+#include <algorithm>
+#include <chrono>
+#include <iomanip>
+
+// Simple time representation (hours:minutes) for compatibility with LocalTime parsing
+struct Time {
+    int hours;
+    int minutes;
+
+    // Parse "HH:mm" format; throws std::invalid_argument on failure
+    static Time parse(const std::string& str) {
+        std::istringstream ss(str);
+        char colon;
+        int h, m;
+        if (!(ss >> h >> colon >> m) || colon != ':' || ss.fail() || !ss.eof()) {
+            throw std::invalid_argument("Invalid time format: " + str + " (expected HH:mm)");
+        }
+        if (h < 0 || h > 23 || m < 0 || m > 59) {
+            throw std::invalid_argument("Time out of range: " + str);
+        }
+        return {h, m};
+    }
+
+    // Comparison operators for availableMovies filter
+    bool operator<(const Time& other) const {
+        return (hours < other.hours) || (hours == other.hours && minutes < other.minutes);
+    }
+    bool operator>=(const Time& other) const { return !(*this < other); }
+    bool operator<=(const Time& other) const { return !(other < *this); }
+    bool operator>(const Time& other) const { return other < *this; }
+};
+
+// Movie data structure
+struct Movie {
+    std::string name;
+    double price;
+    Time start_time;
+    Time end_time;
+    std::vector<std::vector<int>> seats;  // n x n matrix (0=free, 1=booked)
+
+    Movie(const std::string& name, double price, const Time& start, const Time& end, int n)
+        : name(name), price(price), start_time(start), end_time(end), seats(n, std::vector<int>(n, 0)) {}
+};
+
+class MovieBookingSystem {
+private:
+    std::vector<Movie> movies;
+
+public:
+    MovieBookingSystem() = default;
+
+    void addMovie(const std::string& name, double price,
+                  const std::string& startTime, const std::string& endTime, int n) {
+        Time start = Time::parse(startTime);
+        Time end = Time::parse(endTime);
+        movies.emplace_back(name, price, start, end, n);
+    }
+
+    std::string bookTicket(const std::string& name, const std::vector<std::vector<int>>& seatsToBook) {
+        for (auto& movie : movies) {
+            if (movie.name == name) {
+                // Check each seat and book if free
+                for (const auto& seat : seatsToBook) {
+                    if (seat.size() != 2) {
+                        throw std::invalid_argument("Each seat coordinate must have exactly two elements");
+                    }
+                    int row = seat[0];
+                    int col = seat[1];
+                    // Use at() to get bounds checking (similar to Java ArrayIndexOutOfBounds)
+                    if (movie.seats.at(row).at(col) == 0) {
+                        movie.seats[row][col] = 1;
+                    } else {
+                        return "Booking failed.";
+                    }
+                }
+                return "Booking success.";
+            }
+        }
+        return "Movie not found.";
+    }
+
+    std::vector<std::string> availableMovies(const std::string& startTime, const std::string& endTime) {
+        Time start = Time::parse(startTime);
+        Time end = Time::parse(endTime);
+        std::vector<std::string> result;
+        for (const auto& movie : movies) {
+            // Condition: movie.start_time >= start && movie.end_time <= end
+            if (!(movie.start_time < start) && !(movie.end_time > end)) {
+                result.push_back(movie.name);
+            }
+        }
+        return result;
+    }
+
+    // Returns non-const reference to internal vector (mimics Java's mutable list)
+    std::vector<Movie>& getMovies() {
+        return movies;
+    }
+
+    // Const version for read-only access (optional, but good practice)
+    const std::vector<Movie>& getMovies() const {
+        return movies;
+    }
+};
+
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <vector>
+#include <stdexcept>
+#include <sstream>
+#include <algorithm>
+#include <chrono>
+#include <iomanip>
+
+// Simple time representation (hours:minutes) for compatibility with LocalTime parsing
+struct Time {
+    int hours;
+    int minutes;
+
+    // Parse "HH:mm" format; throws std::invalid_argument on failure
+    static Time parse(const std::string& str) {
+        std::istringstream ss(str);
+        char colon;
+        int h, m;
+        if (!(ss >> h >> colon >> m) || colon != ':' || ss.fail() || !ss.eof()) {
+            throw std::invalid_argument("Invalid time format: " + str + " (expected HH:mm)");
+        }
+        if (h < 0 || h > 23 || m < 0 || m > 59) {
+            throw std::invalid_argument("Time out of range: " + str);
+        }
+        return {h, m};
+    }
+
+    // Comparison operators for availableMovies filter
+    bool operator<(const Time& other) const {
+        return (hours < other.hours) || (hours == other.hours && minutes < other.minutes);
+    }
+    bool operator>=(const Time& other) const { return !(*this < other); }
+    bool operator<=(const Time& other) const { return !(other < *this); }
+    bool operator>(const Time& other) const { return other < *this; }
+};
+
+// Movie data structure
+struct Movie {
+    std::string name;
+    double price;
+    Time start_time;
+    Time end_time;
+    std::vector<std::vector<int>> seats;  // n x n matrix (0=free, 1=booked)
+
+    Movie(const std::string& name, double price, const Time& start, const Time& end, int n)
+        : name(name), price(price), start_time(start), end_time(end), seats(n, std::vector<int>(n, 0)) {}
+};
+
+class MovieBookingSystem {
+private:
+    std::vector<Movie> movies;
+
+public:
+    MovieBookingSystem() = default;
+
+    void addMovie(const std::string& name, double price,
+                  const std::string& startTime, const std::string& endTime, int n) {
+        Time start = Time::parse(startTime);
+        Time end = Time::parse(endTime);
+        movies.emplace_back(name, price, start, end, n);
+    }
+
+    std::string bookTicket(const std::string& name, const std::vector<std::vector<int>>& seatsToBook) {
+        for (auto& movie : movies) {
+            if (movie.name == name) {
+                // Check each seat and book if free
+                for (const auto& seat : seatsToBook) {
+                    if (seat.size() != 2) {
+                        throw std::invalid_argument("Each seat coordinate must have exactly two elements");
+                    }
+                    int row = seat[0];
+                    int col = seat[1];
+                    // Use at() to get bounds checking (similar to Java ArrayIndexOutOfBounds)
+                    if (movie.seats.at(row).at(col) == 0) {
+                        movie.seats[row][col] = 1;
+                    } else {
+                        return "Booking failed.";
+                    }
+                }
+                return "Booking success.";
+            }
+        }
+        return "Movie not found.";
+    }
+
+    std::vector<std::string> availableMovies(const std::string& startTime, const std::string& endTime) {
+        Time start = Time::parse(startTime);
+        Time end = Time::parse(endTime);
+        std::vector<std::string> result;
+        for (const auto& movie : movies) {
+            // Condition: movie.start_time >= start && movie.end_time <= end
+            if (!(movie.start_time < start) && !(movie.end_time > end)) {
+                result.push_back(movie.name);
+            }
+        }
+        return result;
+    }
+
+    // Returns non-const reference to internal vector (mimics Java's mutable list)
+    std::vector<Movie>& getMovies() {
+        return movies;
+    }
+
+    // Const version for read-only access (optional, but good practice)
+    const std::vector<Movie>& getMovies() const {
+        return movies;
+    }
+};

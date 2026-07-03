@@ -1,0 +1,1084 @@
+=== SOURCE CODE (py) ===
+'''
+# This is a database class as a book management system, used to handle the operations of adding, removing, updating, and searching books.
+
+import sqlite3
+
+class BookManagementDB:
+
+    def __init__(self, db_name):
+        """
+        Initializes the class by creating a database connection and cursor, 
+        and creates the book table if it does not already exist
+        :param db_name: str, the name of db file
+        """
+        self.connection = sqlite3.connect(db_name)
+        self.cursor = self.connection.cursor()
+        self.create_table()
+
+    def create_table(self):
+        """
+        Creates the book table in the database if it does not already exist.
+        >>> book_db = BookManagementDB("test.db")
+        >>> book_db.create_table()
+        """
+    
+
+    def add_book(self, title, author):
+        """
+        Adds a book to the database with the specified title and author, 
+        setting its availability to 1 as free to borrow.
+        :param title: str, book title
+        :param author: str, author name
+        >>> book_db = BookManagementDB("test.db")
+        >>> book_db.create_table()
+        >>> book_db.add_book('book1', 'author')
+        """
+
+    def remove_book(self, book_id):
+        """
+        Removes a book from the database based on the given book ID.
+        :param book_id: int
+        >>> book_db = BookManagementDB("test.db")
+        >>> book_db.remove_book(1)
+        """
+
+    def borrow_book(self, book_id):
+        """
+        Marks a book as borrowed in the database based on the given book ID.
+        :param book_id: int
+        >>> book_db = BookManagementDB("test.db")
+        >>> book_db.borrow_book(1)
+        """
+
+    def return_book(self, book_id):
+        """
+        Marks a book as returned in the database based on the given book ID.
+        :param book_id: int
+        >>> book_db = BookManagementDB("test.db")
+        >>> book_db.return_book(1)
+        """
+
+    def search_books(self):
+        """
+        Retrieves all books from the database and returns their information.
+        :return books: list[tuple], the information of all books in database
+        >>> book_db.search_books()
+        [(1, 'book1', 'author', 1)]
+        """
+'''
+
+
+import sqlite3
+
+class BookManagementDB:
+    def __init__(self, db_name):
+        self.connection = sqlite3.connect(db_name)
+        self.cursor = self.connection.cursor()
+        self.create_table()
+
+    def create_table(self):
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS books (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                author TEXT,
+                available INTEGER
+            )
+        ''')
+        self.connection.commit()
+
+    def add_book(self, title, author):
+        self.cursor.execute('''
+            INSERT INTO books (title, author, available)
+            VALUES (?, ?, 1)
+        ''', (title, author))
+        self.connection.commit()
+
+    def remove_book(self, book_id):
+        self.cursor.execute('''
+            DELETE FROM books WHERE id = ?
+        ''', (book_id,))
+        self.connection.commit()
+
+    def borrow_book(self, book_id):
+        self.cursor.execute('''
+            UPDATE books SET available = 0 WHERE id = ?
+        ''', (book_id,))
+        self.connection.commit()
+
+    def return_book(self, book_id):
+        self.cursor.execute('''
+            UPDATE books SET available = 1 WHERE id = ?
+        ''', (book_id,))
+        self.connection.commit()
+
+    def search_books(self):
+        self.cursor.execute('''
+            SELECT * FROM books
+        ''')
+        books = self.cursor.fetchall()
+        return books
+
+
+=== REASONING ===
+<think>
+The user wants to translate a Python class that interacts with an SQLite database into C++.
+I need to use the SQLite C/C++ API or a wrapper. Since the prompt says "Use idiomatic C++ only when it doesn't change behavior", I should probably use the standard `<sqlite3.h>` C library which is the underlying API, or a C++ wrapper if appropriate. Given no external libraries are explicitly allowed beyond standard, sticking to `<sqlite3.h>` is the most direct and reliable way to match the exact behavior of `sqlite3` in Python.
+
+Let's map the Python `sqlite3` methods to C `sqlite3` functions:
+- `sqlite3.connect(db_name)` -> `sqlite3_open(db_name, &db)`
+- `self.connection.cursor()` -> Not strictly needed in C API, we just prepare statements or execute directly.
+- `self.cursor.execute(...)` -> `sqlite3_exec` or `sqlite3_prepare_v2` + `sqlite3_step` + `sqlite3_finalize`.
+- `self.connection.commit()` -> In Python's `sqlite3`, autocommit is off by default, but here we are explicitly committing. In C, autocommit is on by default unless we start a transaction. To perfectly match the behavior (or at least the outcome), we can just use `sqlite3_exec` without explicit transactions, or we can explicitly call `BEGIN` and `COMMIT` if we want to mimic the exact transactional behavior. Actually, Python's `sqlite3` module operates in autocommit mode by default unless a transaction is implicitly started. Wait, no, Python's `sqlite3` starts a transaction implicitly before DML statements (INSERT, UPDATE, DELETE) and requires an explicit `commit()`. So in C++, if we just execute the statements, they auto-commit. The end result is the same: the data is saved.
+- `self.cursor.fetchall()` -> We need to iterate through the results using `sqlite3_step` and collect them into a `std::vector<std::tuple<int, std::string, std::string, int>>`.
+
+Let's define the C++ class `BookManagementDB`.
+
+```cpp
+#include <string>
+#include <vector>
+#include <tuple>
+#include <sqlite3.h>
+#include <stdexcept>
+
+class BookManagementDB {
+private:
+    sqlite3* connection;
+
+public:
+    BookManagementDB(const std::string& db_name) {
+        int rc = sqlite3_open(db_name.c_str(), &connection);
+        if (rc != SQLITE_OK) {
+            std::string err_msg = "Cannot open database: " + std::string(sqlite3_errmsg(connection));
+            sqlite3_close(connection);
+            throw std::runtime_error(err_msg);
+        }
+        create_table();
+    }
+
+    ~BookManagementDB() {
+        if (connection) {
+            sqlite3_close(connection);
+        }
+    }
+
+    // Disable copy constructor and assignment operator to prevent double free
+    BookManagementDB(const BookManagementDB&) = delete;
+    BookManagementDB& operator=(const BookManagementDB&) = delete;
+
+    void create_table() {
+        const char* sql = R"(
+            CREATE TABLE IF NOT EXISTS books (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                author TEXT,
+                available INTEGER
+            )
+        )";
+        char* err_msg = nullptr;
+        int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &err_msg);
+        if (rc != SQLITE_OK) {
+            std::string err_str = err_msg;
+            sqlite3_free(err_msg);
+            throw std::runtime_error("SQL error: " + err_str);
+        }
+    }
+
+    void add_book(const std::string& title, const std::string& author) {
+        const char* sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_bind_text(stmt, 1, title.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, author.c_str(), -1, SQLITE_TRANSIENT);
+        
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    void remove_book(int book_id) {
+        const char* sql = "DELETE FROM books WHERE id = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_bind_int(stmt, 1, book_id);
+        
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    void borrow_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 0 WHERE id = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_bind_int(stmt, 1, book_id);
+        
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    void return_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 1 WHERE id = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_bind_int(stmt, 1, book_id);
+        
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    std::vector<std::tuple<int, std::string, std::string, int>> search_books() {
+        const char* sql = "SELECT * FROM books";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        std::vector<std::tuple<int, std::string, std::string, int>> books;
+        
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            int id = sqlite3_column_int(stmt, 0);
+            std::string title = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            std::string author = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            int available = sqlite3_column_int(stmt, 3);
+            
+            books.emplace_back(id, title, author, available);
+        }
+        
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to fetch data: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(stmt);
+        return books;
+    }
+};
+```
+
+Wait, `sqlite3_column_text` can return `nullptr` if the column is NULL. Since the Python code doesn't explicitly handle NULLs, and `title` and `author` are expected to be strings, it's safer to check for `nullptr` or just default to empty string if NULL. Let's handle `nullptr` just in case, though typically it will have values.
+
+```cpp
+const char* title_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+std::string title = title_ptr ? title_ptr : "";
+```
+
+Also, let's consider the Python `sqlite3` autocommit behavior. Python's `sqlite3` module implicitly starts a transaction before DML statements and requires `connection.commit()` to save. If `commit()` is not called, it's rolled back upon closing. In C++, `sqlite3_exec` auto-commits by default. To make the behavior identical, the end result of the Python code is that the changes *are* committed, because `self.connection.commit()` is explicitly called. So C++ auto-committing is perfectly equivalent in outcome.
+
+Let's refine the helper method to avoid code duplication for executing simple statements:
+```cpp
+void execute_simple(const char* sql) {
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        std::string err_str = err_msg;
+        sqlite3_free(err_msg);
+        throw std::runtime_error("SQL error: " + err_str);
+    }
+}
+```
+Wait, `add_book`, `remove_book`, `borrow_book`, `return_book` all use parameters. `sqlite3_exec` doesn't support parameter binding easily. So `sqlite3_prepare_v2` is the right way.
+
+Let's create a helper for binding and stepping:
+```cpp
+void execute_with_int_param(const char* sql, int param) {
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+    }
+    sqlite3_bind_int(stmt, 1, param);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+    }
+    sqlite3_finalize(stmt);
+}
+```
+
+Wait, `add_book` has two string parameters.
+```cpp
+void execute_with_string_params(const char* sql, const std::string& param1, const std::string& param2) {
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+    }
+    sqlite3_bind_text(stmt, 1, param1.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, param2.c_str(), -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+    }
+    sqlite3_finalize(stmt);
+}
+```
+
+This makes the code cleaner and more idiomatic C++ while preserving the exact Python behavior.
+
+Let's double check the `create_table` method. It has no parameters. We can just use `sqlite3_exec` for it.
+```cpp
+void create_table() {
+    const char* sql = R"(
+        CREATE TABLE IF NOT EXISTS books (
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            author TEXT,
+            available INTEGER
+        )
+    )";
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        std::string err_str = err_msg;
+        sqlite3_free(err_msg);
+        throw std::runtime_error("SQL error: " + err_str);
+    }
+}
+```
+
+Wait, in Python, `sqlite3.connect` throws `sqlite3.OperationalError` if the database cannot be opened. In C++, `sqlite3_open` returns `SQLITE_CANTOPEN` or similar, and doesn't throw C++ exceptions natively. By throwing `std::runtime_error` in the C++ constructor, we match the exception-throwing behavior of Python's constructor.
+
+Let's review the required headers:
+```cpp
+#include <string>
+#include <vector>
+#include <tuple>
+#include <sqlite3.h>
+#include <stdexcept>
+```
+
+Wait, `sqlite3.h` is an external library. In Python, `sqlite3` is built-in. In C++, it requires linking against `-lsqlite3`. I will add a comment about this, but the translation itself is correct.
+
+Let's check the Python `search_books` return type: `list[tuple]`. The C++ equivalent is `std::vector<std::tuple<int, std::string, std::string, int>>`.
+
+Let's trace `search_books`:
+```cpp
+std::vector<std::tuple<int, std::string, std::string, int>> search_books() {
+    const char* sql = "SELECT * FROM books";
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+    }
+    
+    std::vector<std::tuple<int, std::string, std::string, int>> books;
+    
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        int id = sqlite3_column_int(stmt, 0);
+        const char* title_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        const char* author_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        int available = sqlite3_column_int(stmt, 3);
+        
+        std::string title = title_ptr ? title_ptr : "";
+        std::string author = author_ptr ? author_ptr : "";
+        
+        books.emplace_back(id, title, author, available);
+    }
+    
+    if (rc != SQLITE_DONE) {
+        sqlite3_finalize(stmt);
+        throw std::runtime_error("Failed to fetch data: " + std::string(sqlite3_errmsg(connection)));
+    }
+    
+    sqlite3_finalize(stmt);
+    return books;
+}
+```
+
+Is there any resource leak in the C++ code?
+If `sqlite3_bind_text` or `sqlite3_bind_int` fails, it doesn't throw, it just returns an error code. I should probably check the return codes of `sqlite3_bind_*` to be perfectly safe, but for brevity and matching the Python code (which doesn't explicitly check bind errors), it might be okay. However, good C++ practice dictates checking. Let's add simple checks or rely on the fact that out of memory is the only typical error.
+Actually, `sqlite3_prepare_v2` is the most likely to fail if the SQL is bad. The binds are usually safe if prepare succeeded. The step is where constraint errors happen.
+
+Let's write out the full class.
+
+```cpp
+#include <string>
+#include <vector>
+#include <tuple>
+#include <sqlite3.h>
+#include <stdexcept>
+
+class BookManagementDB {
+private:
+    sqlite3* connection;
+
+    void execute_with_int_param(const char* sql, int param) {
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_bind_int(stmt, 1, param);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    void execute_with_string_params(const char* sql, const std::string& param1, const std::string& param2) {
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_bind_text(stmt, 1, param1.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, param2.c_str(), -1, SQLITE_TRANSIENT);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+public:
+    BookManagementDB(const std::string& db_name) {
+        int rc = sqlite3_open(db_name.c_str(), &connection);
+        if (rc != SQLITE_OK) {
+            std::string err_msg = "Cannot open database: " + std::string(sqlite3_errmsg(connection));
+            sqlite3_close(connection);
+            throw std::runtime_error(err_msg);
+        }
+        create_table();
+    }
+
+    ~BookManagementDB() {
+        if (connection) {
+            sqlite3_close(connection);
+        }
+    }
+
+    // Disable copy to avoid double free of the connection
+    BookManagementDB(const BookManagementDB&) = delete;
+    BookManagementDB& operator=(const BookManagementDB&) = delete;
+
+    void create_table() {
+        const char* sql = R"(
+            CREATE TABLE IF NOT EXISTS books (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                author TEXT,
+                available INTEGER
+            )
+        )";
+        char* err_msg = nullptr;
+        int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &err_msg);
+        if (rc != SQLITE_OK) {
+            std::string err_str = err_msg;
+            sqlite3_free(err_msg);
+            throw std::runtime_error("SQL error: " + err_str);
+        }
+    }
+
+    void add_book(const std::string& title, const std::string& author) {
+        const char* sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        execute_with_string_params(sql, title, author);
+    }
+
+    void remove_book(int book_id) {
+        const char* sql = "DELETE FROM books WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    void borrow_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 0 WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    void return_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 1 WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    std::vector<std::tuple<int, std::string, std::string, int>> search_books() {
+        const char* sql = "SELECT * FROM books";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        std::vector<std::tuple<int, std::string, std::string, int>> books;
+        
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            int id = sqlite3_column_int(stmt, 0);
+            const char* title_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            const char* author_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            int available = sqlite3_column_int(stmt, 3);
+            
+            std::string title = title_ptr ? title_ptr : "";
+            std::string author = author_ptr ? author_ptr : "";
+            
+            books.emplace_back(id, title, author, available);
+        }
+        
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to fetch data: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(stmt);
+        return books;
+    }
+};
+```
+
+Wait, in Python, `sqlite3.connect` creates the file if it doesn't exist. `sqlite3_open` in C/C++ also creates the file if it doesn't exist, which perfectly matches Python's behavior.
+
+One minor point: Python's `sqlite3` module has an implicit `commit()` when the connection is closed, if autocommit is on, or it rolls back pending transactions if autocommit is off. In our C++ code, we don't explicitly start transactions, so each statement auto-commits. This matches the Python code's outcome since `self.connection.commit()` is explicitly called after each DML statement in the Python code. The end result is exactly the same: every operation is committed immediately.
+
+What about move semantics? I'll add move constructor and move assignment to make the class robust, though not strictly required.
+```cpp
+    BookManagementDB(BookManagementDB&& other) noexcept : connection(other.connection) {
+        other.connection = nullptr;
+    }
+
+    BookManagementDB& operator=(BookManagementDB&& other) noexcept {
+        if (this != &other) {
+            if (connection) {
+                sqlite3_close(connection);
+            }
+            connection = other.connection;
+            other.connection = nullptr;
+        }
+        return *this;
+    }
+```
+This is idiomatic C++ and doesn't change behavior for existing uses.
+
+Let's double check if I missed any method.
+- `__init__`: Handled in constructor.
+- `create_table`: Handled.
+- `add_book`: Handled.
+- `remove_book`: Handled.
+- `borrow_book`: Handled.
+- `return_book`: Handled.
+- `search_books`: Handled.
+
+The Python return type of `search_books` is `list[tuple]`. My C++ return type is `std::vector<std::tuple<int, std::string, std::string, int>>`. This is the exact structural equivalent.
+
+One detail: `sqlite3_column_text` returns `const unsigned char*`. I cast it to `const char*` via `reinterpret_cast`. This is standard practice in C++ with sqlite3.
+
+Another detail: `sqlite3_errmsg` returns `const char*`. I convert it to `std::string` to construct the exception message. This is correct.
+
+Is there any edge case where `sqlite3_column_text` returns NULL and we shouldn't default to `""`? In Python, if a column is NULL, `fetchall()` returns `None` for that column. If we want to perfectly match Python, we would need `std::optional<std::string>`. However, the schema defines `title TEXT` and `author TEXT` without `NOT NULL`, so they *can* be NULL. But `add_book` always inserts strings. The Python code doesn't explicitly handle NULLs. Defaulting to empty string is a reasonable C++ translation for a string that is typically expected to be present, though `std::optional<std::string>` would be strictly more accurate if NULLs were a concern. Given the Python docstring `list[tuple]` and the example `[(1, 'book1', 'author', 1)]`, it's safe to assume they are just strings. I'll stick to `std::string` and default to `""` on NULL.
+
+Let's review the code one more time.
+```cpp
+#include <string>
+#include <vector>
+#include <tuple>
+#include <sqlite3.h>
+#include <stdexcept>
+
+class BookManagementDB {
+private:
+    sqlite3* connection;
+
+    void execute_with_int_param(const char* sql, int param) {
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_bind_int(stmt, 1, param);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    void execute_with_string_params(const char* sql, const std::string& param1, const std::string& param2) {
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_bind_text(stmt, 1, param1.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, param2.c_str(), -1, SQLITE_TRANSIENT);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+public:
+    BookManagementDB(const std::string& db_name) {
+        int rc = sqlite3_open(db_name.c_str(), &connection);
+        if (rc != SQLITE_OK) {
+            std::string err_msg = "Cannot open database: " + std::string(sqlite3_errmsg(connection));
+            sqlite3_close(connection);
+            throw std::runtime_error(err_msg);
+        }
+        create_table();
+    }
+
+    ~BookManagementDB() {
+        if (connection) {
+            sqlite3_close(connection);
+        }
+    }
+
+    BookManagementDB(const BookManagementDB&) = delete;
+    BookManagementDB& operator=(const BookManagementDB&) = delete;
+
+    BookManagementDB(BookManagementDB&& other) noexcept : connection(other.connection) {
+        other.connection = nullptr;
+    }
+
+    BookManagementDB& operator=(BookManagementDB&& other) noexcept {
+        if (this != &other) {
+            if (connection) {
+                sqlite3_close(connection);
+            }
+            connection = other.connection;
+            other.connection = nullptr;
+        }
+        return *this;
+    }
+
+    void create_table() {
+        const char* sql = R"(
+            CREATE TABLE IF NOT EXISTS books (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                author TEXT,
+                available INTEGER
+            )
+        )";
+        char* err_msg = nullptr;
+        int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &err_msg);
+        if (rc != SQLITE_OK) {
+            std::string err_str = err_msg;
+            sqlite3_free(err_msg);
+            throw std::runtime_error("SQL error: " + err_str);
+        }
+    }
+
+    void add_book(const std::string& title, const std::string& author) {
+        const char* sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        execute_with_string_params(sql, title, author);
+    }
+
+    void remove_book(int book_id) {
+        const char* sql = "DELETE FROM books WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    void borrow_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 0 WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    void return_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 1 WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    std::vector<std::tuple<int, std::string, std::string, int>> search_books() {
+        const char* sql = "SELECT * FROM books";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        std::vector<std::tuple<int, std::string, std::string, int>> books;
+        
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            int id = sqlite3_column_int(stmt, 0);
+            const char* title_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            const char* author_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            int available = sqlite3_column_int(stmt, 3);
+            
+            std::string title = title_ptr ? title_ptr : "";
+            std::string author = author_ptr ? author_ptr : "";
+            
+            books.emplace_back(id, title, author, available);
+        }
+        
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to fetch data: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(stmt);
+        return books;
+    }
+};
+```
+
+This looks very solid. It maps the Python class to C++ correctly, handles the C API cleanly, prevents resource leaks, and throws exceptions matching the Python behavior (failing explicitly on errors). I'm ready to provide this translation.
+</think>
+
+=== RAW ANSWER ===
+To translate this Python code to C++, we will use the C API for SQLite (`sqlite3.h`), which is the underlying library for Python's `sqlite3` module. 
+
+In C++, we need to manage memory and resources manually, so we'll use RAII (closing the database in the destructor) and disable copy semantics to prevent double-free errors. We'll also map Python's `list[tuple]` to C++'s `std::vector<std::tuple<...>>` and throw `std::runtime_error` to match Python's exception behavior on database errors.
+
+Here is the idiomatic and behaviorally identical C++ translation:
+
+```cpp
+#include <string>
+#include <vector>
+#include <tuple>
+#include <stdexcept>
+#include <sqlite3.h>
+
+class BookManagementDB {
+private:
+    sqlite3* connection;
+
+    // Helper to execute simple statements with one integer parameter
+    void execute_with_int_param(const char* sql, int param) {
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_bind_int(stmt, 1, param);
+        
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    // Helper to execute simple statements with two string parameters
+    void execute_with_string_params(const char* sql, const std::string& param1, const std::string& param2) {
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_bind_text(stmt, 1, param1.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, param2.c_str(), -1, SQLITE_TRANSIENT);
+        
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+public:
+    BookManagementDB(const std::string& db_name) {
+        int rc = sqlite3_open(db_name.c_str(), &connection);
+        if (rc != SQLITE_OK) {
+            std::string err_msg = "Cannot open database: " + std::string(sqlite3_errmsg(connection));
+            sqlite3_close(connection);
+            throw std::runtime_error(err_msg);
+        }
+        create_table();
+    }
+
+    ~BookManagementDB() {
+        if (connection) {
+            sqlite3_close(connection);
+        }
+    }
+
+    // Disable copy constructor and assignment operator to prevent double-free of the connection
+    BookManagementDB(const BookManagementDB&) = delete;
+    BookManagementDB& operator=(const BookManagementDB&) = delete;
+
+    // Enable move semantics
+    BookManagementDB(BookManagementDB&& other) noexcept : connection(other.connection) {
+        other.connection = nullptr;
+    }
+
+    BookManagementDB& operator=(BookManagementDB&& other) noexcept {
+        if (this != &other) {
+            if (connection) {
+                sqlite3_close(connection);
+            }
+            connection = other.connection;
+            other.connection = nullptr;
+        }
+        return *this;
+    }
+
+    void create_table() {
+        const char* sql = R"(
+            CREATE TABLE IF NOT EXISTS books (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                author TEXT,
+                available INTEGER
+            )
+        )";
+        
+        char* err_msg = nullptr;
+        int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &err_msg);
+        if (rc != SQLITE_OK) {
+            std::string err_str = err_msg;
+            sqlite3_free(err_msg);
+            throw std::runtime_error("SQL error: " + err_str);
+        }
+    }
+
+    void add_book(const std::string& title, const std::string& author) {
+        const char* sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        execute_with_string_params(sql, title, author);
+    }
+
+    void remove_book(int book_id) {
+        const char* sql = "DELETE FROM books WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    void borrow_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 0 WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    void return_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 1 WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    std::vector<std::tuple<int, std::string, std::string, int>> search_books() {
+        const char* sql = "SELECT * FROM books";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        std::vector<std::tuple<int, std::string, std::string, int>> books;
+        
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            int id = sqlite3_column_int(stmt, 0);
+            
+            const char* title_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            std::string title = title_ptr ? title_ptr : "";
+            
+            const char* author_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            std::string author = author_ptr ? author_ptr : "";
+            
+            int available = sqlite3_column_int(stmt, 3);
+            
+            books.emplace_back(id, title, author, available);
+        }
+        
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to fetch data: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(stmt);
+        return books;
+    }
+};
+```
+
+### Key Differences & Explanations:
+1. **Resource Management**: Python's `sqlite3` connection is garbage collected. In C++, we must close the database manually. The destructor `~BookManagementDB()` handles this, and copy operations are disabled to avoid double-freeing the `sqlite3*` handle. Move semantics are implemented for safe transfers.
+2. **Parameter Binding**: Python uses `?` placeholders and passes a tuple to `execute()`. In C++, we use `sqlite3_prepare_v2` coupled with `sqlite3_bind_text` and `sqlite3_bind_int` to securely bind parameters and avoid SQL injection, identical to the backend behavior in Python.
+3. **Return Types**: `search_books` returns a `list[tuple]` in Python. This translates cleanly to a `std::vector<std::tuple<int, std::string, std::string, int>>` in C++.
+4. **Null Handling**: SQLite can return `NULL` for text columns. `sqlite3_column_text` returns `nullptr` if the SQL value is null. The C++ code accounts for this by defaulting to an empty string `""`, preventing undefined behavior when constructing `std::string`.
+5. **Exceptions**: Errors in Python's `sqlite3` throw exceptions. We replicate this by throwing `std::runtime_error` with the appropriate error message extracted from `sqlite3_errmsg()`.
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <vector>
+#include <tuple>
+#include <stdexcept>
+#include <sqlite3.h>
+
+class BookManagementDB {
+private:
+    sqlite3* connection;
+
+    // Helper to execute simple statements with one integer parameter
+    void execute_with_int_param(const char* sql, int param) {
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_bind_int(stmt, 1, param);
+        
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    // Helper to execute simple statements with two string parameters
+    void execute_with_string_params(const char* sql, const std::string& param1, const std::string& param2) {
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_bind_text(stmt, 1, param1.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, param2.c_str(), -1, SQLITE_TRANSIENT);
+        
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to execute statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+public:
+    BookManagementDB(const std::string& db_name) {
+        int rc = sqlite3_open(db_name.c_str(), &connection);
+        if (rc != SQLITE_OK) {
+            std::string err_msg = "Cannot open database: " + std::string(sqlite3_errmsg(connection));
+            sqlite3_close(connection);
+            throw std::runtime_error(err_msg);
+        }
+        create_table();
+    }
+
+    ~BookManagementDB() {
+        if (connection) {
+            sqlite3_close(connection);
+        }
+    }
+
+    // Disable copy constructor and assignment operator to prevent double-free of the connection
+    BookManagementDB(const BookManagementDB&) = delete;
+    BookManagementDB& operator=(const BookManagementDB&) = delete;
+
+    // Enable move semantics
+    BookManagementDB(BookManagementDB&& other) noexcept : connection(other.connection) {
+        other.connection = nullptr;
+    }
+
+    BookManagementDB& operator=(BookManagementDB&& other) noexcept {
+        if (this != &other) {
+            if (connection) {
+                sqlite3_close(connection);
+            }
+            connection = other.connection;
+            other.connection = nullptr;
+        }
+        return *this;
+    }
+
+    void create_table() {
+        const char* sql = R"(
+            CREATE TABLE IF NOT EXISTS books (
+                id INTEGER PRIMARY KEY,
+                title TEXT,
+                author TEXT,
+                available INTEGER
+            )
+        )";
+        
+        char* err_msg = nullptr;
+        int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &err_msg);
+        if (rc != SQLITE_OK) {
+            std::string err_str = err_msg;
+            sqlite3_free(err_msg);
+            throw std::runtime_error("SQL error: " + err_str);
+        }
+    }
+
+    void add_book(const std::string& title, const std::string& author) {
+        const char* sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        execute_with_string_params(sql, title, author);
+    }
+
+    void remove_book(int book_id) {
+        const char* sql = "DELETE FROM books WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    void borrow_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 0 WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    void return_book(int book_id) {
+        const char* sql = "UPDATE books SET available = 1 WHERE id = ?";
+        execute_with_int_param(sql, book_id);
+    }
+
+    std::vector<std::tuple<int, std::string, std::string, int>> search_books() {
+        const char* sql = "SELECT * FROM books";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        std::vector<std::tuple<int, std::string, std::string, int>> books;
+        
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            int id = sqlite3_column_int(stmt, 0);
+            
+            const char* title_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            std::string title = title_ptr ? title_ptr : "";
+            
+            const char* author_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            std::string author = author_ptr ? author_ptr : "";
+            
+            int available = sqlite3_column_int(stmt, 3);
+            
+            books.emplace_back(id, title, author, available);
+        }
+        
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("Failed to fetch data: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(stmt);
+        return books;
+    }
+};

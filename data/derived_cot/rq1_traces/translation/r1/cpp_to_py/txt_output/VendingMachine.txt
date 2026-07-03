@@ -1,0 +1,720 @@
+=== SOURCE CODE (cpp) ===
+
+#include <sstream>
+
+#include <string>
+#include <unordered_map>
+
+class VendingMachine {
+public:
+    VendingMachine();
+    void add_item(const std::string& item_name, double price, int quantity);
+    double insert_coin(double amount);
+    double purchase_item(const std::string& item_name);
+    bool restock_item(const std::string& item_name, int quantity);
+    std::string display_items() const;
+    std::unordered_map<std::string, std::unordered_map<std::string, double>> inventory() const;
+    void set_inventory(std::unordered_map<std::string, std::unordered_map<std::string, double>> x);
+    void set_balance(double y);
+
+private:
+    std::unordered_map<std::string, std::unordered_map<std::string, double>> inventory_;
+    double balance_;
+};
+
+VendingMachine::VendingMachine() : balance_(0) {}
+
+void VendingMachine::add_item(const std::string& item_name, double price, int quantity) {
+    if (!restock_item(item_name, quantity)) {
+        inventory_[item_name] = { {"price", price}, {"quantity", static_cast<double>(quantity)} };
+    }
+}
+
+double VendingMachine::insert_coin(double amount) {
+    balance_ += amount;
+    return balance_;
+}
+
+double VendingMachine::purchase_item(const std::string& item_name) {
+    if (inventory_.count(item_name)) {
+        auto& item = inventory_[item_name];
+        if (item["quantity"] > 0 && balance_ >= item["price"]) {
+            balance_ -= item["price"];
+            item["quantity"] -= 1;
+            return balance_;
+        }
+    }
+    return false;
+}
+
+bool VendingMachine::restock_item(const std::string& item_name, int quantity) {
+    if (inventory_.count(item_name)) {
+        inventory_[item_name]["quantity"] += static_cast<double>(quantity);
+        return true;
+    }
+    return false;
+}
+
+std::string VendingMachine::display_items() const {
+    if (inventory_.empty()) {
+        return "false";
+    }
+
+    std::ostringstream oss;
+    for (const auto& item : inventory_) {
+        oss << item.first << " - $" << item.second.at("price") << " [" << item.second.at("quantity") << "]\n";
+    }
+
+    std::string result = oss.str();
+    result.pop_back(); 
+    return result;
+}
+
+std::unordered_map<std::string, std::unordered_map<std::string, double>> VendingMachine::inventory() const {
+    return inventory_;
+}
+
+void VendingMachine::set_inventory(std::unordered_map<std::string, std::unordered_map<std::string, double>> x)
+{
+    this->inventory_ = x;
+}
+
+void VendingMachine::set_balance(double y)
+{
+    this->balance_ = y;
+}
+
+=== REASONING ===
+<think>
+
+We are translating a C++ VendingMachine class to Python.
+ Important: We must keep the behavior identical (inputs/outputs, side effects, edge cases, exceptions).
+
+ The C++ code uses:
+   - std::unordered_map -> in Python we can use dict.
+   - std::stringstream for building a string -> in Python we can use a list and then join or build a string.
+
+ Note: The C++ class has:
+   - A constructor that initializes balance_ to 0.
+   - Methods: 
+        add_item(item_name, price, quantity)
+        insert_coin(amount) -> returns current balance
+        purchase_item(item_name) -> returns balance after purchase or False (but note: in C++ it returns double, and false is 0.0? Actually, in the C++ code, purchase_item returns double and in the failure case returns false? That is not type-safe in C++. Actually, the C++ code returns false (which is 0.0 when converted to double) in case of failure? But note: the return type is double. So we must return a double. In the failure case, the C++ returns false -> which is 0.0? Actually, no: the function returns `false` but the return type is double. In C++, `false` converts to 0.0. However, note that the function returns `balance_` on success. So in failure, we must return 0.0? But wait: the C++ function returns `false` (which is 0.0) in the failure case. However, the success case returns the updated balance (a double). So we have two different meanings: success returns a positive balance (or at least non-zero) and failure returns 0.0? But note: what if the balance was 0 and then we purchase? Then we get 0? Then we cannot distinguish? Actually, the problem says: keep behavior identical.
+
+ However, looking at the C++ code:
+
+        if (inventory_.count(item_name)) {
+            auto& item = inventory_[item_name];
+            if (item["quantity"] > 0 && balance_ >= item["price"]) {
+                balance_ -= item["price"];
+                item["quantity"] -= 1;
+                return balance_;
+            }
+        }
+        return false;
+
+ This returns `balance_` (which is now reduced) on success, and `false` on failure. But `false` is converted to 0.0.
+
+ In Python, we can return 0.0 for failure and the balance for success. However, note that the balance might be 0.0? Then we cannot distinguish? But the problem says keep behavior identical. So we must return 0.0 in case of failure and the balance (which could be 0.0) in case of success? Actually, wait: if the balance becomes 0.0 after a purchase, that's a success. And if we fail, we return 0.0? Then the caller cannot tell? But that's the same in C++. So we do the same.
+
+ Steps:
+
+ We'll create a class VendingMachine.
+
+ Attributes:
+   inventory_ : a dictionary that maps item_name to another dictionary with keys "price" (double) and "quantity" (double? note: in C++ the quantity is stored as double because the inner map is <string, double>). But note: in C++ we store quantity as double because the inner map is of type <string, double>. However, the restock_item and add_item use integers for quantity. But then they cast to double.
+
+ So in Python, we'll store the same: 
+   inventory_ = {
+        "item_name": {
+            "price": float, 
+            "quantity": float   # because we are going to do fractional quantities? Actually, no: the C++ code uses static_cast<double>(quantity). But then we subtract 1.0. So we'll use float in Python.
+
+   balance_ : float
+
+ Methods:
+
+   __init__(self) -> initializes balance_ to 0.0 and inventory_ to an empty dict.
+
+   add_item(self, item_name: str, price: float, quantity: int) -> None:
+        It tries to restock the item if it exists. If restock returns True, then we don't create a new entry. Otherwise, we create a new entry.
+
+        Note: restock_item returns True if the item exists, else False.
+
+   insert_coin(self, amount: float) -> float:
+        Adds the amount to balance_ and returns the new balance.
+
+   purchase_item(self, item_name: str) -> float:
+        If the item exists, and if the quantity > 0 and balance >= price, then:
+            balance_ -= price
+            quantity -= 1.0   (because we store as float)
+            return the current balance.
+        Otherwise, return 0.0 (to mimic the false in C++ which becomes 0.0).
+
+   restock_item(self, item_name: str, quantity: int) -> bool:
+        If the item exists, then add the quantity (converted to float) to the current quantity and return True.
+        Otherwise, return False.
+
+   display_items(self) -> str:
+        If the inventory is empty, return the string "false" (without quotes? actually with quotes? no: the C++ returns the string "false" without quotes).
+        Otherwise, build a string for each item: 
+            "{item_name} - ${price} [{quantity}]\n"
+        Then remove the last newline? In C++ it does: result.pop_back() -> which removes the last character (the last newline).
+
+        So in Python, we can build a list of strings and then join by newline, but then we have to remove the trailing newline? Actually, we can build without the last newline.
+
+        Alternatively, we can build the string and then remove the last character? But note: if there are no items, we return "false". Otherwise, we build the string and then remove the last newline.
+
+        Example: 
+            "Coke - $1.5 [10]\nWater - $1.0 [5]" -> but the C++ code would have built with a newline after each, then removed the last newline? Actually, the last character is a newline.
+
+        So we can do: 
+            lines = []
+            for item_name, details in self.inventory_.items():
+                line = f"{item_name} - ${details['price']} [{int(details['quantity'])}]"
+                # But note: the C++ prints the quantity as double? Actually, it prints without fractional part? But the quantity is stored as double. However, the example in display might show integer? But the C++ code uses: 
+                #   oss << ... << item.second.at("quantity") ... 
+                # and if the quantity is 10.0, it will print "10" or "10.0"? Actually, by default, it might print without decimal if integer? But in C++ we don't control the formatting. 
+                # However, the problem says keep identical. In Python, we can format the float to remove the decimal if whole number? But the C++ code doesn't do that. Actually, the C++ code prints the double as is.
+
+            But note: in the restock, we are adding integers cast to double. Then subtracting 1.0. So the quantity might be a whole number? But we'll print it as float? 
+
+            However, the problem says: keep behavior identical. So we must print the same string.
+
+            Example: if we have an item with quantity 10.0, then we want to print "10" or "10.0"? In C++ the default formatting for double in stringstream might print 10 as "10" and 10.5 as "10.5". Actually, in C++ it uses the default formatting which might drop the decimal if it's zero.
+
+            But in Python, if we use str(10.0) we get '10.0'. So we need to format to match C++? 
+
+            Alternatively, we can note that the quantity is always stored as a whole number? Because we only add integers and subtract 1.0. So we can cast to int? But wait: what if restock_item is called with a fractional? The restock_item takes an int, so that's safe. But the add_item takes int. So the quantity is always an integer stored as float? Then we can display as integer? 
+
+            However, the C++ code doesn't do that: it prints the double. And if the double is 10.0, the C++ stringstream might print "10" or "10.0"? Actually, let me check: 
+                In C++, for double d = 10.0; 
+                oss << d; 
+                It will output "10" (without the .0) by default? 
+
+            But in the C++ code, the display_items() function prints: 
+                oss << ... << item.second.at("price") ... and then quantity.
+
+            For price, we might have fractional. For quantity, we have integers.
+
+            However, the problem says: identical. So we must format the numbers exactly as in C++. 
+
+            How does C++ format? 
+                It uses the default formatting for double. This will print integers without a decimal part? Actually, no: by default, it prints without trailing zeros? 
+
+            But note: the C++ code for price: it prints as double. So if price is 1.5, it prints "1.5", if price is 2.0, it prints "2"?
+
+            Actually, let me test: 
+                std::ostringstream oss;
+                double a = 10.0;
+                double b = 1.5;
+                oss << a << " " << b;
+                // gives "10 1.5"
+
+            So in Python, we want the same: we want to print whole numbers without decimal and fractional with decimal? 
+
+            We can achieve that by formatting each number: 
+                We can do: 
+                    s = str(n)   # but for 10.0, str(10.0) gives '10.0'
+
+            Alternatively, we can use formatting that removes the trailing zero: 
+                We can use: 
+                    '{0:g}'.format(n)   -> this removes the trailing zeros.
+
+            But note: what if the number is 10.1? Then we want 10.1. What if it's 10.0? Then we want 10? 
+
+            However, the C++ code does: 
+                oss << d; 
+                which by default uses %g style? 
+
+            Actually, we can use the same formatting: in Python, we can use formatting with 'g'. 
+
+            Example: 
+                >>> format(10.0, 'g')
+                '10'
+                >>> format(10.5, 'g')
+                '10.5'
+
+            But note: what about large numbers? The 'g' may use exponential? But our numbers are small (vending machine). 
+
+            Alternatively, we can use: 
+                str(n) if n % 1 != 0 else str(int(n))   -> but that's not safe for negative? 
+
+            Actually, we can use: 
+                formatted = str(n).rstrip('0').rstrip('.') if '.' in str(n) else str(n)
+
+            But that's more complicated. Alternatively, we can rely on the fact that the quantity is always integer? Then we can cast to int and then to string? But wait: the price might be fractional. 
+
+            The problem: 
+                We have two numbers: price and quantity.
+
+            For quantity: it's always stored as a float but it's an integer? Because we only add integer quantities and subtract 1.0. So we can safely format quantity as integer? 
+
+            But the C++ code prints the quantity as double. So if we have 10.0, the C++ prints "10", but if we have 10.5? That should not happen because we only add integers. So we can cast quantity to int? 
+
+            However, the problem says: identical behavior. So we must print exactly the same string. 
+
+            Since the C++ code uses double and prints without the decimal for integers, we can do in Python:
+
+                def format_double(x):
+                    s = str(x)
+                    if '.' in s:
+                        s = s.rstrip('0').rstrip('.')
+                    return s
+
+            But note: what about numbers without decimal? Then we don't do anything.
+
+            However, we can also use: 
+                s = str(x) if x % 1 != 0 else str(int(x))
+
+            But we have two numbers: price and quantity.
+
+            However, the problem: the quantity is always integer? Then we can display as integer. But the price might be fractional.
+
+            Alternatively, we can use the same formatting for both: use the 'g' format with 15 digits? But that might be overkill.
+
+            Actually, the problem does not specify the exact formatting, but we must match the C++ output. The C++ output for a double 10.0 is "10", and for 1.5 is "1.5".
+
+            We can do: 
+                price_str = format(price, 'g')   # This might work? But note: 'g' removes the trailing zeros.
+
+            However, the default for 'g' is to use up to 6 significant digits? But that's the same as C++? 
+
+            Actually, the C++ stringstream for double uses the same as printf with %g? 
+
+            In Python, we can use: 
+                "{:g}".format(x)
+
+            Let me test: 
+                >>> "{:g}".format(10.0)
+                '10'
+                >>> "{:g}".format(10.5)
+                '10.5'
+
+            So that's good.
+
+            But note: what if the price is 1.23456789? Then in C++ it might print 1.23457 (if it uses default precision of 6)? In Python, the default for 'g' is 6 significant digits? 
+
+            Actually, the C++ default precision for double in ostringstream is 6? 
+
+            In Python, the format 'g' uses 6 significant digits by default? 
+
+            However, the problem says: identical behavior. We don't know the exact requirements for formatting? But the original C++ code doesn't set any precision. So we'll rely on the default formatting.
+
+            But note: the problem says "Keep behavior identical", so we must output the same string. 
+
+            Since we don't know the exact formatting in C++ for doubles, we can try to mimic by using the same formatting: 
+
+                In C++: 
+                    #include <iostream>
+                    #include <sstream>
+                    #include <string>
+                    #include <iomanip>
+                    // Actually, the default is set by the stream.
+
+                Without setting precision, the default precision for double in C++ is 6? 
+
+                In Python, we can do: 
+                    formatted = "{:.6g}".format(x)   # but note: 'g' uses significant digits, not decimal places.
+
+            Alternatively, we can note that the problem does not specify the formatting, so we can output the same as C++ for the same double? 
+
+            But without knowing the exact C++ implementation, we can rely on the fact that both are IEEE doubles and use the same formatting? 
+
+            Actually, we'll use the same method: in Python, we can use `str(x)`? But `str(10.0)` gives '10.0', which is different from C++.
+
+            So we must use the 'g' format? 
+
+            However, the C++ code does not use any formatting flags. 
+
+            Let me test in C++:
+
+                #include <iostream>
+                #include <sstream>
+                #include <string>
+
+                int main() {
+                    std::ostringstream oss;
+                    double a = 10.0;
+                    double b = 1.5;
+                    double c = 1.23456789;
+                    oss << a << " " << b << " " << c;
+                    std::cout << oss.str() << std::endl;
+                }
+
+            This outputs: "10 1.5 1.23457"
+
+            So the default precision is 6? And it uses fixed or scientific? Actually, it uses fixed until the exponent is too big? 
+
+            In Python, if we do:
+
+                a = 10.0
+                b = 1.5
+                c = 1.23456789
+                s = f"{a} {b} {c}"   -> gives '10.0 1.5 1.23456789'
+
+            That doesn't match.
+
+            We want: 
+                a: 10 -> without decimal
+                b: 1.5
+                c: 1.23457 (rounded to 6 significant digits? Actually, 6 decimal digits? But 1.23457 has 6 significant digits? 1.23457 has 6 digits: 1,2,3,4,5,7? 
+
+            Actually, the C++ default for double in ostringstream is 6 digits of precision (total digits, not after decimal). And it uses fixed notation for numbers in a certain range? 
+
+            We can use the same in Python by formatting each number with 6 significant digits? But that's not exactly the same.
+
+            Alternatively, we can use the same formatting as C++: 
+
+                In C++, the default formatting for floating-point in ostringstream is: 
+                    %g with precision 6.
+
+            So in Python, we can do: 
+                "{:.6g}".format(x) 
+
+            Let me test:
+
+                >>> "{:.6g}".format(10.0)
+                '10'
+                >>> "{:.6g}".format(1.5)
+                '1.5'
+                >>> "{:.6g}".format(1.23456789)
+                '1.23457'
+
+            This matches the C++ output.
+
+            So we'll format both price and quantity with "{:.6g}".
+
+            But wait: the quantity is stored as double but we know it's an integer? Then we can also do: 
+                quantity_str = str(int(quantity))   # if we are sure it's integer? But the problem says: identical behavior. If we use .6g for quantity, then 10.0 becomes '10', which is what we want.
+
+            So we'll do:
+
+                price_str = "{:.6g}".format(details['price'])
+                quantity_str = "{:.6g}".format(details['quantity'])
+
+            Then the line: 
+                f"{item_name} - ${price_str} [{quantity_str}]"
+
+            And then we build the entire string by joining lines by newline, and then remove the last newline? Actually, we can build without the last newline.
+
+            Alternatively, we can build the entire string and then remove the last character? But note: if there's no item, we return "false". 
+
+            Steps for display_items:
+                if not self.inventory_: 
+                    return "false"
+
+                lines = []
+                for ... in sorted? The C++ code uses unordered_map and iterates in arbitrary order. In Python, dict also arbitrary order. So we don't need to sort. But note: the problem doesn't specify order. So we can iterate arbitrarily.
+
+                Build each line and then join by '\n'. Then we return the string without the last newline? Actually, we can build without adding the last newline.
+
+            How? 
+
+                We can do: 
+                    result = ""
+                    for i, (item_name, details) in enumerate(self.inventory_.items()):
+                        ... 
+                        if i != 0:
+                            result += "\n"
+                        result += line
+
+                Or: build a list and then "\n".join(list) -> this does not have trailing newline.
+
+            So we can do:
+
+                lines = []
+                for item_name, details in self.inventory_.items():
+                    price_str = "{:.6g}".format(details['price'])
+                    quantity_str = "{:.6g}".format(details['quantity'])
+                    line = f"{item_name} - ${price_str} [{quantity_str}]"
+                    lines.append(line)
+                return "\n".join(lines)
+
+            This does not have a trailing newline.
+
+   inventory(self) -> returns the entire inventory_ dictionary.
+
+   set_inventory(self, x) -> sets the inventory_ to x.
+
+   set_balance(self, y) -> sets balance_ to y.
+
+ Note: In C++, the inventory_ is returned by value. In Python, we return the dictionary. But note: if the caller modifies the returned dictionary, it will not affect the internal state? Actually, in C++ it returns a copy. In Python, we return the actual dictionary? But then the caller can modify it? 
+
+ However, the problem says: identical behavior. The C++ returns a copy. So we should return a copy? 
+
+ Similarly, the set_inventory takes a copy? Actually, in C++ it takes by value and then assigns. So we should do the same? 
+
+ But in Python, if we do:
+
+        def inventory(self):
+            return self.inventory_   # this returns a reference.
+
+        def set_inventory(self, x):
+            self.inventory_ = x
+
+    Then if the caller modifies the returned dictionary, it will change the internal state? That's different from C++. 
+
+    However, the C++ code:
+
+        std::unordered_map<...> VendingMachine::inventory() const {
+            return inventory_;   // returns a copy.
+        }
+
+        void VendingMachine::set_inventory(std::unordered_map<...> x) {
+            this->inventory_ = x;   // assigns the copy to the member.
+        }
+
+    So to be identical, we should return a copy? 
+
+    Similarly, set_inventory should take a dictionary and then we assign a copy? 
+
+    We can do:
+
+        def inventory(self):
+            # We return a deep copy? But note: the inner dictionary is also a dictionary. We need to copy the inner dictionaries too? 
+            # Because the C++ returns a copy of the outer map and each value is a copy of the inner map? 
+            # So we do a deep copy? Or we can do:
+
+            # Option: 
+            #   return {k: v.copy() for k, v in self.inventory_.items()}
+
+        def set_inventory(self, x):
+            # We assign a copy? 
+            #   self.inventory_ = {k: v.copy() for k, v in x.items()}
+
+    But note: the inner dictionaries are small and have fixed keys. 
+
+    Alternatively, we can use the `copy` module? 
+
+    Since the problem says identical behavior, we'll do:
+
+        def inventory(self):
+            # Return a deep copy? Actually, the C++ returns a copy of the map and copies each inner map? 
+            # Actually, the inner map is also copied? 
+            # We can do a shallow copy? But if the inner map is mutable, then changing the inner map in the returned copy would change the original? 
+
+            # In C++: 
+            #   std::unordered_map<string, std::unordered_map<string, double>> copy = inventory_;
+            #   This copies the outer map and the inner maps? Because the inner maps are value types? 
+
+            # So we need a deep copy? 
+
+            # However, the inner map is a simple two-key dictionary? So we can do:
+
+            #   return {item: {"price": data["price"], "quantity": data["quantity"]} for item, data in self.inventory_.items()}
+
+            # But that's explicit. Alternatively, we can do:
+
+            import copy
+            return copy.deepcopy(self.inventory_)
+
+        def set_inventory(self, x):
+            import copy
+            self.inventory_ = copy.deepcopy(x)
+
+    But the problem says: use idiomatic Python only when it doesn't change behavior. 
+
+    Alternatively, we can do without deepcopy? 
+
+        def inventory(self):
+            # We return a copy of the outer dictionary and each inner dictionary is copied.
+            result = {}
+            for item, details in self.inventory_.items():
+                result[item] = details.copy()   # because details is a dictionary, we copy it.
+            return result
+
+        def set_inventory(self, x):
+            # We assign by copying the outer and inner?
+            self.inventory_ = {}
+            for item, details in x.items():
+                self.inventory_[item] = details.copy()
+
+    This is efficient and clear.
+
+ Let's code accordingly.
+
+ However, note: the C++ code does not have any reference to the original data after set_inventory? So we are safe.
+
+ But note: the problem says "keep behavior identical". So we must do the copy.
+
+ Implementation:
+
+   We'll do:
+
+      def inventory(self):
+          # Return a copy of the entire inventory, including copies of the inner dictionaries.
+          inv = {}
+          for name, data in self.inventory_.items():
+              inv[name] = {"price": data["price"], "quantity": data["quantity"]}
+          return inv
+
+      Why not: inv[name] = data.copy()? 
+          This is shorter and works. But we know the inner dict has two keys? But what if it has more? The C++ code only uses "price" and "quantity". So we can do a copy. 
+
+      So:
+
+          return {k: v.copy() for k, v in self.inventory_.items()}
+
+      Similarly for set_inventory:
+
+          self.inventory_ = {k: v.copy() for k, v in x.items()}
+
+   But note: what if the inner dict has extra keys? The C++ code doesn't care: it copies the entire inner map. So we do the same.
+
+   However, the problem: the inner dict in the C++ is of type std::unordered_map<std::string, double>. So it's a map of two keys: "price" and "quantity". But what if the passed in map has more keys? Then we copy them? 
+
+   In the set_inventory, we are replacing the entire inventory_ with the passed in map. So we must copy the entire structure? 
+
+   We'll do a shallow copy of the outer map and a shallow copy of each inner map? 
+
+   But note: the inner map's values are floats, which are immutable? So a shallow copy of the inner map is enough? 
+
+   So:
+
+        def set_inventory(self, x):
+            self.inventory_ = {k: v.copy() for k, v in x.items()}
+
+        def inventory(self):
+            return {k: v.copy() for k, v in self.inventory_.items()}
+
+   But what if the passed in dictionary for set_inventory has inner dictionaries that are shared? Then we break the sharing? But that's what the C++ does: it copies. 
+
+   So we are safe.
+
+ Let's code accordingly.
+
+ However, note: the C++ code does not validate the structure of the inventory_? So we don't either.
+
+ Now, let's code.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ `VendingMachine` class into Python while maintaining identical behavior in terms of inputs/outputs, side effects, edge cases, and exceptions. The Python implementation should mirror the functionality of the C++ code, including how items are added, coins are inserted, items are purchased, restocking, and displaying inventory.
+
+### Approach
+1. **Class Structure**: The Python `VendingMachine` class will have attributes `inventory_` (a dictionary mapping item names to their details) and `balance_` (a float representing the current balance).
+2. **Constructor**: The `__init__` method initializes `balance_` to 0.0 and `inventory_` to an empty dictionary.
+3. **Add Item**: The `add_item` method checks if the item exists. If it does, it restocks the item; otherwise, it adds a new entry with the given price and quantity.
+4. **Insert Coin**: The `insert_coin` method adds the inserted coin amount to the balance and returns the updated balance.
+5. **Purchase Item**: The `purchase_item` method checks if the item exists, is in stock, and if the balance is sufficient. If so, it deducts the item's price from the balance, reduces the quantity by 1, and returns the new balance. Otherwise, it returns 0.0.
+6. **Restock Item**: The `restock_item` method increases the quantity of an existing item by the given amount and returns True. If the item doesn't exist, it returns False.
+7. **Display Items**: The `display_items` method returns "false" if the inventory is empty. Otherwise, it formats each item's details into a string, ensuring numbers are formatted without trailing zeros (matching C++'s default double formatting).
+8. **Inventory Management**: The `inventory` method returns a deep copy of the inventory to prevent external modifications. The `set_inventory` method sets the inventory to a deep copy of the provided dictionary, ensuring encapsulation.
+
+### Solution Code
+```python
+class VendingMachine:
+    def __init__(self):
+        self.balance_ = 0.0
+        self.inventory_ = {}
+    
+    def add_item(self, item_name, price, quantity):
+        if not self.restock_item(item_name, quantity):
+            self.inventory_[item_name] = {"price": float(price), "quantity": float(quantity)}
+    
+    def insert_coin(self, amount):
+        self.balance_ += amount
+        return self.balance_
+    
+    def purchase_item(self, item_name):
+        if item_name in self.inventory_:
+            item = self.inventory_[item_name]
+            if item["quantity"] > 0 and self.balance_ >= item["price"]:
+                self.balance_ -= item["price"]
+                item["quantity"] -= 1.0
+                return self.balance_
+        return 0.0
+    
+    def restock_item(self, item_name, quantity):
+        if item_name in self.inventory_:
+            self.inventory_[item_name]["quantity"] += float(quantity)
+            return True
+        return False
+    
+    def display_items(self):
+        if not self.inventory_:
+            return "false"
+        lines = []
+        for item_name, details in self.inventory_.items():
+            price_str = self._format_double(details["price"])
+            quantity_str = self._format_double(details["quantity"])
+            lines.append(f"{item_name} - ${price_str} [{quantity_str}]")
+        return "\n".join(lines)
+    
+    def _format_double(self, x):
+        s = f"{x:.6g}"
+        return s
+    
+    def inventory(self):
+        return {k: v.copy() for k, v in self.inventory_.items()}
+    
+    def set_inventory(self, x):
+        self.inventory_ = {k: v.copy() for k, v in x.items()}
+    
+    def set_balance(self, y):
+        self.balance_ = y
+```
+
+### Explanation
+1. **Initialization**: The `__init__` method sets up the initial state with zero balance and an empty inventory.
+2. **Adding Items**: `add_item` either restocks an existing item or adds a new item with the specified price and quantity.
+3. **Handling Coins**: `insert_coin` updates the balance with the inserted amount and returns the new balance.
+4. **Purchasing Items**: `purchase_item` processes a purchase if the item is available and the balance is sufficient, returning the updated balance or 0.0 on failure.
+5. **Restocking**: `restock_item` increases the quantity of an existing item and returns True; returns False if the item doesn't exist.
+6. **Displaying Inventory**: `display_items` formats each item's details into a string, removing trailing zeros from numbers to match C++'s default double formatting. Returns "false" for an empty inventory.
+7. **Inventory Management**: The `inventory` method returns a deep copy of the current inventory, and `set_inventory` sets the inventory to a deep copy of the provided dictionary, ensuring the internal state is protected from external modifications. The `set_balance` method allows setting the balance directly for testing or state management.
+
+=== TRANSLATED CODE (py) ===
+class VendingMachine:
+    def __init__(self):
+        self.balance_ = 0.0
+        self.inventory_ = {}
+    
+    def add_item(self, item_name, price, quantity):
+        if not self.restock_item(item_name, quantity):
+            self.inventory_[item_name] = {"price": float(price), "quantity": float(quantity)}
+    
+    def insert_coin(self, amount):
+        self.balance_ += amount
+        return self.balance_
+    
+    def purchase_item(self, item_name):
+        if item_name in self.inventory_:
+            item = self.inventory_[item_name]
+            if item["quantity"] > 0 and self.balance_ >= item["price"]:
+                self.balance_ -= item["price"]
+                item["quantity"] -= 1.0
+                return self.balance_
+        return 0.0
+    
+    def restock_item(self, item_name, quantity):
+        if item_name in self.inventory_:
+            self.inventory_[item_name]["quantity"] += float(quantity)
+            return True
+        return False
+    
+    def display_items(self):
+        if not self.inventory_:
+            return "false"
+        lines = []
+        for item_name, details in self.inventory_.items():
+            price_str = self._format_double(details["price"])
+            quantity_str = self._format_double(details["quantity"])
+            lines.append(f"{item_name} - ${price_str} [{quantity_str}]")
+        return "\n".join(lines)
+    
+    def _format_double(self, x):
+        s = f"{x:.6g}"
+        return s
+    
+    def inventory(self):
+        return {k: v.copy() for k, v in self.inventory_.items()}
+    
+    def set_inventory(self, x):
+        self.inventory_ = {k: v.copy() for k, v in x.items()}
+    
+    def set_balance(self, y):
+        self.balance_ = y

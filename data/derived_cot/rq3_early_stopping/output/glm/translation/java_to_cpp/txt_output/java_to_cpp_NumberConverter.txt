@@ -1,0 +1,831 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+public class NumberConverter {
+
+    public static String decimalToBinary(int decimalNum) {
+        return Integer.toBinaryString(decimalNum);
+    }
+
+    public static int binaryToDecimal(String binaryNum) {
+        return Integer.parseInt(binaryNum, 2);
+    }
+
+    public static String decimalToOctal(int decimalNum) {
+        return Integer.toOctalString(decimalNum);
+    }
+
+    public static int octalToDecimal(String octalNum) {
+        return Integer.parseInt(octalNum, 8);
+    }
+
+    public static String decimalToHex(int decimalNum) {
+        return Integer.toHexString(decimalNum);
+    }
+
+    public static int hexToDecimal(String hexNum) {
+        return Integer.parseInt(hexNum, 16);
+    }
+}
+
+=== REASONING ===
+<think>
+The user wants to translate a Java class `NumberConverter` to C++.
+The Java class provides static methods to convert between decimal and binary/octal/hex strings.
+Java's `Integer.toBinaryString`, `Integer.toOctalString`, `Integer.toHexString` handle negative numbers by printing the two's complement representation.
+Wait, `Integer.parseInt(binaryNum, 2)` throws a `NumberFormatException` if the string is not a valid binary number, or if it's out of range.
+In C++, `std::stoi` with base 2, 8, 16 throws `std::invalid_argument` or `std::out_of_range`.
+Wait, `std::stoi` handles negative strings like "-101", but does Java's `Integer.toBinaryString(-5)` return "-101"? No, it returns "11111111111111111111111111111011".
+And `Integer.parseInt("11111111111111111111111111111011", 2)` returns -5.
+If we use `std::bitset`, we can convert negative integers to their 32-bit two's complement string.
+Let's check the exact Java behavior.
+
+`Integer.toBinaryString(int i)`:
+Returns a string representation of the integer argument as an unsigned integer in base 2.
+If the argument is negative, the unsigned integer value is the argument plus 2^32; otherwise, it is equal to the argument.
+This value is converted to a string of ASCII digits in binary (base 2) with no extra leading 0s.
+
+`Integer.toOctalString(int i)`:
+Same, base 8.
+
+`Integer.toHexString(int i)`:
+Same, base 16, lowercase letters.
+
+`Integer.parseInt(String s, int radix)`:
+Parses the string argument as a signed integer in the radix specified by the second argument. The characters in the string must all be digits of the specified radix, except that the first character may be an ASCII minus sign '-'.
+
+So, `Integer.parseInt("11111111111111111111111111111011", 2)` returns -5.
+If we use `std::stoi`, it throws `std::out_of_range` for "11111111111111111111111111111011" because it's larger than `long` max? No, `std::stoi` uses `std::strtol` which parses as a `long`. On 64-bit systems, `long` is 64-bit, so it might parse as a positive 64-bit integer and then overflow `int`?
+Wait, `std::stoi` returns an `int`. If the parsed value is out of `int` range, it throws `std::out_of_range`.
+Wait, `std::stoul` parses as `unsigned long`.
+To mimic Java's `Integer.parseInt(s, radix)`:
+We can use `std::stoul` to parse the string as an unsigned long, and then cast to `int` if it fits in 32-bit, but wait, Java's `parseInt` allows negative signs.
+If the string starts with '-', Java parses it as negative.
+If it doesn't, it parses as unsigned 32-bit, and if the top bit is set, it represents a negative number.
+Wait, `Integer.parseInt` expects the string to represent a 32-bit signed integer.
+If the string is "11111111111111111111111111111011", it's parsed as -5.
+If the string is "11111111111111111111111111111012", it throws NumberFormatException.
+If the string is "2147483648" (base 10), it throws NumberFormatException.
+
+Let's carefully consider the C++ implementation.
+
+For `decimalToBinary`:
+```cpp
+std::string decimalToBinary(int decimalNum) {
+    std::bitset<32> bits(decimalNum);
+    std::string s = bits.to_string();
+    // Remove leading zeros, but keep the last one if it's 0
+    size_t start = s.find_first_not_of('0');
+    if (start == std::string::npos) return "0";
+    return s.substr(start);
+}
+```
+Wait, Java's `Integer.toBinaryString(0)` returns "0".
+`Integer.toBinaryString(-5)` returns "11111111111111111111111111111011".
+The `bitset` approach perfectly matches this!
+
+For `decimalToOctal`:
+```cpp
+std::string decimalToOctal(int decimalNum) {
+    if (decimalNum == 0) return "0";
+    unsigned int uNum = static_cast<unsigned int>(decimalNum);
+    std::string result;
+    while (uNum > 0) {
+        result = static_cast<char>('0' + uNum % 8) + result;
+        uNum /= 8;
+    }
+    return result;
+}
+```
+Let's trace `decimalToOctal(-5)`:
+`uNum` = 4294967291 (0xFFFFFFFB)
+4294967291 % 8 = 3
+4294967291 / 8 = 536870911
+536870911 % 8 = 7
+536870911 / 8 = 67108863
+67108863 % 8 = 7
+67108863 / 8 = 8388607
+8388607 % 8 = 7
+8388607 / 8 = 1048575
+1048575 % 8 = 7
+1048575 / 8 = 131071
+131071 % 8 = 7
+131071 / 8 = 16383
+16383 % 8 = 7
+16383 / 8 = 2047
+2047 % 8 = 7
+2047 / 8 = 255
+255 % 8 = 7
+255 / 8 = 31
+31 % 8 = 7
+31 / 8 = 3
+3 % 8 = 3
+3 / 8 = 0
+Result: "37777777773"
+Java's `Integer.toOctalString(-5)` is "37777777773". Matches!
+
+For `decimalToHex`:
+```cpp
+std::string decimalToHex(int decimalNum) {
+    if (decimalNum == 0) return "0";
+    unsigned int uNum = static_cast<unsigned int>(decimalNum);
+    std::string result;
+    while (uNum > 0) {
+        int rem = uNum % 16;
+        char c = (rem < 10) ? ('0' + rem) : ('a' + rem - 10);
+        result = c + result;
+        uNum /= 16;
+    }
+    return result;
+}
+```
+Java's `Integer.toHexString(-5)` is "fffffffb". Matches! (lowercase)
+
+For `binaryToDecimal`:
+```cpp
+int binaryToDecimal(std::string binaryNum) {
+    // Java's Integer.parseInt handles negative signs, e.g., "-101".
+    // It also handles unsigned representations like "11111111111111111111111111111011" -> -5
+    // If we use std::stoul, it parses "11111111111111111111111111111011" as a large positive number.
+    // Wait, std::stoul("11111111111111111111111111111011", nullptr, 2) is 4294967291.
+    // If we cast to int, it becomes -5.
+    // But what if the string is "-101"?
+    // std::stoul("-101", nullptr, 2) returns -5.
+    // Wait, std::stoul("-101", nullptr, 2) actually parses as -5, which when cast to int is -5.
+    // Wait, does std::stoul handle negative signs? Yes, it returns (unsigned long) -5.
+    // Wait, what if the string is "11111111111111111111111111111011"?
+    // std::stoul parses it as 4294967291. If we cast to int, it's -5.
+    // What if the string is larger than 32 bits?
+    // Java's Integer.parseInt throws NumberFormatException.
+    // std::stoul throws std::out_of_range.
+    // We should catch and throw std::invalid_argument? The prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)."
+    // In C++, we don't have NumberFormatException. We can throw std::invalid_argument.
+    // Let's check if std::stoul throws std::invalid_argument for empty string or invalid characters. Yes.
+    // Let's check if std::stoul throws std::out_of_range for values outside unsigned long range. Yes.
+    // But Java's Integer.parseInt throws NumberFormatException for values outside 32-bit int range!
+    // For example, "100000000000000000000000000000000" (33 bits).
+    // std::stoul on a 64-bit system will parse it successfully because it fits in 64-bit unsigned long.
+    // Then we would cast it to int, which might wrap around, but Java would throw an exception.
+    // To accurately mimic Java, we must check the bounds.
+}
+```
+
+Let's refine `binaryToDecimal`, `octalToDecimal`, `hexToDecimal`.
+Java's `Integer.parseInt(String s, int radix)`:
+- Allows an optional leading `-`.
+- Parses the rest as unsigned in the given radix.
+- If the parsed unsigned value is > 0xFFFFFFFF (or > 0x7FFFFFFF if no `-` sign), it throws NumberFormatException.
+- Wait, if there is a `-`, the value can be up to 0x80000000 (which is -2147483648).
+- If there is no `-`, the value can be up to 0x7FFFFFFF (2147483647).
+- Wait, what if the string is "-11111111111111111111111111111011"?
+  Java: `Integer.parseInt("-11111111111111111111111111111011", 2)`
+  This is equivalent to parsing `11111111111111111111111111111011` as positive, which is 4294967291, and then negating it. This would be -4294967291, which is out of `int` range. So Java throws NumberFormatException.
+- What if the string is "11111111111111111111111111111011"?
+  Java: `Integer.parseInt("11111111111111111111111111111011", 2)`
+  This is parsed as a negative integer because it has 32 bits and the top bit is 1. It returns -5.
+  Wait, the Java documentation says:
+  "Parses the string argument as a signed integer in the radix specified by the second argument. The characters in the string must all be digits of the specified radix (except that the first character may be an ASCII minus sign '-' )."
+  "An exception of type NumberFormatException is thrown if any of the following situations occurs:
+   - The first argument is null or is a string of length zero.
+   - The radix is either smaller than Character.MIN_RADIX or larger than Character.MAX_RADIX.
+   - Any character of the string is not a digit of the specified radix, except that the first character may be a minus sign '-' provided that the string is longer than length 1.
+   - The integer value represented by the string is not a value of type int."
+  Wait, how does Java parse "11111111111111111111111111111011" as -5?
+  Ah! The JavaDoc for `Integer.parseInt` says:
+  "Examples:
+   parseInt("0", 10) returns 0
+   parseInt("473", 10) returns 473
+   parseInt("+42", 10) returns 42
+   parseInt("-0", 10) returns 0
+   parseInt("-FF", 16) returns -255
+   parseInt("1100110", 2) returns 102
+   parseInt("2147483647", 10) returns 2147483647
+   parseInt("-2147483648", 10) returns -2147483648
+   parseInt("2147483648", 10) throws a NumberFormatException
+   parseInt("99", 8) throws a NumberFormatException
+   parseInt("Kona", 10) throws a NumberFormatException
+   parseInt("Kona", 27) returns 287488"
+  Wait, does `parseInt("11111111111111111111111111111011", 2)` actually return -5?
+  Let's test this mentally.
+  In Java 8+, `Integer.parseInt("11111111111111111111111111111011", 2)` throws `NumberFormatException`!
+  Wait, really?
+  Let's check the source code of `Integer.parseInt`.
+  ```java
+  public static int parseInt(String s, int radix) throws NumberFormatException {
+      ...
+      int result = 0;
+      boolean negative = false;
+      int i = 0, len = s.length();
+      int limit = -Integer.MAX_VALUE;
+      ...
+      if (s.charAt(0) == '-') {
+          negative = true;
+          limit = Integer.MIN_VALUE;
+          i++;
+      }
+      ...
+      int multmin = limit / radix;
+      while (i < len) {
+          ...
+          int digit = Character.digit(s.charAt(i++), radix);
+          if (digit < 0) throw ...
+          if (result < multmin) throw ...
+          result *= radix;
+          if (result < limit + digit) throw ...
+          result -= digit;
+      }
+      ...
+  }
+  ```
+  Wait, if it parses "11111111111111111111111111111011", it will compute:
+  result = 0
+  1: result = -1
+  11: result = -3
+  111: result = -7
+  ...
+  Wait, no! `result *= radix` and `result -= digit` means it's computing the negative of the value.
+  For "11111111111111111111111111111011" (length 32):
+  It will compute the value as -4294967291.
+  But -4294967291 is less than `Integer.MIN_VALUE` (-2147483648).
+  So it will throw `NumberFormatException`!
+  Let me double check this!
+  In Java, `Integer.parseInt("11111111111111111111111111111011", 2)` THROWS NumberFormatException!
+  Wait, is this true? Let me think.
+  If I do `Integer.parseInt(Integer.toBinaryString(-5), 2)`, what happens?
+  `Integer.toBinaryString(-5)` returns "11111111111111111111111111111011".
+  If I pass this to `Integer.parseInt`, does it throw?
+  Yes! In Java, `Integer.parseInt` does NOT parse two's complement strings! It parses signed magnitude strings!
+  Wait, wait, wait. Let me verify this.
+  Is it true that `Integer.parseInt(Integer.toBinaryString(-5), 2)` throws `NumberFormatException`?
+  Let's trace:
+  "11111111111111111111111111111011" has length 32.
+  The loop will parse it as a positive number, but since it's accumulating the negative, it will overflow `limit`.
+  Yes, `Integer.parseInt` only parses strings that represent the value directly, e.g., "-101" for -5.
+  Wait, is there ANY way to parse "11111111111111111111111111111011" back to -5 in Java?
+  No, `Integer.parseInt` does not support two's complement parsing.
+  Wait, let me search my memory.
+  Many people complain that `Integer.parseInt(Integer.toBinaryString(-1), 2)` throws `NumberFormatException`.
+  Yes! Because `Integer.toBinaryString(-1)` returns a string of 32 '1's, which represents 4294967295 in unsigned, which is out of the signed `int` range.
+  So `Integer.parseInt` throws an exception.
+  Therefore, my C++ implementation of `binaryToDecimal` does NOT need to support two's complement strings like "11111111111111111111111111111011" returning -5. It should throw an exception just like Java!
+  Wait, but what if the user expects it to work because they don't know Java's weirdness?
+  The prompt says: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)."
+  So if Java throws an exception, C++ must throw an exception.
+  Let's confirm Java's behavior.
+  `Integer.parseInt("-101", 2)` returns -5.
+  `Integer.parseInt("11111111111111111111111111111011", 2)` throws `NumberFormatException`.
+  What about `Integer.parseInt("7fffffff", 16)`? Returns 2147483647.
+  `Integer.parseInt("80000000", 16)` throws `NumberFormatException`.
+  `Integer.parseInt("-80000000", 16)` returns -2147483648.
+
+  Wait, what about `Integer.parseUnsignedInt`?
+  Java has `Integer.parseUnsignedInt("11111111111111111111111111111011", 2)`, which returns -5 if cast to `int`, or 4294967291 as an unsigned int.
+  But the Java code provided uses `Integer.parseInt`.
+
+So, to accurately mimic `Integer.parseInt(s, radix)`:
+1. Check for empty string -> throw `std::invalid_argument` (or a custom exception, but `std::invalid_argument` is standard for this).
+2. Check for leading `-`.
+3. Parse the string as a 64-bit integer (since we need to detect overflow past 32-bit signed limits).
+4. If the value exceeds `INT_MAX` (or `INT_MIN` if negative), throw `std::out_of_range`.
+5. Return the 32-bit integer value.
+
+Wait, are there any other edge cases?
+- Leading `+`? Java allows `+`.
+  `Integer.parseInt("+42", 10)` returns 42.
+- Leading zeros? Allowed.
+- Whitespace? NOT allowed in Java. `Integer.parseInt(" 42")` throws.
+- Empty string? Throws.
+- Just `-`? Throws.
+- Just `+`? Throws.
+
+Let's write a generic `parseInt` function in C++ that mimics `Integer.parseInt(String s, int radix)`.
+
+```cpp
+#include <string>
+#include <stdexcept>
+#include <climits>
+
+class NumberConverter {
+public:
+    static std::string decimalToBinary(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            result = static_cast<char>((uNum % 2) + '0') + result;
+            uNum /= 2;
+        }
+        return result;
+    }
+
+    static int binaryToDecimal(std::string binaryNum) {
+        return parseInt(binaryNum, 2);
+    }
+
+    static std::string decimalToOctal(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            result = static_cast<char>((uNum % 8) + '0') + result;
+            uNum /= 8;
+        }
+        return result;
+    }
+
+    static int octalToDecimal(std::string octalNum) {
+        return parseInt(octalNum, 8);
+    }
+
+    static std::string decimalToHex(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            int rem = uNum % 16;
+            char c = (rem < 10) ? (rem + '0') : (rem - 10 + 'a');
+            result = c + result;
+            uNum /= 16;
+        }
+        return result;
+    }
+
+    static int hexToDecimal(std::string hexNum) {
+        return parseInt(hexNum, 16);
+    }
+
+private:
+    static int parseInt(const std::string& s, int radix) {
+        if (s.empty()) {
+            throw std::invalid_argument("Empty string");
+        }
+        
+        int i = 0;
+        bool negative = false;
+        
+        if (s[0] == '-') {
+            negative = true;
+            i = 1;
+        } else if (s[0] == '+') {
+            i = 1;
+        }
+        
+        if (i == s.length()) {
+            throw std::invalid_argument("Only sign character");
+        }
+        
+        long long result = 0;
+        while (i < s.length()) {
+            int digit = CharacterDigit(s[i], radix);
+            if (digit < 0) {
+                throw std::invalid_argument("Invalid character");
+            }
+            result = result * radix + digit;
+            if (negative) {
+                if (result > static_cast<long long>(INT_MAX) + 1) {
+                    throw std::out_of_range("Out of range");
+                }
+            } else {
+                if (result > INT_MAX) {
+                    throw std::out_of_range("Out of range");
+                }
+            }
+            i++;
+        }
+        
+        return negative ? -static_cast<int>(result) : static_cast<int>(result);
+    }
+
+    static int CharacterDigit(char c, int radix) {
+        int digit = -1;
+        if (c >= '0' && c <= '9') {
+            digit = c - '0';
+        } else if (c >= 'A' && c <= 'Z') {
+            digit = c - 'A' + 10;
+        } else if (c >= 'a' && c <= 'z') {
+            digit = c - 'a' + 10;
+        }
+        return (digit < radix) ? digit : -1;
+    }
+};
+```
+
+Wait, what about `Integer.parseInt` behavior with radix out of bounds?
+Java throws if radix < `Character.MIN_RADIX` (2) or > `Character.MAX_RADIX` (36).
+But the provided Java code hardcodes the radix (2, 8, 16), so we don't need to check radix bounds.
+
+Let's double check `decimalToBinary`.
+If `decimalNum == 0`, it returns "0".
+If `decimalNum > 0`, it returns the binary string without leading zeros.
+If `decimalNum < 0`, it returns the 32-bit two's complement binary string.
+My implementation:
+```cpp
+    static std::string decimalToBinary(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            result = static_cast<char>((uNum % 2) + '0') + result;
+            uNum /= 2;
+        }
+        return result;
+    }
+```
+Wait, `uNum` is 32-bit unsigned. So for a negative number, it will iterate exactly 32 times, producing a 32-character string, right?
+Wait, `uNum > 0` will be true as long as there are bits left.
+For `decimalNum = -5`, `uNum = 0xFFFFFFFB`.
+`uNum % 2` is 1 or 0.
+`uNum /= 2` is division of unsigned integer.
+It will produce "11111111111111111111111111111011".
+Is this correct?
+Let's trace `uNum = 0xFFFFFFFB`.
+`0xFFFFFFFB / 2` = `0x7FFFFFFD`.
+`0x7FFFFFFD / 2` = `0x3FFFFFFE`.
+`0x3FFFFFFE / 2` = `0x1FFFFFFF`.
+`0x1FFFFFFF / 2` = `0x0FFFFFFF`... wait.
+`0x1FFFFFFF` is 0001 1111 1111 1111 1111 1111 1111 1111 in binary.
+Divided by 2: `0x0FFFFFFF`.
+Wait, `0xFFFFFFFB` is 1111 1111 1111 1111 1111 1111 1111 1011.
+Shift right by 1: `0x7FFFFFFD` (0111 1111 1111 1111 1111 1111 1111 1101).
+Wait! `0xFFFFFFFB / 2` in unsigned math is `0x7FFFFFFD`.
+But the original binary is `1111 1111 ... 1011`.
+Shifting right logically gives `0111 1111 ... 1101`.
+Is `0x7FFFFFFD` correct?
+Yes, `0xFFFFFFFB` is 4294967291. Divided by 2 is 2147483645.5. Integer division gives 2147483645.
+`0x7FFFFFFD` is 2147483645. Correct.
+Next, `0x7FFFFFFD / 2` = `0x3FFFFFFE`.
+`0x3FFFFFFE / 2` = `0x1FFFFFFF`.
+`0x1FFFFFFF / 2` = `0x0FFFFFFF`.
+Wait! If we keep dividing by 2, the leading 1s will eventually be shifted out!
+Let's trace carefully.
+`0xFFFFFFFB` -> `0x7FFFFFFD` -> `0x3FFFFFFE` -> `0x1FFFFFFF` -> `0x0FFFFFFF`.
+Notice that after 4 divisions, the top nibble `0xF` became `0x0`!
+Wait, `0x1FFFFFFF` is 0001 1111...
+Divided by 2: `0x0FFFFFFF` is 0000 1111...
+So the leading 1s are LOST!
+Why? Because `0xFFFFFFFB` is 32 bits. Dividing by 2 is equivalent to shifting right by 1.
+Wait, `0xF` = 15. `15 / 2` = 7.
+Ah! `0x7FFFFFFD` is `0111 1111 ...`.
+Wait, `0xFFFFFFFB` is `1111 1111 ...`.
+Divided by 2: `0111 1111 ...` which is `0x7FFFFFFD`.
+Then `0x7FFFFFFD` divided by 2: `0011 1111 ...` which is `0x3FFFFFFE`.
+Then `0x3FFFFFFE` divided by 2: `0001 1111 ...` which is `0x1FFFFFFF`.
+Then `0x1FFFFFFF` divided by 2: `0000 1111 ...` which is `0x0FFFFFFF`.
+So the leading 1s are indeed being shifted out!
+This means my `decimalToBinary` loop will terminate after at most 32 iterations, but it will NOT preserve the leading 1s!
+Wait. If `uNum` is `0xFFFFFFFB`, the first division gives `0x7FFFFFFD`, and the remainder is 1.
+The second division gives `0x3FFFFFFE`, remainder 1.
+The third gives `0x1FFFFFFF`, remainder 0.
+The fourth gives `0x0FFFFFFF`, remainder 1.
+Wait, if the top bits are shifted out, `uNum` will eventually become 0, and the loop will stop!
+Let's trace `uNum = 0xFFFFFFFB`.
+`uNum % 2` = 1. `uNum /= 2` -> `0x7FFFFFFD`.
+`uNum % 2` = 1. `uNum /= 2` -> `0x3FFFFFFE`.
+`uNum % 2` = 0. `uNum /= 2` -> `0x1FFFFFFF`.
+`uNum % 2` = 1. `uNum /= 2` -> `0x0FFFFFFF`.
+`uNum % 2` = 1. `uNum /= 2` -> `0x07FFFFFF`.
+...
+Wait! `0x0FFFFFFF` divided by 2 is `0x07FFFFFF`.
+The top bits are lost!
+This means `decimalToBinary(-5)` will NOT return 32 bits! It will return a shorter string!
+Let's test this with a smaller example. 8-bit `-5` is `1111 1011` (0xFB).
+`0xFB / 2` = `0x7D` (125). Remainder 1.
+`0x7D / 2` = `0x3E` (62). Remainder 1.
+`0x3E / 2` = `0x1F` (31). Remainder 0.
+`0x1F / 2` = `0x0F` (15). Remainder 1.
+`0x0F / 2` = `0x07` (7). Remainder 1.
+`0x07 / 2` = `0x03` (3). Remainder 1.
+`0x03 / 2` = `0x01` (1). Remainder 1.
+`0x01 / 2` = `0x00` (0). Remainder 1.
+Result: `11111011`.
+Wait! It DOES preserve the bits!
+Why? Because `0xFB` (251) divided by 2 is 125 (`0x7D`), which is `0111 1101` in binary.
+The remainder is 1.
+Then `0x7D` (125) divided by 2 is 62 (`0x3E`), which is `0011 1110`.
+The remainder is 1.
+Then `0x3E` (62) divided by 2 is 31 (`0x1F`), which is `0001 1111`.
+The remainder is 0.
+Then `0x1F` (31) divided by 2 is 15 (`0x0F`), which is `0000 1111`.
+The remainder is 1.
+Then `0x0F` (15) divided by 2 is 7 (`0x07`), which is `0000 0111`.
+The remainder is 1.
+Then `0x07` (7) divided by 2 is 3 (`0x03`), which is `0000 0011`.
+The remainder is 1.
+Then `0x03` (3) divided by 2 is 1 (`0x01`), which is `0000 0001`.
+The remainder is 1.
+Then `0x01` (1) divided by 2 is 0 (`0x00`).
+The remainder is 1.
+The remainders are: 1, 1, 0, 1, 1, 1, 1, 1.
+Reversed: 1, 1, 1, 1, 1, 0, 1, 1.
+Which is exactly `11111011`!
+Wow! So the division DOES preserve the bits!
+Let me check `0xFFFFFFFB`.
+The remainders will be exactly the bits of `0xFFFFFFFB`, and the last division will be `1 / 2 = 0` with remainder 1.
+So it will iterate exactly 32 times, producing the 32-bit string!
+Phew! Math works!
+Let's double check with `0x80000000` (-2147483648).
+`0x80000000` is `1000 0000 ... 0000`.
+`0x80000000 / 2` = `0x40000000`. Remainder 0.
+`0x40000000 / 2` = `0x20000000`. Remainder 0.
+...
+`0x00000002 / 2` = `0x00000001`. Remainder 0.
+`0x00000001 / 2` = `0x00000000`. Remainder 1.
+Remainders: 31 zeros, then 1.
+Reversed: 1 followed by 31 zeros.
+Which is exactly `1000 0000 ... 0000`.
+So `decimalToBinary` using `unsigned int` division is 100% correct and perfectly mimics `Integer.toBinaryString`.
+
+Wait, is there any case where `Integer.toBinaryString` returns a string longer than 32 characters?
+No, because `int` is 32-bit in Java. `Integer.toBinaryString` takes an `int`, so it's always 32 bits max.
+What about `decimalToOctal`?
+`Integer.toOctalString(-5)` returns "37777777773".
+Let's trace `0xFFFFFFFB` in base 8.
+`0xFFFFFFFB` is 4294967291.
+4294967291 in base 8:
+4294967291 / 8 = 536870911, rem 3.
+536870911 / 8 = 67108863, rem 7.
+67108863 / 8 = 8388607, rem 7.
+8388607 / 8 = 1048575, rem 7.
+1048575 / 8 = 131071, rem 7.
+131071 / 8 = 16383, rem 7.
+16383 / 8 = 2047, rem 7.
+2047 / 8 = 255, rem 7.
+255 / 8 = 31, rem 7.
+31 / 8 = 3, rem 7.
+3 / 8 = 0, rem 3.
+Result: "37777777773".
+Matches exactly!
+
+What about `decimalToHex`?
+`Integer.toHexString(-5)` returns "fffffffb".
+`0xFFFFFFFB` in base 16:
+4294967291 / 16 = 268435455, rem 11 (b).
+268435455 / 16 = 16777215, rem 15 (f).
+16777215 / 16 = 1048575, rem 15 (f).
+1048575 / 16 = 65535, rem 15 (f).
+65535 / 16 = 4095, rem 15 (f).
+4095 / 16 = 255, rem 15 (f).
+255 / 16 = 15, rem 15 (f).
+15 / 16 = 0, rem 15 (f).
+Result: "fffffffb".
+Matches exactly!
+
+What about `Integer.parseInt` with negative strings?
+`parseInt("-101", 2)` -> -5.
+My `parseInt` function:
+`negative = true`, `i = 1`.
+`s.length()` = 4.
+`result = 0`.
+`s[1] = '1'`, digit = 1. `result = 0 * 2 + 1 = 1`.
+`s[2] = '0'`, digit = 0. `result = 1 * 2 + 0 = 2`.
+`s[3] = '1'`, digit = 1. `result = 2 * 2 + 1 = 5`.
+`negative` is true, so it checks if `result > INT_MAX + 1`. `5 > 2147483648` is false.
+Returns `-5`.
+Matches exactly!
+
+What about `parseInt("2147483648", 10)`?
+`result` becomes 2147483648.
+`negative` is false.
+`result > INT_MAX` is `2147483648 > 2147483647`, which is true.
+Throws `std::out_of_range`.
+Matches exactly!
+
+What about `parseInt("-2147483648", 10)`?
+`result` becomes 2147483648.
+`negative` is true.
+`result > INT_MAX + 1` is `2147483648 > 2147483648`, which is false.
+Returns `-2147483648`.
+Matches exactly!
+
+What about `parseInt("-2147483649", 10)`?
+`result` becomes 2147483649.
+`negative` is true.
+`result > INT_MAX + 1` is `2147483649 > 2147483648`, which is true.
+Throws `std::out_of_range`.
+Matches exactly!
+
+Wait, what if `parseInt` is called with a string that overflows a `long long`?
+For example, `parseInt("9999999999999999999999999999999999", 10)`.
+My `result` is `long long`. It will overflow `long long` and cause undefined behavior!
+
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <string>
+#include <stdexcept>
+#include <climits>
+
+class NumberConverter {
+public:
+    static std::string decimalToBinary(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            result = static_cast<char>((uNum % 2) + '0') + result;
+            uNum /= 2;
+        }
+        return result;
+    }
+
+    static int binaryToDecimal(std::string binaryNum) {
+        return parseInt(binaryNum, 2);
+    }
+
+    static std::string decimalToOctal(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            result = static_cast<char>((uNum % 8) + '0') + result;
+            uNum /= 8;
+        }
+        return result;
+    }
+
+    static int octalToDecimal(std::string octalNum) {
+        return parseInt(octalNum, 8);
+    }
+
+    static std::string decimalToHex(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            int rem = uNum % 16;
+            char c = (rem < 10) ? (rem + '0') : (rem - 10 + 'a');
+            result = c + result;
+            uNum /= 16;
+        }
+        return result;
+    }
+
+    static int hexToDecimal(std::string hexNum) {
+        return parseInt(hexNum, 16);
+    }
+
+private:
+    static int parseInt(const std::string& s, int radix) {
+        if (s.empty()) {
+            throw std::invalid_argument("Empty string");
+        }
+        
+        int i = 0;
+        bool negative = false;
+        
+        if (s[0] == '-') {
+            negative = true;
+            i = 1;
+        } else if (s[0] == '+') {
+            i = 1;
+        }
+        
+        if (i == static_cast<int>(s.length())) {
+            throw std::invalid_argument("Only sign character");
+        }
+        
+        long long limit = negative ? (static_cast<long long>(INT_MAX) + 1) : INT_MAX;
+        long long result = 0;
+        
+        while (i < static_cast<int>(s.length())) {
+            int digit = CharacterDigit(s[i], radix);
+            if (digit < 0) {
+                throw std::invalid_argument("Invalid character");
+            }
+            if (result > limit / radix) {
+                throw std::out_of_range("Out of range");
+            }
+            result *= radix;
+            if (limit - result < digit) {
+                throw std::out_of_range("Out of range");
+            }
+            result += digit;
+            i++;
+        }
+        
+        return negative ? -static_cast<int>(result) : static_cast<int>(result);
+    }
+
+    static int CharacterDigit(char c, int radix) {
+        int digit = -1;
+        if (c >= '0' && c <= '9') {
+            digit = c - '0';
+        } else if (c >= 'A' && c <= 'Z') {
+            digit = c - 'A' + 10;
+        } else if (c >= 'a' && c <= 'z') {
+            digit = c - 'a' + 10;
+        }
+        return (digit < radix) ? digit : -1;
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <stdexcept>
+#include <climits>
+
+class NumberConverter {
+public:
+    static std::string decimalToBinary(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            result = static_cast<char>((uNum % 2) + '0') + result;
+            uNum /= 2;
+        }
+        return result;
+    }
+
+    static int binaryToDecimal(std::string binaryNum) {
+        return parseInt(binaryNum, 2);
+    }
+
+    static std::string decimalToOctal(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            result = static_cast<char>((uNum % 8) + '0') + result;
+            uNum /= 8;
+        }
+        return result;
+    }
+
+    static int octalToDecimal(std::string octalNum) {
+        return parseInt(octalNum, 8);
+    }
+
+    static std::string decimalToHex(int decimalNum) {
+        if (decimalNum == 0) return "0";
+        std::string result;
+        unsigned int uNum = static_cast<unsigned int>(decimalNum);
+        while (uNum > 0) {
+            int rem = uNum % 16;
+            char c = (rem < 10) ? (rem + '0') : (rem - 10 + 'a');
+            result = c + result;
+            uNum /= 16;
+        }
+        return result;
+    }
+
+    static int hexToDecimal(std::string hexNum) {
+        return parseInt(hexNum, 16);
+    }
+
+private:
+    static int parseInt(const std::string& s, int radix) {
+        if (s.empty()) {
+            throw std::invalid_argument("Empty string");
+        }
+        
+        int i = 0;
+        bool negative = false;
+        
+        if (s[0] == '-') {
+            negative = true;
+            i = 1;
+        } else if (s[0] == '+') {
+            i = 1;
+        }
+        
+        if (i == static_cast<int>(s.length())) {
+            throw std::invalid_argument("Only sign character");
+        }
+        
+        long long limit = negative ? (static_cast<long long>(INT_MAX) + 1) : INT_MAX;
+        long long result = 0;
+        
+        while (i < static_cast<int>(s.length())) {
+            int digit = CharacterDigit(s[i], radix);
+            if (digit < 0) {
+                throw std::invalid_argument("Invalid character");
+            }
+            if (result > limit / radix) {
+                throw std::out_of_range("Out of range");
+            }
+            result *= radix;
+            if (limit - result < digit) {
+                throw std::out_of_range("Out of range");
+            }
+            result += digit;
+            i++;
+        }
+        
+        return negative ? -static_cast<int>(result) : static_cast<int>(result);
+    }
+
+    static int CharacterDigit(char c, int radix) {
+        int digit = -1;
+        if (c >= '0' && c <= '9') {
+            digit = c - '0';
+        } else if (c >= 'A' && c <= 'Z') {
+            digit = c - 'A' + 10;
+        } else if (c >= 'a' && c <= 'z') {
+            digit = c - 'a' + 10;
+        }
+        return (digit < radix) ? digit : -1;
+    }
+};

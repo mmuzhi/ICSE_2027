@@ -1,0 +1,94 @@
+#include <vector>
+#include <string>
+#include <queue>
+#include <set>
+#include <optional>
+#include <utility>
+
+class EightPuzzle {
+public:
+    // Constructor: stores initial state and sets goal state
+    EightPuzzle(const std::vector<std::vector<int>>& initial_state)
+        : initial_state(initial_state),
+          goal_state{{1, 2, 3}, {4, 5, 6}, {7, 8, 0}} {}
+
+    // Find the position of the blank (0) in the current state
+    std::pair<int, int> find_blank(const std::vector<std::vector<int>>& state) const {
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                if (state[i][j] == 0) {
+                    return {i, j};
+                }
+            }
+        }
+        // Should never happen if state is valid
+        return {-1, -1};
+    }
+
+    // Move the blank in the given direction, returning a new state
+    std::vector<std::vector<int>> move(const std::vector<std::vector<int>>& state,
+                                       const std::string& direction) const {
+        auto [i, j] = find_blank(state);
+        std::vector<std::vector<int>> new_state = state;  // copy
+
+        if (direction == "up") {
+            std::swap(new_state[i][j], new_state[i - 1][j]);
+        } else if (direction == "down") {
+            std::swap(new_state[i][j], new_state[i + 1][j]);
+        } else if (direction == "left") {
+            std::swap(new_state[i][j], new_state[i][j - 1]);
+        } else if (direction == "right") {
+            std::swap(new_state[i][j], new_state[i][j + 1]);
+        }
+
+        return new_state;
+    }
+
+    // Return all legal moves from the current state
+    std::vector<std::string> get_possible_moves(const std::vector<std::vector<int>>& state) const {
+        std::vector<std::string> moves;
+        auto [i, j] = find_blank(state);
+
+        if (i > 0) moves.push_back("up");
+        if (i < 2) moves.push_back("down");
+        if (j > 0) moves.push_back("left");
+        if (j < 2) moves.push_back("right");
+
+        return moves;
+    }
+
+    // Solve the puzzle using BFS, returning the path or std::nullopt if unsolvable
+    std::optional<std::vector<std::string>> solve() const {
+        // Queue of (state, path)
+        std::queue<std::pair<std::vector<std::vector<int>>, std::vector<std::string>>> open_list;
+        open_list.push({initial_state, {}});
+
+        std::set<std::vector<std::vector<int>>> closed_list;
+
+        while (!open_list.empty()) {
+            auto [current_state, path] = open_list.front();
+            open_list.pop();
+
+            closed_list.insert(current_state);
+
+            if (current_state == goal_state) {
+                return path;
+            }
+
+            for (const auto& move_dir : get_possible_moves(current_state)) {
+                std::vector<std::vector<int>> new_state = move(current_state, move_dir);
+                if (closed_list.find(new_state) == closed_list.end()) {
+                    std::vector<std::string> new_path = path;
+                    new_path.push_back(move_dir);
+                    open_list.push({new_state, new_path});
+                }
+            }
+        }
+
+        return std::nullopt;  // No solution found
+    }
+
+private:
+    std::vector<std::vector<int>> initial_state;
+    std::vector<std::vector<int>> goal_state;
+};

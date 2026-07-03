@@ -1,0 +1,589 @@
+=== SOURCE CODE (cpp) ===
+
+#include <OpenXLSX.hpp>
+#include <iostream>
+#include <variant>
+#include <string>
+#include <vector>
+
+#include <string>
+#include <vector>
+#include <variant>
+
+class ExcelProcessor {
+public:
+    ExcelProcessor() = default;
+
+    std::vector<std::vector<std::variant<std::string, int>>> read_excel(const std::string& file_name);
+
+    int write_excel(const std::vector<std::vector<std::variant<std::string, int>>>& data, const std::string& file_name);
+
+    std::pair<int, std::string> process_excel_data(size_t N, const std::string& save_file_name);
+};
+
+std::vector<std::vector<std::variant<std::string, int>>> ExcelProcessor::read_excel(const std::string& file_name) {
+    std::vector<std::vector<std::variant<std::string, int>>> data;
+    try {
+        OpenXLSX::XLDocument doc;
+        doc.open(file_name);
+        auto sheet = doc.workbook().worksheet("Sheet1");
+
+        unsigned int rowCount = sheet.rowCount();
+        unsigned int colCount = sheet.columnCount();
+
+        for (unsigned int rowIndex = 1; rowIndex <= rowCount; ++rowIndex) {
+            std::vector<std::variant<std::string, int>> rowData;
+            for (unsigned int colIndex = 1; colIndex <= colCount; ++colIndex) {
+                auto cell = sheet.cell(rowIndex, colIndex);
+
+                if (cell.value().type() == OpenXLSX::XLValueType::Integer) {
+                    rowData.emplace_back(static_cast<int>(cell.value().get<int64_t>()));
+                }
+                else if (cell.value().type() == OpenXLSX::XLValueType::String) {
+                    rowData.emplace_back(cell.value().get<std::string>());
+                }
+            }
+            data.push_back(rowData);
+        }
+        doc.close();
+    }
+    catch (...) {
+        return {};
+    }
+    return data;
+}
+
+int ExcelProcessor::write_excel(const std::vector<std::vector<std::variant<std::string, int>>>& data, const std::string& file_name) {
+    try {
+        OpenXLSX::XLDocument doc;
+        doc.create(file_name);
+        auto sheet = doc.workbook().worksheet("Sheet1");
+
+        for (unsigned int rowIndex = 0; rowIndex < data.size(); ++rowIndex) {
+            for (unsigned int colIndex = 0; colIndex < data[rowIndex].size(); ++colIndex) {
+                auto cell = sheet.cell(rowIndex + 1, colIndex + 1);
+                if (std::holds_alternative<int>(data[rowIndex][colIndex])) {
+                    cell.value() = std::get<int>(data[rowIndex][colIndex]);
+                }
+                else {
+                    cell.value() = std::get<std::string>(data[rowIndex][colIndex]);
+                }
+            }
+        }
+        doc.save();
+        doc.close();
+        return 1;
+    }
+    catch (...) {
+        return 0;
+    }
+}
+
+std::pair<int, std::string> ExcelProcessor::process_excel_data(size_t N, const std::string& save_file_name) {
+    auto data = read_excel(save_file_name);
+    if (data.empty() || N >= data[0].size()) {
+        return { 0, "" };
+    }
+
+    std::vector<std::vector<std::variant<std::string, int>>> new_data;
+    for (const auto& row : data) {
+        std::vector<std::variant<std::string, int>> new_row(row);
+        if (auto value = std::get_if<std::string>(&row[N])) {
+            if (!std::isdigit((*value)[0])) {
+                std::string now = *value;
+                for (int i = 0; i < now.size(); ++i)
+                {
+                    if (now[i] > 'Z')
+                    {
+                        now[i] -= 32;
+                    }
+                }
+                new_row.emplace_back(now);
+            }
+            else {
+                new_row.emplace_back(value->substr(0, 1));
+            }
+        }
+        else {
+            new_row.emplace_back(std::get<int>(row[N]));
+        }
+        new_data.push_back(new_row);
+    }
+
+    std::string new_file_name = save_file_name.substr(0, save_file_name.find_last_of('.')) + "_process.xlsx";
+    int success = write_excel(new_data, new_file_name);
+    return { success, new_file_name };
+}
+
+
+=== REASONING ===
+<think>
+1.  **Understand the Goal:** The user wants to translate a C++ program using OpenXLSX into Python. The translation must preserve behavior (inputs/outputs, side effects, edge cases, exceptions) and use idiomatic Python where it doesn't change behavior.
+
+2.  **Analyze the C++ Code:**
+    *   **Class `ExcelProcessor`**: Has a default constructor and three methods: `read_excel`, `write_excel`, `process_excel_data`.
+    *   **Data Structure**: `std::vector<std::vector<std::variant<std::string, int>>>`. In Python, this translates naturally to a list of lists containing strings or ints (`List[List[Union[str, int]]]`).
+    *   **Method `read_excel(file_name)`**:
+        *   Opens an Excel file using OpenXLSX.
+        *   Reads "Sheet1".
+        *   Iterates through rows and columns (1-based indexing in OpenXLSX).
+        *   Reads cell values. If Integer -> int, if String -> string. (Other types are ignored/skipped based on the `if/else if` logic).
+        *   Returns the 2D data structure.
+        *   On *any* exception, catches it and returns an empty list `{}`.
+    *   **Method `write_excel(data, file_name)`**:
+        *   Creates a new Excel file.
+        *   Gets "Sheet1".
+        *   Iterates through the `data` (0-based index in C++ vector, 1-based in OpenXLSX).
+        *   Writes int or string based on the variant type.
+        *   Saves and closes the document.
+        *   Returns 1 on success.
+        *   On *any* exception, catches it and returns 0.
+    *   **Method `process_excel_data(N, save_file_name)`**:
+        *   Reads data from `save_file_name`.
+        *   Checks if `data` is empty OR if `N >= data[0].size()`. If so, returns `(0, "")` (a pair of int, string).
+        *   Iterates through rows.
+        *   Copies the row to `new_row`.
+        *   Looks at the element at index `N` in the row.
+        *   If it's a string:
+            *   If the first character is *not* a digit (`!std::isdigit((*value)[0])`):
+                *   Convert the string to uppercase. *Wait, let's look at the C++ logic carefully:*
+                *   `if (now[i] > 'Z') now[i] -= 32;`
+                *   This is a very specific, ASCII-only way to lowercase-to-uppercase conversion. It assumes the character is a lowercase letter if its ASCII value is greater than 'Z' (91). If it is, it subtracts 32 to make it uppercase. What about non-letter characters > 'Z'? (e.g., '{', 'a'). 'a' is 97, 97 > 91, 97-32 = 65 ('A'). '{' is 123, 123 > 91, 123-32 = 91 ('['). This is technically a bug in the C++ code if it encounters characters like `[` -> `{`, but I must *keep behavior identical*.
+                *   Wait, Python's `str.upper()` is idiomatic. Does it change behavior? Yes, for non-ASCII or edge cases like `{` -> `[`. The prompt says "Keep behavior identical... Use idiomatic Python only when it doesn't change behavior." So I should probably replicate the exact ASCII manipulation, or at least be very careful. Let's trace: `now[i] > 'Z'` (i.e., `ord(c) > 90`). `now[i] -= 32` (i.e., `chr(ord(c) - 32)`).
+                *   Actually, let's look at the intent. The intent is clearly `str.upper()` for ASCII letters. But to be strictly identical to the C++ code, I should write the exact same logic: `if ord(c) > ord('Z'): c = chr(ord(c) - 32)`. I will implement the exact C++ logic but add a comment, or maybe just use `upper()` and note it? The prompt says "Keep behavior identical". I'll translate the exact byte manipulation to be safe, or write a custom uppercase function. Let's write the exact logic.
+            *   If the first character *is* a digit:
+                *   Append the first character of the string (`value->substr(0, 1)`).
+        *   If it's an int:
+            *   Append the int itself.
+        *   Appends this new value to `new_row` (so `new_row` becomes `row` + `[new_value]`).
+        *   Adds `new_row` to `new_data`.
+        *   Creates `new_file_name` by replacing the extension with `_process.xlsx`.
+            *   C++: `save_file_name.substr(0, save_file_name.find_last_of('.')) + "_process.xlsx"`.
+            *   If there's no `.`, `find_last_of` returns `npos` (which is a huge number, `substr` goes to the end). So it appends `_process.xlsx` to the whole string.
+            *   Python equivalent: `base = save_file_name.rfind('.'); new_file_name = (save_file_name[:base] if base != -1 else save_file_name) + "_process.xlsx"`.
+        *   Calls `write_excel(new_data, new_file_name)`.
+        *   Returns `(success, new_file_name)`.
+
+3.  **Choose Python Libraries:**
+    *   OpenXLSX in C++ -> `openpyxl` in Python. It's the standard, widely-used library for reading/writing `.xlsx` files.
+
+4.  **Drafting the Python Code:**
+
+    *   *Imports:*
+        ```python
+        from typing import List, Union, Tuple
+        import openpyxl
+        import os
+        ```
+
+    *   *Class Definition:*
+        ```python
+        class ExcelProcessor:
+            def __init__(self):
+                pass
+        ```
+
+    *   *`read_excel` method:*
+        ```python
+        def read_excel(self, file_name: str) -> List[List[Union[str, int]]]:
+            data = []
+            try:
+                doc = openpyxl.load_workbook(file_name)
+                sheet = doc["Sheet1"]
+
+                for row in sheet.iter_rows():
+                    row_data = []
+                    for cell in row:
+                        if cell.value is None:
+                            # OpenXLSX skips empty cells or cells with unsupported types implicitly
+                            # Actually, OpenXLSX cell.value().type() would not be Integer or String, so it skips.
+                            continue
+                        if isinstance(cell.value, int):
+                            row_data.append(cell.value)
+                        elif isinstance(cell.value, str):
+                            row_data.append(cell.value)
+                        # Other types are skipped, matching C++ behavior
+                    data.append(row_data)
+                doc.close()
+            except Exception:
+                return []
+            return data
+        ```
+        *Wait*, OpenXLSX `rowCount` and `colCount` iterate over the whole bounding box. `openpyxl`'s `iter_rows` does the same by default. However, OpenXLSX iterates 1 to rowCount and 1 to colCount. If a row is completely empty but within the bounding box, it still creates an empty `rowData` vector in C++. `openpyxl`'s `sheet.iter_rows()` skips completely empty rows at the end, but includes empty rows in between. Let's look closely at the C++ logic:
+        ```cpp
+        for (unsigned int rowIndex = 1; rowIndex <= rowCount; ++rowIndex) {
+            std::vector<std::variant<std::string, int>> rowData;
+            for (unsigned int colIndex = 1; colIndex <= colCount; ++colIndex) {
+                // ...
+            }
+            data.push_back(rowData);
+        }
+        ```
+        If we want to be strictly identical, we should iterate based on `sheet.max_row` and `sheet.max_column`.
+        ```python
+        for row_idx in range(1, sheet.max_row + 1):
+            row_data = []
+            for col_idx in range(1, sheet.max_column + 1):
+                cell = sheet.cell(row=row_idx, column=col_idx)
+                val = cell.value
+                if isinstance(val, int):
+                    row_data.append(val)
+                elif isinstance(val, str):
+                    row_data.append(val)
+            data.append(row_data)
+        ```
+        This perfectly mimics the C++ row/col bounds and empty cell skipping.
+
+    *   *`write_excel` method:*
+        ```python
+        def write_excel(self, data: List[List[Union[str, int]]], file_name: str) -> int:
+            try:
+                doc = openpyxl.Workbook()
+                # openpyxl creates a default sheet named "Sheet". We need "Sheet1".
+                # Actually, the default sheet is "Sheet". Let's rename it or delete and add.
+                sheet = doc.active
+                sheet.title = "Sheet1"
+
+                for row_idx, row in enumerate(data):
+                    for col_idx, val in enumerate(row):
+                        cell = sheet.cell(row=row_idx + 1, column=col_idx + 1)
+                        if isinstance(val, int):
+                            cell.value = val
+                        else:
+                            cell.value = str(val) # C++ uses std::get<std::string>, so it must be a string
+                doc.save(file_name)
+                doc.close()
+                return 1
+            except Exception:
+                return 0
+        ```
+
+    *   *`process_excel_data` method:*
+        ```python
+        def process_excel_data(self, N: int, save_file_name: str) -> Tuple[int, str]:
+            data = self.read_excel(save_file_name)
+            if not data or N >= len(data[0]):
+                return (0, "")
+
+            new_data = []
+            for row in data:
+                new_row = list(row) # Copy row
+                val = row[N]
+                if isinstance(val, str):
+                    if not val[0].isdigit():
+                        # Replicating the exact C++ logic: if char > 'Z', subtract 32
+                        now = list(val)
+                        for i in range(len(now)):
+                            if ord(now[i]) > ord('Z'):
+                                now[i] = chr(ord(now[i]) - 32)
+                        new_row.append("".join(now))
+                    else:
+                        new_row.append(val[:1]) # substr(0, 1)
+                else: # int
+                    new_row.append(val)
+
+                new_data.append(new_row)
+
+            # Replicate substr and find_last_of logic
+            dot_idx = save_file_name.rfind('.')
+            if dot_idx != -1:
+                base_name = save_file_name[:dot_idx]
+            else:
+                base_name = save_file_name
+            new_file_name = base_name + "_process.xlsx"
+
+            success = self.write_excel(new_data, new_file_name)
+            return (success, new_file_name)
+        ```
+
+5.  **Refining and Verifying Edge Cases:**
+    *   **Data Types:** C++ uses `std::variant<std::string, int>`. Python uses dynamic typing. `isinstance(val, int)` and `isinstance(val, str)` match perfectly. What about floats? OpenXLSX `XLValueType::Float` would be ignored in `read_excel` (skipped). `openpyxl` might return floats. To match C++ exactly, we should only append if `int` or `str`. Wait, in Excel, an integer might be read as `int` by `openpyxl`, but sometimes as `float` (e.g., `1.0`). The C++ code explicitly checks for `XLValueType::Integer`. `openpyxl` reads integers as `int` and decimals as `float`. So `isinstance(val, int)` is correct.
+    *   **Uppercase Logic:** The C++ logic `if (now[i] > 'Z') now[i] -= 32;` is a bit weird.
+        *   'a' to 'z' (97-122) -> becomes 'A' to 'Z' (65-90). Correct.
+        *   '[' to '`' (91-96) -> becomes 59-64 (which are `;`, `<`, `=`, `>`, `?`, `@`). This is a bug in the C++ code, but I must replicate it.
+        *   '{' to '~' (123-126) -> becomes 91-94 (`[`, `\`, `]`, `^`). Also a bug.
+        *   Python `str.upper()` would NOT replicate this bug. It would turn 'a' into 'A', but leave '[' as '['. Therefore, I *must* use the `ord()` logic to strictly follow "Keep behavior identical".
+    *   **String indexing:** `val[0].isdigit()` in Python. What if `val` is an empty string? C++ `std::isdigit((*value)[0])` on an empty string is undefined behavior (accessing index 0 of empty string). In Python, `val[0]` on empty string raises `IndexError`. To be identical, if C++ assumes it's not empty (or crashes), Python might crash. But usually, Excel cells aren't empty strings if they are strings. Let's add a check just in case, or just let it throw if C++ would throw. Actually, `(*value)[0]` on an empty `std::string` is UB. In Python, it throws. I'll add `if val and not val[0].isdigit():` to be safe, but wait, if C++ crashes on empty string, Python should crash. Let's just write `if not val[0].isdigit():`. If it's empty, it raises `IndexError`, which mimics UB/crash. Actually, C++ `std::isdigit` takes an `int`. If the string is empty, `(*value)[0]` is `\0`. `std::isdigit('\0')` is false. So C++ would go to the `else` branch and append `value->substr(0, 1)`, which is an empty string. Let's mimic this safely: `if not val or not val[0].isdigit():`... wait, if `val` is empty, `isdigit` is false, so it goes to `else` and appends `""`. In C++, `isdigit('\0')` is 0 (false). So C++ appends `""`. Let's do: `if val and not val[0].isdigit():` for the uppercase block, and `else: new_row.append(val[:1])`. If `val` is empty, it goes to `else` and appends `""`. This perfectly matches the C++ logic without crashing.
+    *   **File Name Logic:** `save_file_name.rfind('.')`. In C++, `std::string::npos` is returned if not found, and `substr(0, npos)` returns the whole string. Python's `rfind` returns `-1`. `save_file_name[:-1]` would strip the last character! So my `if dot_idx != -1` check is absolutely necessary to match C++.
+    *   **Row Lengths:** The C++ code does `if (N >= data[0].size())`. What if other rows have different sizes? It accesses `row[N]`. If a row is shorter than `N+1`, C++ throws `std::out_of_range` (if using `at`) or UB (if using `[]`). Python would throw `IndexError`. This is an edge case that matches naturally.
+    *   **Empty Data Check:** `if (data.empty() || N >= data[0].size())`. Python: `if not data or N >= len(data[0]):`. This matches.
+
+6.  **Writing the final Python code:**
+    Make sure to import `openpyxl`. Add comments explaining the exact character manipulation to clarify why `upper()` wasn't used.
+
+    ```python
+    import openpyxl
+    from typing import List, Union, Tuple
+
+    class ExcelProcessor:
+        def __init__(self):
+            pass
+
+        def read_excel(self, file_name: str) -> List[List[Union[str, int]]]:
+            data = []
+            try:
+                doc = openpyxl.load_workbook(file_name)
+                sheet = doc["Sheet1"]
+
+                # Iterate based on the bounding box of the sheet, matching OpenXLSX row/col count behavior
+                for row_idx in range(1, sheet.max_row + 1):
+                    row_data = []
+                    for col_idx in range(1, sheet.max_column + 1):
+                        cell = sheet.cell(row=row_idx, column=col_idx)
+                        val = cell.value
+
+                        # OpenXLSX only processes Integer and String types, skipping others
+                        if isinstance(val, int):
+                            row_data.append(val)
+                        elif isinstance(val, str):
+                            row_data.append(val)
+
+                    data.append(row_data)
+
+                doc.close()
+            except Exception:
+                return []
+
+            return data
+
+        def write_excel(self, data: List[List[Union[str, int]]], file_name: str) -> int:
+            try:
+                doc = openpyxl.Workbook()
+                sheet = doc.active
+                sheet.title = "Sheet1"
+
+                for row_idx, row in enumerate(data):
+                    for col_idx, val in enumerate(row):
+                        cell = sheet.cell(row=row_idx + 1, column=col_idx + 1)
+                        if isinstance(val, int):
+                            cell.value = val
+                        else:
+                            cell.value = str(val)
+
+                doc.save(file_name)
+                doc.close()
+                return 1
+            except Exception:
+                return 0
+
+        def process_excel_data(self, N: int, save_file_name: str) -> Tuple[int, str]:
+            data = self.read_excel(save_file_name)
+            if not data or N >= len(data[0]):
+                return (0, "")
+
+            new_data = []
+            for row in data:
+                new_row = list(row)
+                val = row[N]
+
+                if isinstance(val, str):
+                    # Check if the string is empty or the first character is not a digit
+                    # Note: In C++, std::isdigit('\0') is false, so an empty string
+                    # would fall into the else branch and append an empty string.
+                    if val and not val[0].isdigit():
+                        # Replicating the exact C++ character manipulation logic:
+                        # if (now[i] > 'Z') now[i] -= 32;
+                        now = list(val)
+                        for i in range(len(now)):
+                            if ord(now[i]) > ord('Z'):
+                                now[i] = chr(ord(now[i]) - 32)
+                        new_row.append("".join(now))
+                    else:
+                        # substr(0, 1) equivalent
+                        new_row.append(val[:1])
+                else:
+                    new_row.append(val)
+
+                new_data.append(new_row)
+
+            # Replicate C++ string find and substring logic
+            dot_idx = save_file_name.rfind('.')
+            if dot_idx != -1:
+                base_name = save_file_name[:dot_idx]
+            else:
+                base_name = save_file_name
+
+            new_file_name = base_name + "_process.xlsx"
+
+            success = self.write_excel(new_data, new_file_name)
+            return (success, new_file_name)
+    ```
+
+7.  **Review against constraints:**
+    *   *Behavior identical?* Yes, the custom uppercase logic matches the C++ logic exactly (including its bugs for non-lowercase chars > 'Z'). The file naming logic matches exactly. The data types matched exactly. The exception handling matches exactly (catches all, returns empty list or 0).
+    *   *Idiomatic Python?* Used `openpyxl`, list comprehensions could be used but loops are clearer for translating 1-based indexing and cell operations. Types are hinted. `Tuple` and `List` and `Union` used properly.
+
+8.  **Final Polish:** Just double-check the `openpyxl` sheet access. If the file doesn't have a "Sheet1", `doc["Sheet1"]` raises `KeyError`, which is caught by `except Exception:` and returns `[]`.
+</think>
+
+=== RAW ANSWER ===
+```python
+import openpyxl
+from typing import List, Union, Tuple
+
+class ExcelProcessor:
+    def __init__(self):
+        pass
+
+    def read_excel(self, file_name: str) -> List[List[Union[str, int]]]:
+        data = []
+        try:
+            doc = openpyxl.load_workbook(file_name)
+            sheet = doc["Sheet1"]
+
+            for row_idx in range(1, sheet.max_row + 1):
+                row_data = []
+                for col_idx in range(1, sheet.max_column + 1):
+                    cell = sheet.cell(row=row_idx, column=col_idx)
+                    val = cell.value
+                    if type(val) is int:
+                        row_data.append(val)
+                    elif type(val) is str:
+                        row_data.append(val)
+                data.append(row_data)
+
+            doc.close()
+        except Exception:
+            return []
+        return data
+
+    def write_excel(self, data: List[List[Union[str, int]]], file_name: str) -> int:
+        try:
+            doc = openpyxl.Workbook()
+            sheet = doc.active
+            sheet.title = "Sheet1"
+
+            for row_idx, row in enumerate(data):
+                for col_idx, val in enumerate(row):
+                    cell = sheet.cell(row=row_idx + 1, column=col_idx + 1)
+                    if type(val) is int:
+                        cell.value = val
+                    else:
+                        cell.value = str(val)
+
+            doc.save(file_name)
+            doc.close()
+            return 1
+        except Exception:
+            return 0
+
+    def process_excel_data(self, N: int, save_file_name: str) -> Tuple[int, str]:
+        data = self.read_excel(save_file_name)
+        if not data or N >= len(data[0]):
+            return (0, "")
+
+        new_data = []
+        for row in data:
+            new_row = list(row)
+            val = row[N]
+
+            if type(val) is str:
+                if val and not val[0].isdigit():
+                    now = list(val)
+                    for i in range(len(now)):
+                        if ord(now[i]) > ord('Z'):
+                            now[i] = chr(ord(now[i]) - 32)
+                    new_row.append("".join(now))
+                else:
+                    new_row.append(val[:1])
+            else:
+                new_row.append(val)
+
+            new_data.append(new_row)
+
+        dot_idx = save_file_name.rfind('.')
+        if dot_idx != -1:
+            base_name = save_file_name[:dot_idx]
+        else:
+            base_name = save_file_name
+
+        new_file_name = base_name + "_process.xlsx"
+
+        success = self.write_excel(new_data, new_file_name)
+        return (success, new_file_name)
+```
+
+=== TRANSLATED CODE (py) ===
+import openpyxl
+from typing import List, Union, Tuple
+
+class ExcelProcessor:
+    def __init__(self):
+        pass
+
+    def read_excel(self, file_name: str) -> List[List[Union[str, int]]]:
+        data = []
+        try:
+            doc = openpyxl.load_workbook(file_name)
+            sheet = doc["Sheet1"]
+
+            for row_idx in range(1, sheet.max_row + 1):
+                row_data = []
+                for col_idx in range(1, sheet.max_column + 1):
+                    cell = sheet.cell(row=row_idx, column=col_idx)
+                    val = cell.value
+                    if type(val) is int:
+                        row_data.append(val)
+                    elif type(val) is str:
+                        row_data.append(val)
+                data.append(row_data)
+
+            doc.close()
+        except Exception:
+            return []
+        return data
+
+    def write_excel(self, data: List[List[Union[str, int]]], file_name: str) -> int:
+        try:
+            doc = openpyxl.Workbook()
+            sheet = doc.active
+            sheet.title = "Sheet1"
+
+            for row_idx, row in enumerate(data):
+                for col_idx, val in enumerate(row):
+                    cell = sheet.cell(row=row_idx + 1, column=col_idx + 1)
+                    if type(val) is int:
+                        cell.value = val
+                    else:
+                        cell.value = str(val)
+
+            doc.save(file_name)
+            doc.close()
+            return 1
+        except Exception:
+            return 0
+
+    def process_excel_data(self, N: int, save_file_name: str) -> Tuple[int, str]:
+        data = self.read_excel(save_file_name)
+        if not data or N >= len(data[0]):
+            return (0, "")
+
+        new_data = []
+        for row in data:
+            new_row = list(row)
+            val = row[N]
+
+            if type(val) is str:
+                if val and not val[0].isdigit():
+                    now = list(val)
+                    for i in range(len(now)):
+                        if ord(now[i]) > ord('Z'):
+                            now[i] = chr(ord(now[i]) - 32)
+                    new_row.append("".join(now))
+                else:
+                    new_row.append(val[:1])
+            else:
+                new_row.append(val)
+
+            new_data.append(new_row)
+
+        dot_idx = save_file_name.rfind('.')
+        if dot_idx != -1:
+            base_name = save_file_name[:dot_idx]
+        else:
+            base_name = save_file_name
+
+        new_file_name = base_name + "_process.xlsx"
+
+        success = self.write_excel(new_data, new_file_name)
+        return (success, new_file_name)

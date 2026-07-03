@@ -1,0 +1,301 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+
+public class TriCalculator {
+
+    public TriCalculator() {
+    }
+
+    public double cos(double x) {
+        return round(taylor(x, 50), 10);
+    }
+
+    public BigDecimal factorial(int a) {
+        BigDecimal result = BigDecimal.ONE;
+        while (a > 1) {
+            result = result.multiply(BigDecimal.valueOf(a));
+            a--;
+        }
+        return result;
+    }
+
+    public double taylor(double x, int n) {
+        BigDecimal a = BigDecimal.ONE;
+        x = x / 180 * Math.PI;
+        int count = 1;
+        for (int k = 1; k < n; k++) {
+            BigDecimal term = BigDecimal.valueOf(Math.pow(x, 2 * k))
+                    .divide(factorial(2 * k), MathContext.DECIMAL128);
+            if (count % 2 != 0) {
+                a = a.subtract(term);
+            } else {
+                a = a.add(term);
+            }
+            count++;
+        }
+        return a.doubleValue();
+    }
+
+    public double sin(double x) {
+        x = x / 180 * Math.PI;
+        double g = 0;
+        double t = x;
+        int n = 1;
+
+        while (Math.abs(t) >= 1e-15) {
+            g += t;
+            n += 1;
+            t = -t * x * x / (2 * n - 1) / (2 * n - 2);
+        }
+        return round(g, 10);
+    }
+
+    public Double tan(double x) {
+        double cosValue = cos(x);
+        if (cosValue != 0) {
+            return round(sin(x) / cosValue, 10);
+        } else {
+            return Double.NaN;
+        }
+    }
+
+    private double round(double value, int places) {
+        BigDecimal bd = BigDecimal.valueOf(value);
+        bd = bd.setScale(places, RoundingMode.HALF_UP);
+        return bd.doubleValue();
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++ preserving behavior. The Java code uses BigDecimal for high precision arithmetic in cos and taylor methods. C++ doesn't have built-in BigDecimal, so we need to simulate it. Options: use a library like GMP (GNU MPFR) or implement our own fixed-point or use `long double` if precision is sufficient? But the Java code uses `MathContext.DECIMAL128` which has about 34 decimal digits of precision. For C++, we can use `<quadmath.h>` if available (__float128) or use Boost.Multiprecision (cpp_bin_float_quad). However, the code also uses `BigDecimal` for intermediate calculations in `taylor` and `factorial`. The `sin` method uses double arithmetic with tolerance 1e-15, which is fine for double. The `cos` method uses taylor expansion with `BigDecimal` to achieve high precision and then rounds to 10 decimal places. So we need high precision arithmetic to replicate exactly.
+
+But we must keep behavior identical, including rounding. We'll need to implement a high-precision floating point type that supports addition, subtraction, multiplication, division, and power. The simplest approach is to use `long double` (80-bit extended precision) which has about 19 decimal digits, or `__float128` (113-bit mantissa, ~34 decimal digits) if compiler supports it (GCC). However, `__float128` is not standard C++. We could also use Boost.Multiprecision library (cpp_bin_float_100) for arbitrary precision.
+
+But the problem statement from an expert programmer suggests using idiomatic C++ only when it doesn't change behavior. Since the behavior is sensitive to BigDecimal precision, we need to guarantee identical results. We can implement a simple BigDecimal class using integers? Or we can rely on `std::complex`? Not exactly.
+
+Let's analyze the Java code more:
+
+- `cos`: computes taylor series with n=50 terms using BigDecimal. It converts x from degrees to radians, then computes Maclaurin series for cos: 1 - x^2/2! + x^4/4! - ... up to term x^(100)/100!. It uses `BigDecimal` for exact arithmetic with 128-bit decimal rounding (34 digits). Then rounds to 10 decimal places. So the result is double but with rounding.
+
+- `sin`: uses double arithmetic with a while loop until term < 1e-15. It also rounds to 10 places.
+
+- `tan`: uses cos and sin, returns NaN if cos==0, else rounded division.
+
+- `round`: uses BigDecimal with HALF_UP rounding to `places`.
+
+To match exactly, we need to replicate the BigDecimal arithmetic. Possibly we can implement a simple high-precision floating point with enough bits for 34 decimal digits (~113 bits). But we also need to handle very large factorials and powers accurately during taylor series. The Java code uses `Math.pow(x, 2*k)` which returns double, then converts to BigDecimal. This introduces double precision error, but maybe acceptable? Actually, `Math.pow` returns double, so it's already limited to ~53 bits. Then it divides by factorial that is computed exactly as BigDecimal (integer). The result is added/subtracted from BigDecimal `a`. So the overall accuracy is limited by the double `Math.pow`. But they use BigDecimal for the factorial and the arithmetic to avoid overflow and rounding errors in those operations.
+</think>
+
+=== RAW ANSWER ===
+```
+#include <cmath>
+#include <iomanip>
+#include <sstream>
+#include <cfenv>
+#include <iostream>
+#include <limits>
+#include <cstdlib>
+
+// Use __float128 for high precision (requires GCC or Clang with quadmath support)
+// If not available, fallback to long double.
+#if defined(__SIZEOF_FLOAT128__) && defined(__GNUC__)
+#include <quadmath.h>
+using high_precision = __float128;
+#else
+using high_precision = long double;
+#endif
+
+class TriCalculator {
+public:
+    TriCalculator() = default;
+
+    double cos(double x) {
+        return round(taylor(x, 50), 10);
+    }
+
+    // Factorial as high_precision (integer)
+    high_precision factorial(int a) {
+        high_precision result = 1.0Q; // for __float128, else 1.0L
+        while (a > 1) {
+            result = result * static_cast<high_precision>(a);
+            --a;
+        }
+        return result;
+    }
+
+    double taylor(double x, int n) {
+        high_precision a = 1.0Q;
+        x = x / 180.0 * M_PI; // convert degrees to radians
+        int count = 1;
+        for (int k = 1; k < n; ++k) {
+            // power : x^(2k) as high_precision
+            high_precision x_pow = static_cast<high_precision>(1.0);
+            for (int i = 0; i < 2 * k; ++i) {
+                x_pow *= static_cast<high_precision>(x);
+            }
+            high_precision fact_val = factorial(2 * k);
+            // Avoid division by zero: factorial is never zero
+            high_precision term = x_pow / fact_val;
+            if (count % 2 != 0) {
+                a = a - term;
+            } else {
+                a = a + term;
+            }
+            ++count;
+        }
+        return static_cast<double>(a);
+    }
+
+    double sin(double x) {
+        x = x / 180.0 * M_PI;
+        double g = 0.0;
+        double t = x;
+        int n = 1;
+        while (std::abs(t) >= 1e-15) {
+            g += t;
+            n += 1;
+            t = -t * x * x / (2.0 * n - 1.0) / (2.0 * n - 2.0);
+        }
+        return round(g, 10);
+    }
+
+    double tan(double x) {
+        double cosValue = cos(x);
+        if (cosValue != 0.0) {
+            return round(sin(x) / cosValue, 10);
+        } else {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+    }
+
+private:
+    double round(double value, int places) {
+        // Use rounding to nearest with HALF_UP
+        // This approximates BigDecimal.setScale(places, RoundingMode.HALF_UP)
+        // Using standard floor functions after shifting
+        double factor = std::pow(10.0, places);
+        // Use fenv rounding mode to nearest, ties to away? C++ default is round-to-nearest-even.
+        // For HALF_UP, we implement manually:
+        double shifted = value * factor;
+        double abs = std::abs(shifted);
+        double fractional = abs - std::floor(abs);
+        double rounded_abs;
+        if (fractional >= 0.5) {
+            rounded_abs = std::ceil(abs);
+        } else {
+            rounded_abs = std::floor(abs);
+        }
+        double result = (shifted < 0) ? -rounded_abs / factor : rounded_abs / factor;
+        return result;
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <cmath>
+#include <iomanip>
+#include <sstream>
+#include <cfenv>
+#include <iostream>
+#include <limits>
+#include <cstdlib>
+
+// Use __float128 for high precision (requires GCC or Clang with quadmath support)
+// If not available, fallback to long double.
+#if defined(__SIZEOF_FLOAT128__) && defined(__GNUC__)
+#include <quadmath.h>
+using high_precision = __float128;
+#else
+using high_precision = long double;
+#endif
+
+class TriCalculator {
+public:
+    TriCalculator() = default;
+
+    double cos(double x) {
+        return round(taylor(x, 50), 10);
+    }
+
+    // Factorial as high_precision (integer)
+    high_precision factorial(int a) {
+        high_precision result = 1.0Q; // for __float128, else 1.0L
+        while (a > 1) {
+            result = result * static_cast<high_precision>(a);
+            --a;
+        }
+        return result;
+    }
+
+    double taylor(double x, int n) {
+        high_precision a = 1.0Q;
+        x = x / 180.0 * M_PI; // convert degrees to radians
+        int count = 1;
+        for (int k = 1; k < n; ++k) {
+            // power : x^(2k) as high_precision
+            high_precision x_pow = static_cast<high_precision>(1.0);
+            for (int i = 0; i < 2 * k; ++i) {
+                x_pow *= static_cast<high_precision>(x);
+            }
+            high_precision fact_val = factorial(2 * k);
+            // Avoid division by zero: factorial is never zero
+            high_precision term = x_pow / fact_val;
+            if (count % 2 != 0) {
+                a = a - term;
+            } else {
+                a = a + term;
+            }
+            ++count;
+        }
+        return static_cast<double>(a);
+    }
+
+    double sin(double x) {
+        x = x / 180.0 * M_PI;
+        double g = 0.0;
+        double t = x;
+        int n = 1;
+        while (std::abs(t) >= 1e-15) {
+            g += t;
+            n += 1;
+            t = -t * x * x / (2.0 * n - 1.0) / (2.0 * n - 2.0);
+        }
+        return round(g, 10);
+    }
+
+    double tan(double x) {
+        double cosValue = cos(x);
+        if (cosValue != 0.0) {
+            return round(sin(x) / cosValue, 10);
+        } else {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+    }
+
+private:
+    double round(double value, int places) {
+        // Use rounding to nearest with HALF_UP
+        // This approximates BigDecimal.setScale(places, RoundingMode.HALF_UP)
+        // Using standard floor functions after shifting
+        double factor = std::pow(10.0, places);
+        // Use fenv rounding mode to nearest, ties to away? C++ default is round-to-nearest-even.
+        // For HALF_UP, we implement manually:
+        double shifted = value * factor;
+        double abs = std::abs(shifted);
+        double fractional = abs - std::floor(abs);
+        double rounded_abs;
+        if (fractional >= 0.5) {
+            rounded_abs = std::ceil(abs);
+        } else {
+            rounded_abs = std::floor(abs);
+        }
+        double result = (shifted < 0) ? -rounded_abs / factor : rounded_abs / factor;
+        return result;
+    }
+};

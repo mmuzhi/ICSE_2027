@@ -1,0 +1,1123 @@
+=== SOURCE CODE (cpp) ===
+
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+class Chat {
+public:
+    struct Message {
+        std::string sender;
+        std::string receiver;
+        std::string message;
+        std::string timestamp;
+    };
+
+    bool add_user(const std::string& username);
+    bool remove_user(const std::string& username);
+    bool send_message(const std::string& sender, const std::string& receiver, const std::string& message);
+    std::vector<Message> get_messages(const std::string& username) const;
+    std::unordered_map<std::string, std::vector<Message>> get_users() const;
+    std::string get_current_time() const;
+
+private:
+    std::unordered_map<std::string, std::vector<Message>> users;
+};
+
+bool Chat::add_user(const std::string& username) {
+    if (users.find(username) != users.end()) {
+        return false;
+    }
+    users[username] = {};
+    return true;
+}
+
+bool Chat::remove_user(const std::string& username) {
+    return users.erase(username) > 0;
+}
+
+bool Chat::send_message(const std::string& sender, const std::string& receiver, const std::string& message) {
+    if (users.find(sender) == users.end() || users.find(receiver) == users.end()) {
+        return false;
+    }
+
+    std::string timestamp = get_current_time();
+    Message message_info = { sender, receiver, message, timestamp };
+    users[sender].push_back(message_info);
+    users[receiver].push_back(message_info);
+    return true;
+}
+
+std::vector<Chat::Message> Chat::get_messages(const std::string& username) const {
+    if (users.find(username) == users.end()) {
+        return {};
+    }
+    return users.at(username);
+}
+
+std::unordered_map<std::string, std::vector<Chat::Message>> Chat::get_users() const {
+    return users;
+}
+
+std::string Chat::get_current_time() const {
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm = *std::localtime(&now_c);
+
+    std::ostringstream oss;
+    oss << std::put_time(&now_tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to create a Python class `Chat` that mirrors the C++ class.
+ We'll use a dictionary for `users` mapping username to a list of messages.
+ The message will be represented as a dictionary or a namedtuple? However, the C++ struct `Message` has named fields.
+ Since the behavior must be identical, we'll use a class for Message or a namedtuple. However, note that in C++ the messages are stored by value and in both sender and receiver's list we have a copy.
+ But in the C++ code, when sending, we create one Message and push a copy to both vectors? Actually, we push the same message_info (by value) to both, so two copies.
+
+ In Python, we can use a simple class for Message, but note that the C++ code returns vectors of messages and the entire users map.
+
+ Steps:
+ 1. Define a class `Chat` and an inner class `Message` (or use a namedtuple, but since we might want to have it mutable? The C++ struct is mutable? Actually, the messages are stored and then returned, but not modified after creation. So we can use a namedtuple or a simple class.
+
+ However, note: the C++ code returns a vector of `Message` structs. We can use a class with __init__ or a namedtuple.
+
+ Let's use a namedtuple for clarity and immutability? But note: the C++ struct is public and has public members. We can also use a simple class with __init__ and public attributes.
+
+ Alternatively, we can use a dataclass. But to keep it simple and compatible with older Python, we can do:
+
+ Option 1:
+     class Message:
+         def __init__(self, sender, receiver, message, timestamp):
+             self.sender = sender
+             self.receiver = receiver
+             self.message = message
+             self.timestamp = timestamp
+
+ Option 2: namedtuple
+     Message = collections.namedtuple('Message', ['sender', 'receiver', 'message', 'timestamp'])
+
+ But note: the C++ code returns a vector of these, and the user might modify the message? Actually, in C++ the get_messages returns a vector of copies? So if the user modifies the returned vector, it doesn't affect the internal state. Similarly, the Message structs are passed by value.
+
+ In Python, if we use a class with mutable attributes, then if the user modifies the attributes of a message in the returned list, it would affect the internal state because the same object is stored in the internal list. But wait: in the C++ code, when we push the message_info, we are making two copies: one for the sender and one for the receiver? Actually, no: we are creating one message_info and then pushing a copy to the sender's vector and a copy to the receiver's vector? Actually, no: the `push_back` creates a copy. So each vector has its own copy.
+
+ Therefore, in Python, to mimic this, we should create two separate copies of the message when storing? But note: the C++ code:
+
+        users[sender].push_back(message_info);
+        users[receiver].push_back(message_info);
+
+ This creates two copies. So in Python, we can do:
+
+        message_obj = Message(sender, receiver, message, timestamp)
+        users[sender].append(copy.copy(message_obj))   # but wait, if we use namedtuple, it's immutable and we don't need to copy? 
+        users[receiver].append(copy.copy(message_obj))
+
+ However, if we use a mutable class, then we must copy. Alternatively, we can design so that each user gets their own copy? But the C++ code does that.
+
+ But note: the C++ struct is trivially copyable. So we can do:
+
+        users[sender].append(Message(sender, receiver, message, timestamp))
+        users[receiver].append(Message(sender, receiver, message, timestamp))
+
+ This creates two separate objects. Alternatively, we can create one and then make two copies? But in Python, if we use a mutable class, we must copy. However, the requirement is to keep behavior identical.
+
+ However, the C++ code uses the same `message_info` to push to both, but since `push_back` takes by value, it copies.
+
+ Therefore, in Python, we can do:
+
+        msg1 = Message(sender, receiver, message, timestamp)
+        msg2 = Message(sender, receiver, message, timestamp)   # but this is inefficient? Or we can do:
+
+        Actually, we can create the message once and then create two copies? But if we use a mutable class, we must deepcopy? Actually, the contents are strings (immutable) so a shallow copy is enough? But the entire object is immutable? Then we don't need to copy? 
+
+ Let me clarify: if we use the same object in both lists, and then the user modifies the object (if mutable) then both lists would see the change. But in C++, the two copies are independent. So we must avoid that.
+
+ Therefore, we can do:
+
+        msg = Message(sender, receiver, message, timestamp)
+        users[sender].append(msg)   # if Message is immutable (like namedtuple) then we don't care because the user can't change it? 
+        users[receiver].append(msg)   # same object? But since immutable, it's okay? Actually, no: the C++ code has two copies. But if the user modifies the returned vector? They can replace the element? That replaces the element in the vector, but the internal vector remains. However, if the message object is mutable and the user modifies the object (if we returned the same object) then both lists would see the change? 
+
+ But note: the C++ code returns a vector of copies? Actually, the `get_messages` returns a vector of `Message` by value, so the caller gets a copy. But in Python, we return a list of references. So if the message object is mutable and the caller changes it, then the internal data would change? 
+
+ Therefore, to prevent that, we must either:
+   a) Use immutable objects (like namedtuple) so that the caller cannot change the fields? But the caller can still replace the entire object? Actually, no: if we return a list of namedtuples, the caller can assign a new object to the list element, but that doesn't affect the internal list. However, if the caller does `msg.sender = ...` that would fail because namedtuple is immutable.
+
+   b) Or, we can return copies? But that would be inefficient and the C++ code returns copies? Actually, the C++ code returns a vector of copies? Yes, because it returns by value.
+
+ So in Python, we can return a copy of the list? But the elements are objects: if we use namedtuple, they are immutable so we don't need to copy the objects? But the C++ code returns a copy of the entire vector. So we should return a shallow copy? Because the vector contains objects that are immutable? Actually, the C++ struct has string members, which are mutable? But in Python, strings are immutable. So a shallow copy is enough.
+
+ However, the problem: the internal storage in the Chat class: if we use mutable objects and we store the same object in two lists, and then we return the list and the caller mutates the object? Then both lists would see the mutation? 
+
+ Therefore, we have two choices for the Message representation:
+
+ Option A: Use a mutable class and when storing, create two separate objects (by creating two instances). Then when returning, we return the same objects that are stored? But the caller could mutate them? Then we have a problem: the internal state would be changed? That would break the invariant? 
+
+ Option B: Use an immutable class. Then we can store the same object in both lists and return the same object without fear of mutation.
+
+ Since the C++ code does not have mutation of messages after they are stored, and the struct is public, it doesn't enforce immutability? But in practice, the messages are stored as copies and the user can modify the copy they get? But that doesn't affect the internal storage? 
+
+ In Python, if we return the same object that is stored and the object is mutable, then if the user modifies it, the internal storage is modified? That would be a deviation from C++.
+
+ Therefore, we must ensure that:
+
+   - The internal storage is protected from modification by the user.
+
+ We can do:
+
+   - Use immutable objects: then no problem.
+
+   - Or, when returning, return a deep copy? But that is expensive.
+
+   - Or, when storing, store a copy (so each message stored is a separate object) and then when returning, we return the stored objects? But if the user mutates them, then the internal storage is mutated? 
+
+ Since the C++ code does not have mutation of the stored messages, we should prevent mutation in Python? 
+
+ Alternatively, we can document that the messages should not be mutated? But the C++ code allows mutation of the copy? Actually, the C++ code returns a copy? So the user can mutate the copy? And that doesn't affect the internal storage? 
+
+ But in Python, if we return a reference to the same object, then the user mutates it -> internal storage changes? 
+
+ Therefore, to mimic the C++ behavior, we should return a copy of the messages? But note: the C++ code returns the entire vector by value, so the vector and the contained messages are copies? 
+
+ However, in the C++ code, the vector is a vector of `Message` structs. Each struct is copied? The copy of the struct is a shallow copy? But the struct contains strings, and copying a string in C++ (if using std::string) is a deep copy? 
+
+ So in Python, to mimic that, we would have to return a deep copy? That would be expensive.
+
+ Alternatively, we can design the storage to be immutable? Then we don't care? 
+
+ How about: we represent the Message as a tuple? But then we lose named fields? 
+
+ Alternatively, we can use a namedtuple and then when we return the list, we return a list of the same namedtuples? Then the user cannot mutate the message? 
+
+ But note: the C++ code allows mutation of the copy? The user can change the fields of the copy? In Python, if we use namedtuple, the user cannot change the fields? So that's a difference.
+
+ Therefore, we must use a mutable class? Then we have a problem: the user might mutate the message and affect the internal storage? 
+
+ Solution: when we return the list of messages for a user, we return a list of shallow copies? But note: the message has four string fields. Strings are immutable, so a shallow copy is enough? Because if the user replaces an entire message object in the list, that's okay? But the list we return is a copy? 
+
+ Actually, the C++ code returns a vector of copies of the Message structs. So each field is copied (and the strings are copied deeply). In Python, we don't have such copying by default.
+
+ However, note: the internal storage: each user's list contains Message objects. When we return `users[username]` we return the actual list? Then if the user appends to that list, it would affect the internal storage? So we must return a copy of the list? 
+
+ The C++ code returns a copy of the vector? Yes.
+
+ Therefore, in Python:
+
+   - We must return a copy of the list? 
+   - And each element in the list must be a copy of the message? 
+
+ But wait: if we use a mutable class for Message, then if we return the same message object (without copying) and the user mutates it, then the internal storage would be mutated? 
+
+ So we have to:
+
+   - Return a new list that is a shallow copy of the internal list? 
+   - And then also copy each message? 
+
+ But that would be expensive.
+
+ Alternatively, we can design the Message class to be immutable? Then we don't need to copy the messages? But then the user cannot mutate them? The C++ code allows mutation? 
+
+ Actually, the C++ code returns a copy, so the user can mutate their copy without affecting the internal storage? In Python, if we return a list of references to the same immutable objects, then the user cannot mutate the objects? So that's safe? 
+
+ But what if the user replaces the entire element? Then they are replacing the element in the returned list, not in the internal storage? 
+
+ Therefore, we can do:
+
+   - Represent Message as a namedtuple (immutable).
+   - When storing, we create two separate namedtuples? Actually, we can create one and use it in both lists? Because they are immutable? Then if we return the same object for both, it's okay? 
+
+ However, the C++ code creates two copies? But since the copies are identical and immutable, it doesn't matter? 
+
+ But note: the C++ code creates two copies? So the memory addresses are different? In Python, the same namedtuple with the same values might be the same object? Or different? We don't care? 
+
+ So plan:
+
+   - Use `collections.namedtuple` for Message.
+
+   - The `Chat` class will have a dictionary `users` mapping username to a list of Message objects.
+
+   - When adding a user: we set the list to empty.
+
+   - When sending a message: create one Message namedtuple and append it to both the sender and receiver's lists? Actually, we can create one and append the same object? Since it's immutable, it's safe? And we are storing the same object in two lists? Then when we return, we return the same object? 
+
+   - But the C++ code stored two copies? So we are storing one object twice? That's different? But in terms of behavior, since the object is immutable, it's the same? 
+
+   - However, if we return the list and the user does `id(message1) == id(message2)` for the same message in two different lists? They might be the same? But in C++ they were two copies? But the C++ code doesn't expose pointers? So we don't care? 
+
+   - But note: the C++ code returns two copies? So if the user modifies one copy, the other remains? In Python, since the object is immutable, the user cannot modify it? So it's safe? 
+
+   - Alternatively, we can create two separate namedtuples? But that's inefficient? 
+
+   - We'll create one and append it twice? 
+
+   - However, if the user does `a = chat.get_messages("alice")` and `b = chat.get_messages("bob")`, then the message with the same content will be the same object? But that's okay? 
+
+   - But wait: the message has the same content? So it's the same? 
+
+   - Actually, we are creating one namedtuple and storing it in two lists? 
+
+   - Then when we return the list for "alice", we return a list containing that namedtuple? and for "bob" the same? 
+
+   - That's efficient and safe because the namedtuple is immutable.
+
+ 2. The `get_current_time` function: we can use `time` module to get the local time and format it.
+
+ 3. The `remove_user` function: we can use `del users[username]` and catch KeyError? But the C++ code returns true if erased (which means if the user existed). In Python, we can use `pop` and check.
+
+ 4. We'll use a dictionary for `users` (like unordered_map).
+
+ Implementation:
+
+   - Import necessary modules: collections, time, datetime? Actually, we can use `time` for localtime and format.
+
+   - But note: the C++ code uses `std::chrono::system_clock` and `std::localtime`. We can use `time.localtime()`? But note: `std::localtime` is thread-safe? In Python, `time.localtime` is thread-safe? We don't have thread-safety requirement? 
+
+   - Format: "%Y-%m-%d %H:%M:%S"
+
+   - We'll define:
+
+        def get_current_time(self):
+            return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+   - However, the C++ code uses the current system time with the same format.
+
+ 5. The `get_users` function: returns a copy of the entire `users` map? But note: the C++ code returns a copy? So we return a copy? But note: the map is from string to vector<Message> (which is a list of namedtuples). In Python, we can return a copy of the dictionary? 
+
+   - However, the dictionary values are lists. We must do a shallow copy? But the lists contain namedtuples (immutable) so a shallow copy is enough? 
+
+   - But the C++ code returns a copy of the entire map? So we return `self.users.copy()`? That copies the dictionary but the values are the same list objects? Then if the user appends to one of the lists, it will affect the internal storage? 
+
+   - Therefore, we must return a dictionary that maps the same keys to copies of the lists? 
+
+   - However, the C++ code returns a copy of the unordered_map: so the keys and the vectors are copied. The vectors are copied (so the vector container is copied, but the elements are Message structs which are copied? Actually, the vector copy constructor does a deep copy of the elements? 
+
+   - In Python, if we do:
+
+        return {user: list(messages) for user, messages in self.users.items()}
+
+   - This creates a new dictionary and for each user, a new list (shallow copy of the list). The elements are namedtuples (immutable) so we don't need to copy them? 
+
+   - But note: the user might mutate the list? Then the internal storage is not affected? 
+
+   - So we return a new dictionary with the same keys and for each key, a new list containing the same message objects? 
+
+   - Since the message objects are immutable, it's safe? 
+
+   - Alternatively, we can do:
+
+        return {k: v[:] for k, v in self.users.items()}   # v[:] creates a shallow copy of the list.
+
+ 6. The `get_messages` function: returns a vector (list) of messages for the user. We return a copy? Because the C++ returns a copy? 
+
+        if username not in self.users: return []
+        return list(self.users[username])   # or self.users[username][:] for a shallow copy
+
+   - But note: the C++ returns a vector which is a copy? So we return a shallow copy? 
+
+   - Since the messages are immutable, we don't need to copy the elements? 
+
+ 7. The `add_user` function: if the user exists, return False; else, set the user to an empty list and return True.
+
+ 8. The `remove_user` function: if the user exists, remove and return True; else, return False.
+
+ 9. The `send_message` function: check both sender and receiver exist? If not, return False. Then create the timestamp, create the message (as a namedtuple) and append it to both the sender's list and the receiver's list? 
+
+   - But note: the same message object is appended to both? 
+
+   - This is safe because the message is immutable? 
+
+ Implementation:
+
+   We'll define:
+
+        from collections import namedtuple
+        import time
+
+        Message = namedtuple('Message', ['sender', 'receiver', 'message', 'timestamp'])
+
+        class Chat:
+            def __init__(self):
+                self.users = {}   # maps username to list of Message
+
+            def add_user(self, username):
+                if username in self.users:
+                    return False
+                self.users[username] = []
+                return True
+
+            def remove_user(self, username):
+                if username in self.users:
+                    del self.users[username]
+                    return True
+                return False
+
+            def send_message(self, sender, receiver, message):
+                if sender not in self.users or receiver not in self.users:
+                    return False
+                timestamp = self.get_current_time()
+                msg = Message(sender, receiver, message, timestamp)
+                self.users[sender].append(msg)
+                self.users[receiver].append(msg)
+                return True
+
+            def get_messages(self, username):
+                if username not in self.users:
+                    return []
+                # Return a shallow copy of the list? But the C++ returns a copy? 
+                # We'll return a copy to prevent the caller from modifying the internal list?
+                # However, the C++ code returns a copy? So we return a copy? 
+                # But note: the list we return is a list of immutable namedtuples? So if the caller appends to the list, it doesn't affect the internal storage? But if they modify the list? They can append, remove, etc? So we must return a copy? 
+                # Alternatively, we can return a new list? 
+                return list(self.users[username])   # or self.users[username][:]
+
+            def get_users(self):
+                # Return a copy of the entire users dictionary? 
+                # We need to copy the dictionary and each list?
+                # We'll do: 
+                result = {}
+                for user, messages in self.users.items():
+                    result[user] = list(messages)   # copy the list
+                return result
+
+            def get_current_time(self):
+                return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+ However, note: the C++ `get_users` returns a copy of the unordered_map. Our Python version returns a dictionary that maps each user to a copy of the list of messages? 
+
+ But wait: the C++ code returns the entire map? The map is copied? And each vector in the map is copied? So we are doing the same? 
+
+ But note: in the C++ code, the vector copy is a deep copy? In Python, the list copy is shallow? But the elements are immutable? So it's okay? 
+
+ Alternatively, we can do:
+
+        return {user: self.users[user][:] for user in self.users}
+
+ And similarly, in `get_messages`:
+
+        return self.users.get(username, [])[:]   # if we use get, we avoid KeyError? But we already check? 
+
+ Actually, the C++ code returns a vector copy. We'll return a shallow copy of the list? 
+
+ Since the messages are immutable, we don't need to copy the elements? 
+
+ But note: the C++ code copies the entire vector and the messages? So we are doing a shallow copy? That's not the same? 
+
+ However, the messages are immutable? So it's the same? 
+
+ But consider: the C++ code copies the strings? In Python, strings are immutable and interned? So copying a string is cheap? Actually, we don't copy the string? We only copy the reference? 
+
+ So in Python, a shallow copy of the list is enough? 
+
+ However, the C++ code copies the entire message? So we must do a deep copy? 
+
+ But wait: the C++ code returns a vector of copies? Each copy of the Message struct copies the strings? So the strings are duplicated? 
+
+ In Python, we cannot duplicate strings? And we don't need to? Because strings are immutable? 
+
+ Therefore, a shallow copy of the list is enough? 
+
+ But note: the list itself: we must copy the container? So that the caller cannot modify the internal list? 
+
+ Therefore, we return a shallow copy? 
+
+ Let me summarize:
+
+   - We'll use namedtuple for Message: immutable.
+
+   - In `send_message`: we create one Message and append it to both the sender and receiver lists? 
+
+   - In `get_messages`: we return a shallow copy of the list? 
+
+   - In `get_users`: we return a dictionary that maps each user to a shallow copy of the list? 
+
+ 10. Edge: what if sender and receiver are the same? Then we append the same message twice to the same list? 
+
+        Example: 
+            users[alice] = [msg1, msg1]
+
+        The C++ code would do the same: push the same message_info twice? So two copies? 
+
+        In Python, we are appending the same object twice? 
+
+        Then the list for alice will have two references to the same object? 
+
+        That's the same as the C++ code? Because the two copies are identical? 
+
+        But note: in C++ the two copies are independent? But they are identical? So no problem? 
+
+        And in Python, since the object is immutable, it's the same? 
+
+        Therefore, we are okay? 
+
+ 11. Let's test:
+
+        chat = Chat()
+        chat.add_user("alice")
+        chat.add_user("bob")
+        chat.send_message("alice", "bob", "hello")
+
+        Then:
+            alice_messages = chat.get_messages("alice")
+            bob_messages = chat.get_messages("bob")
+
+        The message in alice_messages and bob_messages is the same object? But that's okay? 
+
+        But in C++ they are two distinct objects? 
+
+        However, the behavior is identical? 
+
+        The only difference is in the object identity? But the C++ code doesn't expose the address? 
+
+        So we are okay? 
+
+ 12. However, what if the user wants to compare by identity? The problem says "Keep behavior identical", but identity is not part of the behavior? 
+
+        The behavior is defined by the inputs/outputs and side effects? 
+
+        Therefore, we'll proceed.
+
+ But note: the C++ `get_users` returns a map that has vectors of messages? The vectors are copies? So if the caller modifies the vector, it doesn't affect the internal storage? 
+
+        Similarly, in Python, we return a dictionary that maps to copies of the lists? So the caller can modify the lists? 
+
+        And the messages are immutable? So they cannot change the message content? 
+
+        Therefore, we are safe? 
+
+ Let's code accordingly.
+
+ However, note: the namedtuple is immutable? So if we try:
+
+        msg = Message(sender='a', receiver='b', message='hello', timestamp='...')
+        msg.sender = 'c'   # this will fail? 
+
+ So the user cannot mutate the message? 
+
+ But the C++ code returns a copy? And the user can mutate the copy? 
+
+        In C++:
+            std::vector<Message> msgs = chat.get_messages("alice");
+            msgs[0].sender = "hacker";   // this is allowed? 
+
+        Then the internal storage is not changed? 
+
+        In Python, if we return a list of namedtuples, the user cannot mutate the namedtuple? 
+
+        So that's a difference? 
+
+        Therefore, we must use a mutable class? 
+
+        How about:
+
+            class Message:
+                __slots__ = ('sender', 'receiver', 'message', 'timestamp')
+                def __init__(self, sender, receiver, message, timestamp):
+                    self.sender = sender
+                    self.receiver = receiver
+                    self.message = message
+                    self.timestamp = timestamp
+
+        Then when we return the list, we return the same objects? 
+
+        But then if the user does:
+
+            msgs = chat.get_messages("alice")
+            msgs[0].sender = "hacker"
+
+        Then the internal storage is changed? 
+
+        And also, the same message is in bob's list? So bob's message would be changed too? 
+
+        That's not the same as C++? 
+
+        To mimic C++, we must return a copy of each message? 
+
+        How can we do that? 
+
+        We can do:
+
+            In `get_messages`:
+                return [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in self.users.get(username, [])]
+
+        Similarly, in `get_users`:
+
+            result = {}
+            for user, messages in self.users.items():
+                # create a copy of each message?
+                result[user] = [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in messages]
+
+        But that's expensive? 
+
+        Alternatively, we can design the storage so that we store a mutable class? And then when returning, we return copies? 
+
+        But note: the `send_message` function: we currently store the same message object in both lists? Then if we later return copies, we break the identity? 
+
+        Actually, we don't care about identity? 
+
+        So plan:
+
+            - Use a mutable class for Message? 
+            - When sending, create one message and store it in both lists? 
+            - When returning from `get_messages` or `get_users`, we create a copy of each message? 
+
+        But then if the user mutates the returned message, the internal storage is still the same? 
+
+        How to copy? We can define a `copy` method? Or use `copy.copy`? 
+
+        But note: the message has only immutable attributes? So a shallow copy is enough? 
+
+        We can do:
+
+            import copy
+
+            ... then in `get_messages`:
+                return copy.deepcopy(self.users[username])   # but deepcopy does a deep copy? And since the attributes are strings (immutable), deepcopy is the same as shallow? 
+
+            Actually, we can do:
+
+                return [copy.copy(msg) for msg in self.users[username]]
+
+            But `copy.copy` for a user-defined class? It creates a new instance? Actually, no: by default, it creates a new instance and then copies the `__dict__`? But we use `__slots__`? 
+
+        Alternatively, we can define our own copy:
+
+            class Message:
+                ...
+                def copy(self):
+                    return Message(self.sender, self.receiver, self.message, self.timestamp)
+
+        Then:
+
+            return [msg.copy() for msg in self.users[username]]
+
+        Similarly for `get_users`.
+
+        But that's expensive? 
+
+        Given the trade-offs, we must choose between:
+
+            Option 1: namedtuple -> immutable -> user cannot mutate the returned messages? But the C++ user can? 
+
+            Option 2: mutable class and then copy on return? 
+
+        The problem says: "Keep behavior identical". The behavior includes the ability for the caller to mutate the copy of the message? 
+
+        Since the problem says "edge cases, exceptions", and mutation of the returned message is an edge? 
+
+        However, the problem does not specify whether the messages are mutable? 
+
+        But the C++ struct is mutable? 
+
+        Therefore, we choose Option 2: mutable class and return copies? 
+
+        Steps:
+
+            class Message:
+                def __init__(self, sender, receiver, message, timestamp):
+                    self.sender = sender
+                    self.receiver = receiver
+                    self.message = message
+                    self.timestamp = timestamp
+
+            Then:
+
+                def get_messages(self, username):
+                    if username not in self.users:
+                        return []
+                    return [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in self.users[username]]
+
+                def get_users(self):
+                    result = {}
+                    for user, messages in self.users.items():
+                        result[user] = [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in messages]
+                    return result
+
+        But note: in `send_message`, we create one message and store it in both lists? 
+
+        Then when we return a copy for alice and a copy for bob? 
+
+        So the same message is stored twice? But we return two distinct copies? 
+
+        That's the same as C++? 
+
+        However, the C++ code stored two copies? So we are storing one? But then returning copies? 
+
+        Actually, the storage: we store one message per user? But we are storing the same message object for both? 
+
+        Then when we return copies, we break the identity? 
+
+        But the C++ code stored two copies? So the two copies are independent? 
+
+        Therefore, we must store two separate copies? 
+
+        How about:
+
+            In `send_message`:
+
+                timestamp = self.get_current_time()
+                msg_sender = Message(sender, receiver, message, timestamp)
+                msg_receiver = Message(sender, receiver, message, timestamp)
+                self.users[sender].append(msg_sender)
+                self.users[receiver].append(msg_receiver)
+
+        Then we don't need to copy on return? 
+
+        But then we can return the stored lists? 
+
+        However, if we return the stored lists, then the caller can append to the list? So we must return a copy of the list? 
+
+        And if we return the stored message objects? and the message objects are mutable? Then if the caller mutates the message object, it will affect the internal storage? 
+
+        Therefore, we must:
+
+            - Either return copies of the messages? 
+            - Or store copies? 
+
+        But if we store copies, then we already have two copies? Then we can return the stored lists? But the caller can modify the list? So we must return a copy of the list? 
+
+        And if we return a copy of the list? The list elements are the same objects? Then if the caller mutates the message? Then the internal storage is mutated? 
+
+        So we must return copies of the messages? 
+
+        Therefore, regardless of how we store, we must return copies? 
+
+        Alternatively, we can store copies? And then when returning, we return the stored messages? But then the caller can mutate them? 
+
+        So we have to return copies? 
+
+        Then we might as well store the same object? 
+
+        But if we store the same object? Then when we return copies, it's the same? 
+
+        However, we can avoid the deep copy by storing two separate copies? And then returning the stored lists (with the messages) without copying the messages? But we still have to copy the list? 
+
+        And then the caller can mutate the message? 
+
+        Therefore, the only solution is to return copies of the messages? 
+
+        So we'll do:
+
+            In `send_message`:
+                # We create one message? 
+                msg = Message(sender, receiver, message, timestamp)
+                self.users[sender].append(msg)
+                self.users[receiver].append(msg)   # same object? 
+
+            Then in `get_messages`:
+                return [Message(m.sender, m.receiver, m.message, m.timestamp) for m in self.users.get(username, [])]
+
+        This creates a new copy of each message? 
+
+        And similarly for `get_users`.
+
+        But note: the two lists in storage contain the same message object? So when we return copies, we break the identity? 
+
+        But the C++ code has two distinct copies? So we are returning two distinct copies? 
+
+        And the storage: we have two references to the same message? But that's okay? 
+
+        However, if we want to avoid creating two copies in `send_message`, we can create one and then when returning we create copies? 
+
+        This is acceptable? 
+
+        But then the storage uses less memory? 
+
+        But the problem says: keep behavior identical? 
+
+        The behavior is:
+
+            - The messages stored for the sender and receiver are independent? 
+
+        But in our storage, they are not independent? Because they are the same object? But we return copies? So the user never sees the same object? 
+
+        Therefore, we are safe? 
+
+        However, if we create one message and store it twice? Then when we return copies, we create two copies? 
+
+        That matches the C++ code? 
+
+        Alternatively, we can create two messages in `send_message`? Then when we return, we don't need to copy? But we still have to copy the list? 
+
+        And the message objects are mutable? So we must return copies? 
+
+        Actually, if we create two separate messages in `send_message`, then we store two distinct objects? Then when we return the list, we return references to these distinct objects? Then if the caller mutates one, it doesn't affect the other? 
+
+        And also, we return the same object? 
+
+        Then the internal storage is mutable? So if the caller mutates the returned message, it affects the internal storage? 
+
+        Therefore, we must return copies? 
+
+        So regardless, we must return copies? 
+
+        Therefore, we'll do:
+
+            class Message:
+                def __init__(self, sender, receiver, message, timestamp):
+                    self.sender = sender
+                    self.receiver = receiver
+                    self.message = message
+                    self.timestamp = timestamp
+
+            In `send_message`:
+                timestamp = self.get_current_time()
+                # Create one message object
+                msg = Message(sender, receiver, message, timestamp)
+                self.users[sender].append(msg)
+                self.users[receiver].append(msg)
+
+            In `get_messages`:
+                if username in self.users:
+                    # Return a list of copies of the messages? 
+                    return [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in self.users[username]]
+                else:
+                    return []
+
+            In `get_users`:
+                result = {}
+                for user, messages in self.users.items():
+                    result[user] = [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in messages]
+                return result
+
+        This ensures that the messages returned are copies? 
+
+        But note: the C++ code returns a copy of the entire vector? The vector contains copies of the messages? 
+
+        This matches? 
+
+        However, the C++ code does not have an extra level of copy for the messages? It does a vector copy, which for a vector of structs copies each struct? And each struct's copy constructor copies the strings? 
+
+        In Python, we are creating new Message objects? 
+
+        But the strings are immutable? So we are not copying the strings? But that's okay? 
+
+        Therefore, we'll do this? 
+
+        But note: the storage: we have the same message object in both lists? And if we later remove a user, etc., it's stored once per user? 
+
+        And when we return, we create a new Message object for each occurrence? 
+
+        This is expensive? 
+
+        Alternatively, we can do in `send_message`:
+
+            msg1 = Message(sender, receiver, message, timestamp)
+            msg2 = Message(sender, receiver, message, timestamp)
+            self.users[sender].append(msg1)
+            self.users[receiver].append(msg2)
+
+        Then in `get_messages` and `get_users`, we return the stored messages? But then the caller can mutate them? 
+
+        So we must return copies? 
+
+        But wait: if we return the stored messages? and the message is mutable? then the caller can mutate the internal storage? 
+
+        Therefore, we must return copies? 
+
+        So there is no way around it? 
+
+        Therefore, we'll return copies? 
+
+        But then why not store one message and return two copies? 
+
+        It's the same amount of work? 
+
+        So we'll stick with storing one message and then when returning, we create a copy per occurrence? 
+
+        However, note: the same message might appear multiple times in the same list? 
+
+        Example: if alice sends a message to herself? Then the same message is appended twice to her list? Then when we return, we create two copies? 
+
+        That matches the C++ code? 
+
+        Therefore, we'll implement as described.
+
+ 13. But wait: the `get_messages` function: we return a list of copies? And the list itself is a new list? 
+
+        So we are returning a new list? 
+
+        And the C++ code returns a new vector? 
+
+        And the vector elements are copies? 
+
+        So we are good? 
+
+ 14. Let's code accordingly.
+
+ 15. The `get_current_time` function: we'll use `time.strftime` as described.
+
+ 16. Let's write the code.
+
+ However, note: the C++ code uses `std::localtime` which is the local time? And we use `time.localtime`? 
+
+        Yes.
+
+ 17. We'll import time.
+
+ Final code structure:
+
+        import time
+
+        class Message:
+            def __init__(self, sender, receiver, message, timestamp):
+                self.sender = sender
+                self.receiver = receiver
+                self.message = message
+                self.timestamp = timestamp
+
+        class Chat:
+            def __init__(self):
+                self.users = {}   # username -> list of Message objects
+
+            def add_user(self, username):
+                if username in self.users:
+                    return False
+                self.users[username] = []
+                return True
+
+            def remove_user(self, username):
+                if username in self.users:
+                    del self.users[username]
+                    return True
+                return False
+
+            def send_message(self, sender, receiver, message):
+                if sender not in self.users or receiver not in self.users:
+                    return False
+                timestamp = self.get_current_time()
+                msg = Message(sender, receiver, message, timestamp)
+                self.users[sender].append(msg)
+                self.users[receiver].append(msg)
+                return True
+
+            def get_messages(self, username):
+                if username not in self.users:
+                    return []
+                # Return a list of copies of the messages
+                return [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in self.users[username]]
+
+            def get_users(self):
+                # Return a dictionary: username -> list of copies of the messages for that user
+                result = {}
+                for user, messages in self.users.items():
+                    result[user] = [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in messages]
+                return result
+
+            def get_current_time(self):
+                return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+ 18. But note: the C++ `get_users` returns a map by value? So we return a new dictionary? And the lists in the dictionary are new lists? And the messages in the lists are new copies? 
+
+        Yes.
+
+ 19. However, the `get_users` function: we are copying the entire structure? 
+
+        This might be heavy? But the C++ code does the same? 
+
+ 20. We'll leave it as is.
+
+ 21. Edge: what if the list is long? But we are following the specification.
+
+ 22. Let me test with a self message:
+
+        chat = Chat()
+        chat.add_user("alice")
+        chat.send_message("alice", "alice", "hello")
+
+        Then alice's list should have two messages? 
+
+        But note: in `send_message` we do:
+
+            self.users[sender].append(msg)   # appends once for sender
+            self.users[receiver].append(msg)   # appends once for receiver
+
+        So if sender == receiver, then we append twice? 
+
+        Therefore, alice's list will have two references to the same message object? 
+
+        Then in `get_messages`:
+
+            returns [copy1, copy2]   # two copies? 
+
+        And the two copies are distinct? 
+
+        So alice gets two messages? 
+
+        But the C++ code would also append twice? 
+
+        And the two copies are distinct? 
+
+        Therefore, it's correct? 
+
+        However, the message is the same? 
+
+        So the behavior is: alice sees the message twice? 
+
+        That is the same as C++? 
+
+        Therefore, we are good? 
+
+ 23. We'll run with this.
+
+ But note: in the C++ code, the message_info is pushed to the sender and then to the receiver? So if sender==receiver, then two copies are stored? 
+
+        users[alice].size() becomes 2? 
+
+        So in Python, we do the same? 
+
+        Then when we return the messages for alice, we return two copies? 
+
+        So the user sees two identical messages? 
+
+        That's the same? 
+
+        Therefore, we are done.
+
+ However, we can optimize: if sender == receiver, we could append only once? But the C++ code appends twice? 
+
+        So we must append twice? 
+
+        So we leave it.
+
+ Let's write the code accordingly.
+
+ But note: the `get_current_time` function: the C++ code uses the same time for both appends? 
+
+        In Python, we call `get_current_time` once, so the timestamp is the same? 
+
+        So we are good? 
+
+ Final code:
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ class that simulates a chat system into Python while maintaining identical behavior. The chat system allows users to send messages, add or remove users, and retrieve messages. The key challenge is ensuring that the Python implementation behaves exactly like the C++ code, including handling edge cases, inputs/outputs, and side effects.
+
+### Approach
+1. **Message Representation**: The `Message` class in Python mirrors the C++ struct, with attributes for sender, receiver, message content, and timestamp. This class is mutable to match the C++ behavior where messages can be modified after retrieval.
+2. **User Management**: The `Chat` class uses a dictionary to map usernames to lists of messages. Adding a user checks for existence before appending an empty list. Removing a user deletes their entry from the dictionary.
+3. **Sending Messages**: When a message is sent, the system checks if both sender and receiver exist. The current timestamp is generated, and a message object is appended to both the sender's and receiver's message lists.
+4. **Retrieving Messages**: To prevent modification of internal state, the system returns copies of messages when users retrieve their message history. This ensures that any modifications to the returned messages do not affect the internal storage.
+5. **Timestamp Generation**: The current local time is formatted as "YYYY-MM-DD HH:MM:SS" to match the C++ implementation.
+
+### Solution Code
+```python
+import time
+
+class Message:
+    def __init__(self, sender, receiver, message, timestamp):
+        self.sender = sender
+        self.receiver = receiver
+        self.message = message
+        self.timestamp = timestamp
+
+class Chat:
+    def __init__(self):
+        self.users = {}
+    
+    def add_user(self, username):
+        if username in self.users:
+            return False
+        self.users[username] = []
+        return True
+    
+    def remove_user(self, username):
+        if username in self.users:
+            del self.users[username]
+            return True
+        return False
+    
+    def send_message(self, sender, receiver, message):
+        if sender not in self.users or receiver not in self.users:
+            return False
+        timestamp = self.get_current_time()
+        msg = Message(sender, receiver, message, timestamp)
+        self.users[sender].append(msg)
+        self.users[receiver].append(msg)
+        return True
+    
+    def get_messages(self, username):
+        if username not in self.users:
+            return []
+        return [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in self.users[username]]
+    
+    def get_users(self):
+        result = {}
+        for user, messages in self.users.items():
+            result[user] = [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in messages]
+        return result
+    
+    def get_current_time(self):
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+```
+
+### Explanation
+1. **Message Class**: This class encapsulates the details of a message, including sender, receiver, content, and timestamp. It is mutable to allow modifications after retrieval, similar to the C++ struct.
+2. **Chat Class**:
+   - **add_user**: Adds a new user to the system if they do not already exist.
+   - **remove_user**: Removes a user from the system if they exist.
+   - **send_message**: Sends a message from one user to another, generating a timestamp and appending the message to both users' message lists.
+   - **get_messages**: Returns a list of message copies for a user, ensuring internal state remains unmodified.
+   - **get_users**: Returns a dictionary mapping each user to their message copies, preserving internal state integrity.
+   - **get_current_time**: Generates the current local time in the specified format.
+3. **Behavior Preservation**: The Python implementation ensures that all operations (adding/removing users, sending messages, retrieving messages) behave identically to the C++ code. This includes handling edge cases such as non-existent users or self-messages. The use of copies during retrieval prevents unintended side effects from modifying returned messages.
+
+=== TRANSLATED CODE (py) ===
+import time
+
+class Message:
+    def __init__(self, sender, receiver, message, timestamp):
+        self.sender = sender
+        self.receiver = receiver
+        self.message = message
+        self.timestamp = timestamp
+
+class Chat:
+    def __init__(self):
+        self.users = {}
+    
+    def add_user(self, username):
+        if username in self.users:
+            return False
+        self.users[username] = []
+        return True
+    
+    def remove_user(self, username):
+        if username in self.users:
+            del self.users[username]
+            return True
+        return False
+    
+    def send_message(self, sender, receiver, message):
+        if sender not in self.users or receiver not in self.users:
+            return False
+        timestamp = self.get_current_time()
+        msg = Message(sender, receiver, message, timestamp)
+        self.users[sender].append(msg)
+        self.users[receiver].append(msg)
+        return True
+    
+    def get_messages(self, username):
+        if username not in self.users:
+            return []
+        return [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in self.users[username]]
+    
+    def get_users(self):
+        result = {}
+        for user, messages in self.users.items():
+            result[user] = [Message(msg.sender, msg.receiver, msg.message, msg.timestamp) for msg in messages]
+        return result
+    
+    def get_current_time(self):
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())

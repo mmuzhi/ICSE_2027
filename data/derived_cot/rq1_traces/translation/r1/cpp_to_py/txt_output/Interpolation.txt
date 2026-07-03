@@ -1,0 +1,337 @@
+=== SOURCE CODE (cpp) ===
+#include <vector>
+
+class Interpolation {
+public:
+    Interpolation() = default;
+
+    
+    static std::vector<double> interpolate_1d(const std::vector<double>& x,
+        const std::vector<double>& y,
+        const std::vector<double>& x_interp);
+
+    
+    static std::vector<double> interpolate_2d(const std::vector<double>& x,
+        const std::vector<double>& y,
+        const std::vector<std::vector<double>>& z,
+        const std::vector<double>& x_interp,
+        const std::vector<double>& y_interp);
+};
+
+std::vector<double> Interpolation::interpolate_1d(const std::vector<double>& x,
+    const std::vector<double>& y,
+    const std::vector<double>& x_interp) {
+    std::vector<double> y_interp;
+    for (double xi : x_interp) {
+        for (size_t i = 0; i < x.size() - 1; ++i) {
+            if (x[i] <= xi && xi <= x[i + 1]) {
+                double yi = y[i] + (y[i + 1] - y[i]) * (xi - x[i]) / (x[i + 1] - x[i]);
+                y_interp.push_back(yi);
+                break;
+            }
+        }
+    }
+    return y_interp;
+}
+
+std::vector<double> Interpolation::interpolate_2d(const std::vector<double>& x,
+    const std::vector<double>& y,
+    const std::vector<std::vector<double>>& z,
+    const std::vector<double>& x_interp,
+    const std::vector<double>& y_interp) {
+    std::vector<double> z_interp;
+    for (size_t k = 0; k < x_interp.size(); ++k) {
+        double xi = x_interp[k];
+        double yi = y_interp[k];
+        for (size_t i = 0; i < x.size() - 1; ++i) {
+            if (x[i] <= xi && xi <= x[i + 1]) {
+                for (size_t j = 0; j < y.size() - 1; ++j) {
+                    if (y[j] <= yi && yi <= y[j + 1]) {
+                        double z00 = z[i][j];
+                        double z01 = z[i][j + 1];
+                        double z10 = z[i + 1][j];
+                        double z11 = z[i + 1][j + 1];
+                        double zi = (z00 * (x[i + 1] - xi) * (y[j + 1] - yi) +
+                            z10 * (xi - x[i]) * (y[j + 1] - yi) +
+                            z01 * (x[i + 1] - xi) * (yi - y[j]) +
+                            z11 * (xi - x[i]) * (yi - y[j])) / ((x[i + 1] - x[i]) * (y[j + 1] - y[j]));
+                        z_interp.push_back(zi);
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+    }
+    return z_interp;
+}
+
+
+=== REASONING ===
+<think>
+
+We are translating a C++ class with static methods to Python.
+ Since the class only has static methods, we can create a Python class with static methods or use a module-level functions.
+ However, the requirement says to keep behavior identical, so we'll create a class with static methods.
+
+ Important: The C++ code uses linear interpolation for 1D and bilinear interpolation for 2D.
+
+ Edge cases: 
+   - The C++ code breaks out of the inner loops once it finds the interval. 
+   - We assume that the input x_interp and y_interp values are within the bounds of x and y respectively? 
+     The code checks with `if (x[i] <= xi && xi <= x[i + 1])` and similarly for y.
+
+ Note: The C++ code does not handle the case when the interpolation point is not in any interval.
+        In such a case, the point is skipped? Actually, the C++ code would not push anything for that point?
+        But note: the outer loop is for each x_interp, and we break only when we find the interval. 
+        If we don't find an interval, then we skip that point? That would be incorrect because the vector y_interp would be missing a value.
+
+ However, looking at the C++ code: 
+   In 1D: 
+        for (double xi : x_interp) {
+            for (size_t i = 0; i < x.size() - 1; ++i) {
+                if (x[i] <= xi && xi <= x[i+1]) {
+                    ... then push and break
+                }
+            }
+            // If no interval found? Then nothing is pushed for xi -> this is an error.
+
+ Similarly for 2D.
+
+ But note: the problem says to keep behavior identical. So if the C++ code fails to find an interval for an interpolation point, 
+ then that point is skipped (and the returned vector will have fewer elements than x_interp). 
+
+ However, this is likely a bug in the C++ code? But we are to replicate the behavior.
+
+ We must replicate the same behavior: if an interpolation point is not found in any interval, then we do not append anything for that point.
+
+ But wait: in 2D, we break out of the j-loop and then break out of the i-loop? Actually, the break in the j-loop breaks only the inner loop, 
+ and then we break the outer i-loop. So if we find the x-interval, we then look for the y-interval. If we don't find the y-interval, then we break the i-loop? 
+ Actually, no: the inner j-loop breaks only when we find the y-interval. If we don't find any j such that y[j] <= yi <= y[j+1], then the inner j-loop completes without breaking. 
+ Then we break the outer i-loop? Yes, because after the inner j-loop, there is a break. 
+
+ So in 2D: 
+   For a given (xi, yi):
+        We iterate over i until we find an x-interval [x[i], x[i+1]] containing xi.
+        Then we iterate over j until we find a y-interval [y[j], y[j+1]] containing yi.
+        If we find both, we compute and break the i-loop (and then move to next point).
+        If we find the x-interval but no y-interval? Then we break the i-loop without appending anything? 
+        Similarly, if we don't find any x-interval? Then we don't append anything.
+
+ So both 1D and 2D have the same issue: they skip points that are not within any interval.
+
+ Therefore, our Python code must do the same.
+
+ Implementation:
+
+  For 1D:
+      y_interp = []
+      for xi in x_interp:
+          for i in range(len(x)-1):
+              if x[i] <= xi <= x[i+1]:
+                  # linear interpolation
+                  yi = y[i] + (y[i+1]-y[i]) * (xi - x[i]) / (x[i+1]-x[i])
+                  y_interp.append(yi)
+                  break   # break the inner loop and move to next xi
+
+  For 2D:
+      z_interp = []
+      for k in range(len(x_interp)):
+          xi = x_interp[k]
+          yi = y_interp[k]
+          found = False
+          for i in range(len(x)-1):
+              if x[i] <= xi <= x[i+1]:
+                  for j in range(len(y)-1):
+                      if y[j] <= yi <= y[j+1]:
+                          # bilinear interpolation
+                          z00 = z[i][j]
+                          z01 = z[i][j+1]
+                          z10 = z[i+1][j]
+                          z11 = z[i+1][j+1]
+                          numerator = (z00 * (x[i+1]-xi) * (y[j+1]-yi) +
+                                      z10 * (xi - x[i]) * (y[j+1]-yi) +
+                                      z01 * (x[i+1]-xi) * (yi - y[j]) +
+                                      z11 * (xi - x[i]) * (yi - y[j]))
+                          denominator = (x[i+1]-x[i]) * (y[j+1]-y[j])
+                          zi = numerator / denominator
+                          z_interp.append(zi)
+                          found = True
+                          break   # break the inner j loop
+                  if found:
+                      break   # break the i loop after breaking the j loop
+          # if not found, skip
+
+  But note: the C++ code does not have a flag. It breaks the j loop and then breaks the i loop unconditionally? 
+  Actually, in the C++ code for 2D:
+
+        for (size_t i = 0; i < x.size() - 1; ++i) {
+            if (x[i] <= xi && xi <= x[i + 1]) {
+                for (size_t j = 0; j < y.size() - 1; ++j) {
+                    if (y[j] <= yi && yi <= y[j + 1]) {
+                        ... compute zi and push ...
+                        break;   // breaks the j loop
+                    }
+                }
+                break;   // breaks the i loop, regardless of whether we found a y-interval or not.
+            }
+        }
+
+  This means: if we find the x-interval, we break the i loop after the inner j loop (whether or not we found a y-interval). 
+  And if we didn't find a y-interval, then we break the i loop without appending anything.
+
+  Therefore, we must break the i loop regardless after we enter the if-block for the x-interval.
+
+  So the Python for 2D should be:
+
+        for i in range(len(x)-1):
+            if x[i] <= xi <= x[i+1]:
+                for j in range(len(y)-1):
+                    if y[j] <= yi <= y[j+1]:
+                        ... compute and append ...
+                        break   # break j loop
+                break   # break i loop
+
+  This matches the C++ code.
+
+  However, note: the break for the i loop is inside the if-block. So if we don't enter the if-block (no x-interval found), then we don't break and continue with next i.
+
+  But once we enter the if-block (found x-interval), we then run the j loop. Then after the j loop (whether we broke it or not) we break the i loop.
+
+  Therefore, we do not need a flag for the 2D case.
+
+  Let's code accordingly.
+
+  Important: We assume that the inputs are lists (or similar) of floats.
+
+  We'll use the same variable names and structure.
+
+  Since we are to use idiomatic Python only when it doesn't change behavior, we avoid using more efficient methods if they change the behavior.
+
+  However, note: the C++ code uses vectors and we are returning vectors. In Python, we return lists.
+
+  We'll create:
+
+      class Interpolation:
+          @staticmethod
+          def interpolate_1d(x, y, x_interp):
+              # ... as above
+
+          @staticmethod
+          def interpolate_2d(x, y, z, x_interp, y_interp):
+              # ... as above
+
+  But note: the C++ code uses 0-based indexing and so does Python.
+
+  Let's write the code accordingly.
+
+  One more thing: the C++ code uses `size_t` for indices, which are unsigned. In Python, we use `range` which is similar to a for-loop with integers.
+
+  We are safe because the sizes are non-negative.
+
+  However, if the input vectors are empty, then the loops will not run, and we return an empty list.
+
+  That matches the C++ behavior.
+
+  Let's code accordingly.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ class that performs linear and bilinear interpolation into Python while maintaining identical behavior. The C++ class contains two static methods: `interpolate_1d` for linear interpolation in one dimension and `interpolate_2d` for bilinear interpolation in two dimensions. The goal is to replicate the functionality exactly, including handling edge cases where interpolation points might not be found within any interval.
+
+### Approach
+1. **Linear Interpolation (1D)**:
+   - For each interpolation point `xi` in `x_interp`, iterate through the known `x` values to find the interval `[x[i], x[i+1]]` that contains `xi`.
+   - Once found, compute the interpolated value `yi` using the linear interpolation formula: `y[i] + (y[i+1] - y[i]) * (xi - x[i]) / (x[i+1] - x[i])`.
+   - Append `yi` to the result list and break out of the loop to move to the next interpolation point. If no interval is found, the point is skipped.
+
+2. **Bilinear Interpolation (2D)**:
+   - For each pair of interpolation points `(xi, yi)` from `x_interp` and `y_interp`, iterate through the known `x` values to find the interval `[x[i], x[i+1]]` containing `xi`.
+   - Once found, iterate through the known `y` values to find the interval `[y[j], y[j+1]]` containing `yi`.
+   - Compute the interpolated value `zi` using the bilinear interpolation formula involving the four surrounding points `(x[i], y[j])`, `(x[i], y[j+1])`, `(x[i+1], y[j])`, and `(x[i+1], y[j+1])`.
+   - Append `zi` to the result list and break out of both loops to move to the next interpolation point. If either interval is not found, the point is skipped.
+
+### Solution Code
+```python
+class Interpolation:
+    @staticmethod
+    def interpolate_1d(x, y, x_interp):
+        y_interp = []
+        for xi in x_interp:
+            for i in range(len(x) - 1):
+                if x[i] <= xi <= x[i+1]:
+                    yi = y[i] + (y[i+1] - y[i]) * (xi - x[i]) / (x[i+1] - x[i])
+                    y_interp.append(yi)
+                    break
+        return y_interp
+
+    @staticmethod
+    def interpolate_2d(x, y, z, x_interp, y_interp):
+        z_interp = []
+        for k in range(len(x_interp)):
+            xi = x_interp[k]
+            yi = y_interp[k]
+            for i in range(len(x) - 1):
+                if x[i] <= xi <= x[i+1]:
+                    for j in range(len(y) - 1):
+                        if y[j] <= yi <= y[j+1]:
+                            z00 = z[i][j]
+                            z01 = z[i][j+1]
+                            z10 = z[i+1][j]
+                            z11 = z[i+1][j+1]
+                            numerator = (z00 * (x[i+1] - xi) * (y[j+1] - yi) +
+                                        z10 * (xi - x[i]) * (y[j+1] - yi) +
+                                        z01 * (x[i+1] - xi) * (yi - y[j]) +
+                                        z11 * (xi - x[i]) * (yi - y[j]))
+                            denominator = (x[i+1] - x[i]) * (y[j+1] - y[j])
+                            zi = numerator / denominator
+                            z_interp.append(zi)
+                            break
+                    break
+        return z_interp
+```
+
+### Explanation
+- **Linear Interpolation (1D)**: The method `interpolate_1d` processes each point in `x_interp` by checking each interval in the known `x` values. If the point lies within an interval, the corresponding `y` value is interpolated linearly and added to the result list.
+- **Bilinear Interpolation (2D)**: The method `interpolate_2d` processes each pair of points from `x_interp` and `y_interp`. For each pair, it checks intervals in the known `x` and `y` values. If both intervals are found, the `z` value is interpolated using the surrounding four points and added to the result list.
+- **Edge Handling**: Both methods skip any interpolation points that do not lie within any interval of the known values, mirroring the behavior of the original C++ code. The loops break immediately upon finding the relevant intervals to ensure efficiency and correctness.
+
+=== TRANSLATED CODE (py) ===
+class Interpolation:
+    @staticmethod
+    def interpolate_1d(x, y, x_interp):
+        y_interp = []
+        for xi in x_interp:
+            for i in range(len(x) - 1):
+                if x[i] <= xi <= x[i+1]:
+                    yi = y[i] + (y[i+1] - y[i]) * (xi - x[i]) / (x[i+1] - x[i])
+                    y_interp.append(yi)
+                    break
+        return y_interp
+
+    @staticmethod
+    def interpolate_2d(x, y, z, x_interp, y_interp):
+        z_interp = []
+        for k in range(len(x_interp)):
+            xi = x_interp[k]
+            yi = y_interp[k]
+            for i in range(len(x) - 1):
+                if x[i] <= xi <= x[i+1]:
+                    for j in range(len(y) - 1):
+                        if y[j] <= yi <= y[j+1]:
+                            z00 = z[i][j]
+                            z01 = z[i][j+1]
+                            z10 = z[i+1][j]
+                            z11 = z[i+1][j+1]
+                            numerator = (z00 * (x[i+1] - xi) * (y[j+1] - yi) +
+                                        z10 * (xi - x[i]) * (y[j+1] - yi) +
+                                        z01 * (x[i+1] - xi) * (yi - y[j]) +
+                                        z11 * (xi - x[i]) * (yi - y[j]))
+                            denominator = (x[i+1] - x[i]) * (y[j+1] - y[j])
+                            zi = numerator / denominator
+                            z_interp.append(zi)
+                            break
+                    break
+        return z_interp

@@ -1,0 +1,1553 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+
+public class IpUtil {
+
+    public static boolean isValidIpv4(String ipAddress) {
+        try {
+            InetAddress.getByName(ipAddress);
+            return ipAddress.contains(".") && !ipAddress.contains(":");
+        } catch (UnknownHostException e) {
+            return false;
+        }
+    }
+
+    public static boolean isValidIpv6(String ipAddress) {
+        try {
+            InetAddress.getByName(ipAddress);
+            return ipAddress.contains(":");
+        } catch (UnknownHostException e) {
+            return false;
+        }
+    }
+
+    public static String getHostname(String ipAddress) {
+        try {
+            InetAddress inetAddress = InetAddress.getByName(ipAddress);
+
+            if ("0.0.0.0".equals(ipAddress)) {
+                return InetAddress.getLocalHost().getHostName();
+            }
+
+            String hostname = inetAddress.getCanonicalHostName();
+            if (hostname.equals(ipAddress)) {
+                return null;
+            }
+            return hostname;
+        } catch (UnknownHostException e) {
+            return null;
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+The user wants me to translate a Java utility class for IP address operations into C++.
+
+Let's analyze the Java code:
+1. `isValidIpv4(String ipAddress)`:
+   - Uses `InetAddress.getByName(ipAddress)` to check if it's a valid IP.
+   - Returns `true` if it contains "." and doesn't contain ":".
+   - Catches `UnknownHostException` and returns `false`.
+
+2. `isValidIpv6(String ipAddress)`:
+   - Uses `InetAddress.getByName(ipAddress)` to check if it's a valid IP.
+   - Returns `true` if it contains ":".
+   - Catches `UnknownHostException` and returns `false`.
+
+3. `getHostname(String ipAddress)`:
+   - Uses `InetAddress.getByName(ipAddress)`.
+   - If IP is "0.0.0.0", returns `InetAddress.getLocalHost().getHostName()`.
+   - Otherwise, gets `inetAddress.getCanonicalHostName()`.
+   - If the canonical hostname equals the IP address, returns `null`.
+   - Otherwise, returns the hostname.
+   - Catches `UnknownHostException` and returns `null`.
+
+In C++, there is no direct equivalent to `InetAddress.getByName()` which handles both DNS resolution and IP address validation uniformly.
+However, to mimic the behavior:
+- For `isValidIpv4`: We need to check if the string is a valid IPv4 address. `InetAddress.getByName` accepts valid IP addresses and hostnames. If it's an invalid IP, it might do a DNS lookup and fail. Actually, `InetAddress.getByName` accepts valid IPs directly without DNS resolution failure, but for hostnames, it does a DNS lookup. Wait, `InetAddress.getByName("192.168.1.1")` succeeds. `InetAddress.getByName("300.300.300.300")` throws `UnknownHostException` because it's an invalid IP format. So `InetAddress.getByName` essentially validates the IP format.
+  Wait, `InetAddress.getByName` for an arbitrary string might throw `UnknownHostException` if it can't be resolved. So `isValidIpv4` actually returns `true` for valid IPv4 addresses, and also for resolvable hostnames that contain "." and not ":"? No, the code says:
+  `InetAddress.getByName(ipAddress); return ipAddress.contains(".") && !ipAddress.contains(":");`
+  If `ipAddress` is "google.com", `getByName` succeeds, and it returns `true` because it contains "." and not ":". But the method is called `isValidIpv4`. This implies the Java code has a bug or specific behavior where hostnames with dots are considered "valid IPv4" by this method.
+  Wait, if I pass "google.com", `InetAddress.getByName` resolves it, no exception, and it contains ".", no ":", so it returns `true`. Is that the intended behavior? The prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". So I must replicate this exact behavior.
+
+Let's carefully replicate the behavior of `InetAddress.getByName`:
+- It resolves the hostname. If the hostname is a valid IP, it returns an InetAddress object. If it's a hostname, it tries to resolve it. If resolution fails, it throws `UnknownHostException`.
+- So `isValidIpv4` returns true if:
+  1. `ipAddress` can be resolved by the system's DNS/resolution mechanism.
+  2. `ipAddress` contains "."
+  3. `ipAddress` does not contain ":"
+
+- `isValidIpv6` returns true if:
+  1. `ipAddress` can be resolved.
+  2. `ipAddress` contains ":"
+
+- `getHostname` returns:
+  1. If `ipAddress` is "0.0.0.0", it returns the local hostname.
+  2. Otherwise, it does a reverse DNS lookup (or forward if it's a hostname already? `getCanonicalHostName` returns the fully qualified domain name for this IP address. If the IP cannot be resolved, it returns the String representation of the IP).
+  3. If the returned hostname equals the `ipAddress` string, it returns `null` (or `std::optional<std::string>` or empty string, but Java returns `null`, so C++ should return something indicating null, like `std::string()` or `std::optional<std::string>`). Let's use `std::optional<std::string>` or just return an empty string? The Java method returns `String`, so `null` is possible. In C++, returning `std::optional<std::string>` is idiomatic for nullable strings, or returning `std::string` and using empty string for null. Let's use `std::optional<std::string>` to perfectly match `null`.
+
+Wait, implementing DNS resolution in C++ is platform-dependent (e.g., `getaddrinfo`, `getnameinfo`).
+Let's use standard POSIX/C library functions: `getaddrinfo` and `getnameinfo`.
+
+Let's trace `isValidIpv4`:
+```cpp
+bool isValidIpv4(const std::string& ipAddress) {
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC; // To mimic InetAddress.getByName which accepts both
+    // Wait, InetAddress.getByName can resolve hostnames. If we just want to check if it can be resolved:
+    int status = getaddrinfo(ipAddress.c_str(), nullptr, &hints, &res);
+    if (status != 0) {
+        return false; // UnknownHostException equivalent
+    }
+    freeaddrinfo(res);
+    
+    return ipAddress.find('.') != std::string::npos && ipAddress.find(':') == std::string::npos;
+}
+```
+
+Wait, `InetAddress.getByName` can accept an IP address directly and won't fail even if there's no network. `getaddrinfo` with a numeric IP address also succeeds without network. So this matches.
+
+Let's trace `isValidIpv6`:
+```cpp
+bool isValidIpv6(const std::string& ipAddress) {
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    int status = getaddrinfo(ipAddress.c_str(), nullptr, &hints, &res);
+    if (status != 0) {
+        return false;
+    }
+    freeaddrinfo(res);
+    
+    return ipAddress.find(':') != std::string::npos;
+}
+```
+
+Wait, what if `ipAddress` is an empty string? `InetAddress.getByName("")` returns the loopback address. `getaddrinfo("")` might return the loopback or fail depending on the OS. Let's check `getaddrinfo("", ...)`. On Linux, it returns `0.0.0.0` or loopback. Actually, `InetAddress.getByName("")` returns the loopback address `127.0.0.1`. Let's handle empty string specifically if needed, or just rely on `getaddrinfo`. Wait, `getaddrinfo("")` returns AI_PASSIVE behavior if `ai_flags` has `AI_PASSIVE`, otherwise loopback. But wait, `ipAddress.c_str()` of an empty string is `""`. `getaddrinfo("", ...)` might fail (EAI_NONAME). Let's test this mentally. Java's `InetAddress.getByName(null)` or `InetAddress.getByName("")` resolves to loopback. In C++, `getaddrinfo` with `NULL` node and `AI_PASSIVE` returns `0.0.0.0`, without `AI_PASSIVE` returns `127.0.0.1`. With `""` it might return EAI_NONAME. To be safe, we might need to handle empty string. But since the method is `isValidIpv4`, an empty string doesn't contain `.` so it would return `false` anyway.
+
+Let's trace `getHostname`:
+```cpp
+std::optional<std::string> getHostname(const std::string& ipAddress) {
+    if (ipAddress == "0.0.0.0") {
+        char hostname[1024];
+        if (gethostname(hostname, sizeof(hostname)) == 0) {
+            return std::string(hostname);
+        } else {
+            return std::nullopt; // UnknownHostException
+        }
+    }
+
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    int status = getaddrinfo(ipAddress.c_str(), nullptr, &hints, &res);
+    if (status != 0) {
+        return std::nullopt; // UnknownHostException
+    }
+
+    // getCanonicalHostName equivalent is getnameinfo with NI_NAMEREQD? No, Java's getCanonicalHostName returns the IP if the name cannot be resolved.
+    // Wait, Java's getCanonicalHostName:
+    // "Returns the fully qualified domain name for this IP address. If the host is not resolvable, it returns the IP address string."
+    // So we should use getnameinfo WITHOUT NI_NAMEREQD.
+    char host[NI_MAXHOST];
+    // res->ai_addr, res->ai_addrlen
+    status = getnameinfo(res->ai_addr, res->ai_addrlen, host, sizeof(host), nullptr, 0, 0);
+    freeaddrinfo(res);
+
+    if (status != 0) {
+        return std::nullopt; // Should we return nullopt or the IP? getnameinfo usually doesn't fail if getaddrinfo succeeded, unless there's a weird error. If it fails, maybe return nullopt?
+    }
+
+    std::string canonicalHostName(host);
+    if (canonicalHostName == ipAddress) {
+        return std::nullopt; // null in Java
+    }
+    return canonicalHostName;
+}
+```
+
+Wait, let's double check `InetAddress.getByName("0.0.0.0").getCanonicalHostName()`.
+In Java, `InetAddress.getByName("0.0.0.0")` returns an InetAddress object for 0.0.0.0.
+Then `getCanonicalHostName()` on 0.0.0.0 returns... what?
+Wait, the Java code says:
+```java
+if ("0.0.0.0".equals(ipAddress)) {
+    return InetAddress.getLocalHost().getHostName();
+}
+```
+So it explicitly handles "0.0.0.0" by returning the local host's hostname. My C++ code does exactly this using `gethostname`.
+
+What about `InetAddress.getByName(ipAddress)` where `ipAddress` is a hostname?
+If `ipAddress` is "google.com", `getaddrinfo` resolves it to an IP.
+Then `getnameinfo` on that IP will do a reverse DNS lookup and return the canonical hostname.
+In Java, `InetAddress.getByName("google.com").getCanonicalHostName()` returns the canonical hostname (e.g., "google.com" or something like "sea30s12-in-f14.1e100.net").
+If `getnameinfo` returns the IP string (because reverse DNS failed), then `canonicalHostName` will be the IP string. Will it equal `ipAddress` ("google.com")? No. So it will return the IP string as the "hostname", which differs from Java!
+Wait, in Java, `InetAddress.getByName("google.com").getCanonicalHostName()` returns the canonical name, NOT the IP address, even if reverse DNS fails?
+Let's check Java's `getCanonicalHostName` documentation:
+"Returns the fully qualified domain name for this IP address. Best effort method, meaning we may not be able to return the FQDN depending on the underlying system configuration."
+"If there is a security manager, this method first calls its checkConnect method with the hostname and -1 as its arguments to see if the calling code is allowed to know the hostname for this IP address, i.e., to connect to the host. If the operation is not allowed, it will return the textual representation of the IP address."
+Wait, if there's no security manager, it returns the FQDN. If the IP address cannot be resolved to a hostname, it returns the textual representation of the IP address.
+So if I pass "google.com", `getByName` resolves it to an IP. Then `getCanonicalHostName` does a reverse lookup on that IP. If reverse lookup fails, it returns the IP string.
+So `canonicalHostName` would be the IP string. It would NOT equal "google.com". So the Java method would return the IP string!
+Wait, my C++ code using `getnameinfo` would also return the IP string if reverse lookup fails, and it wouldn't equal "google.com", so it would also return the IP string. This matches Java.
+
+Wait, is there any case where `canonicalHostName == ipAddress`?
+Yes, if `ipAddress` is an IP string like "192.168.1.1" and reverse DNS fails. Then `getCanonicalHostName` returns "192.168.1.1". `ipAddress` is "192.168.1.1". They are equal, so Java returns `null`. My C++ code would return `std::nullopt`. This matches Java!
+
+What if `ipAddress` is "127.0.0.1"?
+`getCanonicalHostName` returns "localhost" or similar. Not equal to "127.0.0.1". So it returns "localhost". C++ `getnameinfo` also returns "localhost". Matches!
+
+Let's refine `getHostname`:
+```cpp
+std::optional<std::string> getHostname(const std::string& ipAddress) {
+    if (ipAddress == "0.0.0.0") {
+        char hostname[1024];
+        if (gethostname(hostname, sizeof(hostname)) == 0) {
+            return std::string(hostname);
+        } else {
+            return std::nullopt;
+        }
+    }
+
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    int status = getaddrinfo(ipAddress.c_str(), nullptr, &hints, &res);
+    if (status != 0) {
+        return std::nullopt;
+    }
+
+    char host[NI_MAXHOST];
+    status = getnameinfo(res->ai_addr, res->ai_addrlen, host, sizeof(host), nullptr, 0, 0);
+    freeaddrinfo(res);
+
+    if (status != 0) {
+        return std::nullopt;
+    }
+
+    std::string canonicalHostName(host);
+    if (canonicalHostName == ipAddress) {
+        return std::nullopt;
+    }
+    return canonicalHostName;
+}
+```
+
+Wait, `InetAddress.getByName` handles IPv6 addresses enclosed in brackets? Like `[::1]`.
+In Java, `InetAddress.getByName("::1")` works. `InetAddress.getByName("[::1]")` throws `UnknownHostException` (actually, wait, `InetAddress.getByName` does NOT accept brackets for IPv6, it throws `UnknownHostException` unless it's a URI). Let's assume standard IPv6 format without brackets.
+`getaddrinfo` also accepts standard IPv6 format without brackets.
+
+What about `isValidIpv4` and `isValidIpv6`?
+```cpp
+bool isValidIpv4(const std::string& ipAddress) {
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    int status = getaddrinfo(ipAddress.c_str(), nullptr, &hints, &res);
+    if (status != 0) {
+        return false;
+    }
+    freeaddrinfo(res);
+    
+    return ipAddress.find('.') != std::string::npos && ipAddress.find(':') == std::string::npos;
+}
+
+bool isValidIpv6(const std::string& ipAddress) {
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    int status = getaddrinfo(ipAddress.c_str(), nullptr, &hints, &res);
+    if (status != 0) {
+        return false;
+    }
+    freeaddrinfo(res);
+    
+    return ipAddress.find(':') != std::string::npos;
+}
+```
+
+Wait, what if `ipAddress` is an empty string `""`?
+`InetAddress.getByName("")` returns the loopback address `InetAddress` for `127.0.0.1`.
+`getaddrinfo("")` might return `EAI_NONAME` on some systems (like Linux, unless `AI_ADDRCONFIG` or other flags are set, but even then, `""` is not a valid node name for `getaddrinfo` without `AI_PASSIVE` which is for `NULL`).
+Wait, if `ipAddress` is `""`, Java's `isValidIpv4` would return `false` because `""` does not contain `.`. So the return value is the same (`false`), regardless of whether `getaddrinfo` fails or succeeds.
+If `ipAddress` is `""`, Java's `isValidIpv6` would return `false` because `""` does not contain `:`. Again, the return value is the same.
+If `ipAddress` is `""`, Java's `getHostname` would resolve to `127.0.0.1`, then `getCanonicalHostName` would return the local hostname (e.g., "my-pc"). It doesn't equal `""`, so it returns the local hostname.
+In C++, if `getaddrinfo("")` fails, `getHostname` returns `std::nullopt`. This is a behavioral difference.
+To fix this, we can map `""` to `"127.0.0.1"` or `nullptr` for `getaddrinfo`.
+Wait, `InetAddress.getByName(null)` in Java returns loopback. `InetAddress.getByName("")` also returns loopback.
+Let's check `getaddrinfo(NULL, ...)`. With `AI_PASSIVE` it returns `0.0.0.0`. Without `AI_PASSIVE` it returns `127.0.0.1`.
+So if `ipAddress` is empty, we can pass `nullptr` to `getaddrinfo` instead of `""`.
+Let's add:
+```cpp
+const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+int status = getaddrinfo(node, nullptr, &hints, &res);
+```
+Wait, if `node` is `nullptr`, `hints.ai_flags` must NOT have `AI_PASSIVE` to get `127.0.0.1`.
+By default `ai_flags` is 0, so it will return `127.0.0.1`. This matches Java!
+
+Let's test this logic.
+If `ipAddress` is `""`:
+- `isValidIpv4`: `node` is `nullptr`. `getaddrinfo` succeeds. `ipAddress.find('.')` is `npos`. Returns `false`. Matches Java.
+- `isValidIpv6`: `node` is `nullptr`. `getaddrinfo` succeeds. `ipAddress.find(':')` is `npos`. Returns `false`. Matches Java.
+- `getHostname`: `node` is `nullptr`. `getaddrinfo` succeeds, returning `127.0.0.1`. `getnameinfo` returns `"localhost"` or local PC name. Not equal to `""`. Returns local PC name. Matches Java.
+
+What about `ipAddress` being `"localhost"`?
+- `isValidIpv4`: `getaddrinfo` succeeds. `"localhost".find('.')` is `npos`. Returns `false`. Matches Java (since "localhost" has no dot).
+- `isValidIpv6`: `getaddrinfo` succeeds. `"localhost".find(':')` is `npos`. Returns `false`. Matches Java.
+- `getHostname`: `getaddrinfo` succeeds, returning `127.0.0.1`. `getnameinfo` returns `"localhost"`. Not equal to `"localhost"`. Wait, `canonicalHostName` might be `"localhost"`, which equals `"localhost"`, so it returns `std::nullopt`.
+Wait, in Java, `InetAddress.getByName("localhost").getCanonicalHostName()` returns `"localhost"`. So `canonicalHostName` equals `"localhost"`. Thus it returns `null`. My C++ code would also return `std::nullopt`. Matches Java!
+
+Wait, is there any case where `getaddrinfo` succeeds but `getnameinfo` fails?
+Yes, if the address family is not supported by `getnameinfo`, but that's rare. If it fails, returning `std::nullopt` is the safest fallback (equivalent to exception in Java).
+
+Wait, what if `ipAddress` is `"0.0.0.0"`?
+- `isValidIpv4`: `getaddrinfo` succeeds. Contains `.`, no `:`. Returns `true`. Matches Java.
+- `getHostname`: explicitly handled, returns local hostname. Matches Java.
+
+Let's refine the includes and namespaces.
+```cpp
+#include <string>
+#include <optional>
+#include <cstring>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+#endif
+
+class IpUtil {
+public:
+    static bool isValidIpv4(const std::string& ipAddress) {
+        struct addrinfo hints, *res;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false;
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find('.') != std::string::npos && ipAddress.find(':') == std::string::npos;
+    }
+
+    static bool isValidIpv6(const std::string& ipAddress) {
+        struct addrinfo hints, *res;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false;
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find(':') != std::string::npos;
+    }
+
+    static std::optional<std::string> getHostname(const std::string& ipAddress) {
+        if (ipAddress == "0.0.0.0") {
+            char hostname[1024];
+            if (gethostname(hostname, sizeof(hostname)) == 0) {
+                return std::string(hostname);
+            } else {
+                return std::nullopt;
+            }
+        }
+
+        struct addrinfo hints, *res;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        char host[NI_MAXHOST];
+        status = getnameinfo(res->ai_addr, res->ai_addrlen, host, sizeof(host), nullptr, 0, 0);
+        freeaddrinfo(res);
+
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        std::string canonicalHostName(host);
+        if (canonicalHostName == ipAddress) {
+            return std::nullopt;
+        }
+        return canonicalHostName;
+    }
+};
+```
+
+Wait, Windows requires WSAStartup for `getaddrinfo` and `gethostname` to work. If I don't initialize Winsock, these functions will fail with `WSANOTINITIALISED`.
+Since I am writing a utility class, I might need to handle Winsock initialization. However, doing WSAStartup in a utility class is generally bad practice (who calls WSACleanup?). It's usually done in `main()`. If I must write a standalone class, I could add a static helper that ensures WSAStartup is called once.
+But the prompt says "Use idiomatic C++ only when it doesn't change behavior."
+Maybe I can just add a note or a static initializer for Windows.
+```cpp
+#ifdef _WIN32
+static bool wsa_init() {
+    WSADATA wsaData;
+    return WSAStartup(MAKEWORD(2, 2), &wsaData) == 0;
+}
+static bool wsa_initialized = wsa_init();
+#endif
+```
+This is a bit hacky but ensures the functions work on Windows. Let's include it inside the class or before it.
+
+Wait, `InetAddress.getByName` in Java also accepts IP addresses with spaces? No, it trims them? No, Java's `InetAddress.getByName` does not trim spaces. " 192.168.1.1" throws `UnknownHostException`. `getaddrinfo` also fails for leading spaces. So it matches.
+
+What about IPv6 addresses with zone indices, like `fe80::1%eth0`?
+`InetAddress.getByName` might throw an exception for `%eth0` depending on Java version. `getaddrinfo` might accept it on some OS. This is an edge case, probably fine to ignore or assume standard behavior.
+
+What about `InetAddress.getByName("::1")`?
+`isValidIpv6("::1")` -> `getaddrinfo` succeeds, contains `:`, returns `true`. Matches Java.
+
+What about `isValidIpv4("1.2.3.4")`?
+`getaddrinfo` succeeds, contains `.`, no `:`, returns `true`. Matches Java.
+
+What about `isValidIpv4("1.2.3")`?
+`InetAddress.getByName("1.2.3")` throws `UnknownHostException`? Actually, wait.
+In Java, `InetAddress.getByName("1.2.3")` does a DNS lookup for "1.2.3". If it fails, it throws `UnknownHostException`. So `isValidIpv4` returns `false`.
+`getaddrinfo("1.2.3")` also does a DNS lookup and fails, returning `EAI_NONAME`. Returns `false`. Matches Java.
+
+Wait, what if `1.2.3` resolves to an IP? Then Java returns `true` because it contains `.` and no `:`, and `getByName` succeeds. C++ `getaddrinfo` would also succeed, and `isValidIpv4` would return `true`. Matches Java.
+
+Let's double check `getaddrinfo` with `nullptr` node.
+If `ipAddress` is `""`, `node` is `nullptr`.
+`hints.ai_flags` is 0.
+`getaddrinfo(nullptr, ...)` with `ai_flags == 0` returns the loopback address `127.0.0.1` (and `::1`).
+Is this correct?
+According to POSIX:
+"If the nodename argument is null, the AI_PASSIVE flag is ignored. If the AI_PASSIVE flag is not set, the returned socket addresses will be those of the loopback address."
+Wait, wait. "If nodename is null, and AI_PASSIVE is not set, the returned address will be the loopback address."
+Wait, no. The man page for `getaddrinfo` says:
+"If AI_PASSIVE is specified, the returned address will be the wildcard address (0.0.0.0 or ::). If AI_PASSIVE is not specified, the returned address will be the loopback address (127.0.0.1 or ::1)."
+Wait, but `node` is the first argument. If `node` is null, and we don't specify `AI_PASSIVE`, it returns loopback.
+Let's verify this. Yes, `getaddrinfo(NULL, "80", &hints, &res)` with `hints.ai_flags = 0` returns `127.0.0.1`.
+So `getaddrinfo(nullptr, nullptr, &hints, &res)` with `hints.ai_flags = 0` will return `127.0.0.1`.
+Wait, the `service` argument is `nullptr` here. Is it valid to pass `nullptr` for service when node is not null? Yes. Is it valid when node is null? Yes, but it might return only the IP address with port 0.
+This matches Java's `InetAddress.getByName("")` which returns `127.0.0.1`.
+
+Let's trace `getHostname` for `ipAddress = "0.0.0.0"`.
+Java:
+```java
+if ("0.0.0.0".equals(ipAddress)) {
+    return InetAddress.getLocalHost().getHostName();
+}
+```
+C++:
+```cpp
+if (ipAddress == "0.0.0.0") {
+    char hostname[1024];
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        return std::string(hostname);
+    } else {
+        return std::nullopt;
+    }
+}
+```
+This is correct. `InetAddress.getLocalHost().getHostName()` is equivalent to `gethostname` (though `gethostname` might not return the FQDN, while Java's `getHostName()` might. Wait, Java's `getHostName()` returns the hostname, not necessarily FQDN. `getCanonicalHostName()` returns FQDN. The Java code uses `getHostName()`, so `gethostname` is a good match).
+
+Wait, what if `ipAddress` is `"0.0.0.0"` but `gethostname` fails?
+In Java, `InetAddress.getLocalHost()` can throw `UnknownHostException`. If it does, the `catch` block returns `null`. My C++ code returns `std::nullopt` if `gethostname` fails. This matches Java perfectly.
+
+Let's consider the `getHostname` logic again.
+```java
+String hostname = inetAddress.getCanonicalHostName();
+if (hostname.equals(ipAddress)) {
+    return null;
+}
+return hostname;
+```
+In C++:
+```cpp
+std::string canonicalHostName(host);
+if (canonicalHostName == ipAddress) {
+    return std::nullopt;
+}
+return canonicalHostName;
+```
+This is identical in behavior.
+
+Wait, is there any difference in how `getCanonicalHostName` formats IPs?
+For IPv4, `getCanonicalHostName` returns the dotted decimal string, e.g., `"192.168.1.1"`.
+For IPv6, it returns the standard IPv6 representation, e.g., `"2001:db8::1"`.
+`getnameinfo` with `NI_NUMERICHOST` would format it this way. But we don't pass `NI_NUMERICHOST`, so if it's an IP, `getnameinfo` will format it numerically anyway because reverse DNS failed.
+Wait! `getnameinfo` without `NI_NUMERICHOST` will try reverse DNS. If reverse DNS fails, it falls back to numeric. But does it format it the same way as Java?
+For IPv6, `getnameinfo` might return `"2001:db8::1"`. Java's `InetAddress.getByName("2001:db8::1").getCanonicalHostName()` returns `"2001:db8::1"`.
+What about IPv6 with a scope ID?
+If `ipAddress` is `"fe80::1%eth0"`, `getaddrinfo` might parse it. `getnameinfo` might return `"fe80::1%eth0"`. They would be equal, so it returns `std::nullopt`.
+This is consistent.
+
+What about Windows-specific includes and WSAStartup?
+```cpp
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+#endif
+```
+And I should probably add a static block or a helper to ensure Winsock is initialized.
+```cpp
+#ifdef _WIN32
+class WsaInitializer {
+public:
+    WsaInitializer() {
+        WSADATA wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+    }
+    ~WsaInitializer() {
+        WSACleanup();
+    }
+};
+static WsaInitializer wsa_init;
+#endif
+```
+This is a common pattern for C++ on Windows when using sockets in a library.
+
+Wait, the prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions). Use idiomatic C++ only when it doesn't change behavior."
+Using `std::optional<std::string>` for nullable `String` is idiomatic C++.
+Using `const std::string&` for input is idiomatic C++.
+Using `getaddrinfo` and `getnameinfo` is the standard C/C++ way to do DNS resolution.
+
+Let's review the method signatures:
+```cpp
+class IpUtil {
+public:
+    static bool isValidIpv4(const std::string& ipAddress);
+    static bool isValidIpv6(const std::string& ipAddress);
+    static std::optional<std::string> getHostname(const std::string& ipAddress);
+};
+```
+
+Wait, in Java, `ipAddress` could be `null`. If it is, `ipAddress.contains(".")` throws `NullPointerException`.
+In C++, `std::string` cannot be null, so we don't have this edge case, or we could accept `std::optional<std::string>` or `std::string_view`. But `const std::string&` is fine, as passing a null pointer to `const std::string&` is undefined behavior in C++, which is somewhat analogous to NPE in Java. If we want to strictly mimic NPE, we could accept `const char*` and check for null, but `const std::string&` is much more idiomatic. I'll stick to `const std::string&`.
+
+Wait, what if `ipAddress` is an empty string `""`?
+In Java:
+`isValidIpv4("")` -> `InetAddress.getByName("")` succeeds. `"".contains(".")` is `false`. Returns `false`.
+`isValidIpv6("")` -> `InetAddress.getByName("")` succeeds. `"".contains(":")` is `false`. Returns `false`.
+`getHostname("")` -> `InetAddress.getByName("")` returns loopback. `getCanonicalHostName()` returns local hostname. Not equal to `""`. Returns local hostname.
+
+In C++ with my code:
+`isValidIpv4("")` -> `node` is `nullptr`. `getaddrinfo` succeeds. `ipAddress.find('.')` is `npos`. Returns `false`.
+`isValidIpv6("")` -> `node` is `nullptr`. `getaddrinfo` succeeds. `ipAddress.find(':')` is `npos`. Returns `false`.
+`getHostname("")` -> `node` is `nullptr`. `getaddrinfo` succeeds. `getnameinfo` returns local hostname. Not equal to `""`. Returns local hostname.
+This matches Java perfectly!
+
+What if `ipAddress` is `"localhost"`?
+In Java:
+`isValidIpv4("localhost")` -> `getByName` succeeds. `"localhost".contains(".")` is `false`. Returns `false`.
+`isValidIpv6("localhost")` -> `getByName` succeeds. `"localhost".contains(":")` is `false`. Returns `false`.
+`getHostname("localhost")` -> `getByName` succeeds. `getCanonicalHostName` returns `"localhost"`. Equals `"localhost"`. Returns `null`.
+
+In C++:
+`isValidIpv4("localhost")` -> `getaddrinfo` succeeds. `find('.')` is `npos`. Returns `false`.
+`isValidIpv6("localhost")` -> `getaddrinfo` succeeds. `find(':')` is `npos`. Returns `false`.
+`getHostname("localhost")` -> `getaddrinfo` succeeds. `getnameinfo` returns `"localhost"`. Equals `"localhost"`. Returns `std::nullopt`.
+Matches Java perfectly!
+
+Wait, does `getnameinfo` return `"localhost"` for `127.0.0.1`?
+Yes, usually. If it returns the PC name, it might not equal `"localhost"`. In Java, `InetAddress.getByName("localhost").getCanonicalHostName()` usually returns `"localhost"`. So it matches.
+
+Let's consider an edge case where `getaddrinfo` returns multiple results (e.g. both IPv4 and IPv6).
+`res` is a linked list. We just use `res->ai_addr` for the first result.
+In Java, `InetAddress.getByName("localhost")` returns the IPv4 address `127.0.0.1` by default, unless `java.net.preferIPv6Addresses` is set.
+In C++, `getaddrinfo` returns results in the order dictated by the OS (usually IPv6 first if supported, then IPv4, or based on `/etc/gai.conf`).
+If we use the first result, `getnameinfo` might resolve the IPv6 loopback `::1`, returning `"localhost"` or `"ip6-localhost"`.
+If it returns `"ip6-localhost"`, it won't equal `"localhost"`, so `getHostname("localhost")` would return `"ip6-localhost"`, whereas Java might return `null` (because it resolved to `127.0.0.1` and `getCanonicalHostName` returned `"localhost"`).
+Is this a significant behavioral difference? The prompt says "Keep behavior identical". Java's `InetAddress` behavior is tied to the JRE's DNS resolution strategy. C++ is tied to the OS's DNS resolution strategy. It's impossible to make them 100% identical in all environments because DNS resolution is environment-dependent. But the logic of the code is identical.
+
+To be slightly closer to Java's default preference for IPv4, we could set `hints.ai_family = AF_INET;` for `isValidIpv4` and `AF_INET6` for `isValidIpv6`.
+Wait, `isValidIpv4` in Java:
+`InetAddress.getByName(ipAddress)` succeeds if it's a valid IPv4 OR IPv6 OR resolvable hostname.
+If we set `hints.ai_family = AF_INET;`, then `isValidIpv4("::1")` would fail in C++, but in Java it would succeed (though return `false` because it contains `:`).
+So we must use `AF_UNSPEC` for `isValidIpv4` and `isValidIpv6` to match Java's `getByName` which accepts any protocol.
+For `getHostname`, using `AF_UNSPEC` is also correct. The first result from `getaddrinfo` is what the OS prefers, which is standard C++ behavior.
+
+Let's double check `getaddrinfo` memory leak.
+We call `freeaddrinfo(res)` in all paths. Yes.
+
+Let's check `getnameinfo` flags.
+`getnameinfo(res->ai_addr, res->ai_addrlen, host, sizeof(host), nullptr, 0, 0);`
+The last argument is flags. `0` means default behavior: resolve hostname if possible, otherwise return numeric.
+This matches Java's `getCanonicalHostName()`.
+
+Let's review the code structure.
+```cpp
+#include <string>
+#include <optional>
+#include <cstring>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+
+class WsaInitializer {
+public:
+    WsaInitializer() {
+        WSADATA wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+    }
+    ~WsaInitializer() {
+        WSACleanup();
+    }
+};
+static WsaInitializer wsa_init;
+
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+#endif
+
+class IpUtil {
+public:
+    static bool isValidIpv4(const std::string& ipAddress) {
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false;
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find('.') != std::string::npos && ipAddress.find(':') == std::string::npos;
+    }
+
+    static bool isValidIpv6(const std::string& ipAddress) {
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false;
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find(':') != std::string::npos;
+    }
+
+    static std::optional<std::string> getHostname(const std::string& ipAddress) {
+        if (ipAddress == "0.0.0.0") {
+            char hostname[1024];
+            if (gethostname(hostname, sizeof(hostname)) == 0) {
+                return std::string(hostname);
+            } else {
+                return std::nullopt;
+            }
+        }
+
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        char host[NI_MAXHOST];
+        status = getnameinfo(res->ai_addr, res->ai_addrlen, host, sizeof(host), nullptr, 0, 0);
+        freeaddrinfo(res);
+
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        std::string canonicalHostName(host);
+        if (canonicalHostName == ipAddress) {
+            return std::nullopt;
+        }
+        return canonicalHostName;
+    }
+};
+```
+
+Wait, `struct addrinfo hints{}, *res;` is valid C++11. It zero-initializes the struct. This is cleaner than `memset`.
+`NI_MAXHOST` is defined in `<netdb.h>` on POSIX and `<ws2tcpip.h>` on Windows.
+On Windows, `NI_MAXHOST` is 1025.
+On POSIX, `NI_MAXHOST` is 1025.
+So `char host[NI_MAXHOST];` is safe.
+
+Wait, what if `ipAddress` is `"0.0.0.0"` but we are on a system where `gethostname` doesn't exist? `gethostname` is standard POSIX and available on Windows via winsock. So it should be fine.
+
+Is there any edge case in `InetAddress.getByName` that I missed?
+If `ipAddress` is an IP address with trailing/leading whitespace, Java throws `UnknownHostException`. C++ `getaddrinfo` also fails. Match.
+If `ipAddress` is a numeric IP like `"192.168.1.1"`, `getaddrinfo` succeeds. Match.
+If `ipAddress` is an IPv6 like `"2001:db8::1"`, `getaddrinfo` succeeds. Match.
+
+What about `isValidIpv4` and `isValidIpv6` when `ipAddress` is `null`?
+In Java, passing `null` to `isValidIpv4` causes `NullPointerException` on `ipAddress.contains(".")`.
+In C++, passing a `null` `const char*` to `std::string` constructor is undefined behavior (often a crash). Since we take `const std::string&`, the caller must construct an `std::string`, which would crash on `nullptr` if they pass it. This is close enough to Java's NPE. To be strictly identical, we could take `std::string_view` or `const char*` and throw an exception if null, but `const std::string&` is idiomatic. I will stick to `const std::string&`.
+
+Wait, in Java, `InetAddress.getByName(null)` returns the loopback address.
+But `isValidIpv4(null)` throws NPE because `null.contains(".")` is called.
+In C++, if we pass `nullptr` to `std::string`, it's UB. So it's analogous.
+
+Let's consider if `ipAddress` is `"::"` (all zeros IPv6).
+`isValidIpv6("::")` -> `getaddrinfo` succeeds, contains `:`, returns `true`. Match.
+`getHostname("::")` -> `getaddrinfo` succeeds, `getnameinfo` returns `"::"`. Equals `"::"`, returns `std::nullopt`. Match.
+
+What about `getHostname` for `"127.0.0.1"`?
+`getaddrinfo` succeeds, `getnameinfo` returns `"localhost"`. Not equal to `"127.0.0.1"`. Returns `"localhost"`. Match.
+
+One minor point: `InetAddress.getByName` can resolve hostnames that are not FQDNs, like `"my-pc"`. `getaddrinfo` also resolves using local resolver rules (e.g., `/etc/hosts` or NetBIOS/mDNS). This is handled by the OS, so behavior might differ slightly between Java and C++ depending on the JVM and OS, but the code logic is identical.
+
+Is there any issue with `getaddrinfo` blocking?
+Yes, `getaddrinfo` can block for DNS resolution, just like `InetAddress.getByName`. So side effects (blocking) are identical.
+
+What about `WSAStartup` on Windows?
+If I put `static WsaInitializer wsa_init;` in the global scope, it will be initialized before `main`. However, if this code is in a header file, it might violate the One Definition Rule (ODR) if included in multiple translation units, leading to multiple static initializers or linker errors.
+To avoid ODR issues, I can put it inside a function or use an anonymous namespace, or just put it in the class as a static member initialized once.
+Actually, a cleaner way for a utility class is to ensure WSAStartup is called within the methods if not already initialized.
+```cpp
+#ifdef _WIN32
+static bool ensureWsaInitialized() {
+    static bool initialized = []() {
+        WSADATA wsaData;
+        return WSAStartup(MAKEWORD(2, 2), &wsaData) == 0;
+    }();
+    return initialized;
+}
+#endif
+```
+This is thread-safe in C++11 (magic statics) and avoids ODR issues.
+Let's use this pattern.
+
+```cpp
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+
+static void ensureWsaInitialized() {
+    static bool initialized = []() {
+        WSADATA wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+        return true;
+    }();
+    (void)initialized;
+}
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+#endif
+```
+Wait, `WSACleanup` is never called. This is generally acceptable for a utility library that lives for the lifetime of the application, similar to how Java doesn't uninitialize its socket layer. If we want to be perfectly clean, we could use `atexit`, but it's not strictly necessary and avoids cleanup order issues.
+
+Let's refine the `ensureWsaInitialized` call:
+```cpp
+static bool isValidIpv4(const std::string& ipAddress) {
+#ifdef _WIN32
+    ensureWsaInitialized();
+#endif
+    struct addrinfo hints{}, *res;
+    ...
+```
+This is safe and correct.
+
+Wait, the prompt says "Use idiomatic C++ only when it doesn't change behavior."
+Is returning `std::optional<std::string>` idiomatic? Yes. Does it change behavior? No, it perfectly models a nullable `String` in Java. Returning `std::string` and using an empty string to represent `null` would change behavior if the hostname could legitimately be an empty string (though unlikely, `std::optional` is strictly more correct).
+
+Let's review the `getHostname` method's `ipAddress == "0.0.0.0"` check.
+In Java:
+```java
+if ("0.0.0.0".equals(ipAddress)) {
+    return InetAddress.getLocalHost().getHostName();
+}
+```
+In C++:
+```cpp
+if (ipAddress == "0.0.0.0") {
+    char hostname[1024];
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        return std::string(hostname);
+    } else {
+        return std::nullopt;
+    }
+}
+```
+This is correct.
+
+Wait, `InetAddress.getLocalHost().getHostName()` in Java can throw `UnknownHostException`.
+If it throws, the `catch` block in `getHostname` catches it and returns `null`.
+In C++, if `gethostname` fails, we return `std::nullopt`. This matches.
+
+What if `ipAddress` is `"0.0.0.0"` and `gethostname` succeeds?
+Java returns the hostname. C++ returns the hostname. Matches.
+
+Wait, what if `ipAddress` is `"0.0.0.0"` but `InetAddress.getLocalHost()` throws `UnknownHostException`?
+Does `gethostname` fail in C++ in the same cases?
+`InetAddress.getLocalHost()` throws when it can't resolve the local host's IP address, which involves resolving the local hostname. `gethostname` just returns the local hostname, it doesn't resolve it. So `gethostname` might succeed where Java's `getLocalHost` throws.
+Is there a way to exactly mimic `InetAddress.getLocalHost().getHostName()`?
+`InetAddress.getLocalHost()` does:
+1. `gethostname()`
+2. `getByName(hostname)`
+If `getByName` fails, it throws `UnknownHostException`.
+So Java's `getLocalHost().getHostName()` is essentially `gethostname()`, but it validates that the hostname is resolvable.
+To perfectly mimic this, we could do:
+```cpp
+if (ipAddress == "0.0.0.0") {
+    char hostname[1024];
+    if (gethostname(hostname, sizeof(hostname)) != 0) {
+        return std::nullopt;
+    }
+    // Mimic InetAddress.getLocalHost() which resolves the hostname
+    struct addrinfo hints{}, *res;
+    hints.ai_family = AF_UNSPEC;
+    int status = getaddrinfo(hostname, nullptr, &hints, &res);
+    if (status != 0) {
+        return std::nullopt; // Mimic UnknownHostException
+    }
+    freeaddrinfo(res);
+    return std::string(hostname);
+}
+```
+This perfectly mimics Java's `InetAddress.getLocalHost().getHostName()` behavior, including throwing `UnknownHostException` (returning `std::nullopt`) if the local hostname is not resolvable.
+This is a great catch! Java's `getLocalHost()` explicitly does a DNS check and throws if it fails.
+
+Let's double check Java's `InetAddress.getLocalHost()` documentation:
+"Returns the address of the local host. This is achieved by retrieving the name of the host from the system, then resolving that name into an InetAddress."
+"Throws: UnknownHostException - if the local host name could not be resolved into an address."
+Yes! My updated C++ logic exactly matches this.
+
+Let's review the whole code again.
+
+```cpp
+#include <string>
+#include <optional>
+#include <cstring>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+
+static void ensureWsaInitialized() {
+    static bool initialized = []() {
+        WSADATA wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+        return true;
+    }();
+    (void)initialized;
+}
+
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+#endif
+
+class IpUtil {
+public:
+    static bool isValidIpv4(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false;
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find('.') != std::string::npos && ipAddress.find(':') == std::string::npos;
+    }
+
+    static bool isValidIpv6(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false;
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find(':') != std::string::npos;
+    }
+
+    static std::optional<std::string> getHostname(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        if (ipAddress == "0.0.0.0") {
+            char hostname[1024];
+            if (gethostname(hostname, sizeof(hostname)) != 0) {
+                return std::nullopt;
+            }
+            // Mimic InetAddress.getLocalHost() which resolves the hostname and throws if unresolvable
+            struct addrinfo hints{}, *res;
+            hints.ai_family = AF_UNSPEC;
+            int status = getaddrinfo(hostname, nullptr, &hints, &res);
+            if (status != 0) {
+                return std::nullopt;
+            }
+            freeaddrinfo(res);
+            return std::string(hostname);
+        }
+
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        char host[NI_MAXHOST];
+        status = getnameinfo(res->ai_addr, res->ai_addrlen, host, sizeof(host), nullptr, 0, 0);
+        freeaddrinfo(res);
+
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        std::string canonicalHostName(host);
+        if (canonicalHostName == ipAddress) {
+            return std::nullopt;
+        }
+        return canonicalHostName;
+    }
+};
+```
+
+Wait, `struct addrinfo hints{}, *res;` initializes `hints` to zero. But `hints.ai_flags` is 0. Is that correct?
+If `node` is `nullptr` and `hints.ai_flags` is 0, `getaddrinfo` returns the loopback address. This matches Java's `InetAddress.getByName("")` and `InetAddress.getByName(null)`.
+If `node` is not `nullptr`, `ai_flags` being 0 is the default and works perfectly.
+
+Let's check `getaddrinfo` with `node == nullptr` on Windows.
+Windows documentation for `getaddrinfo`:
+"If the pNodeName parameter contains an empty string, all registered addresses on the local computer are returned."
+Wait! "all registered addresses on the local computer are returned"?
+Wait, if `pNodeName` is `NULL`:
+"If the pNodeName parameter is NULL, the function returns the wildcard address for the local computer."
+Wait, Windows `getaddrinfo` for `NULL` node returns the wildcard address (0.0.0.0) if `AI_PASSIVE` is set, otherwise it returns the loopback address (127.0.0.1).
+Wait, let me double check Windows docs.
+"If the pNodeName parameter is NULL:
+- If AI_PASSIVE is set, the returned address will be the wildcard address (0.0.0.0 or ::).
+- If AI_PASSIVE is not set, the returned address will be the loopback address (127.0.0.1 or ::1)."
+Okay, so `NULL` behaves the same as POSIX.
+What if `pNodeName` is an empty string `""` on Windows?
+"If the pNodeName parameter points to an empty string, the function returns the loopback address."
+Wait, on Linux, `getaddrinfo("")` returns `EAI_NONAME` unless `AI_ADDRCONFIG` or something is set? Actually, on Linux, `getaddrinfo("")` usually returns `EAI_NONAME`.
+Java's `InetAddress.getByName("")` returns the loopback address.
+So if `ipAddress` is `""`, passing `nullptr` to `getaddrinfo` is the correct cross-platform way to mimic Java's behavior, because `""` is treated as loopback in Java, and `nullptr` is treated as loopback in `getaddrinfo` (when `AI_PASSIVE` is not set).
+
+Wait, what if `ipAddress` is `"localhost"`?
+In Java, `InetAddress.getByName("localhost")` returns `127.0.0.1`.
+In C++, `getaddrinfo("localhost", ...)` returns `127.0.0.1`.
+So we only map `""` to `nullptr`. This is correct.
+
+Let's consider `NI_MAXHOST`. On Windows, it's defined in `ws2tcpip.h`. On Linux, in `netdb.h`.
+Is there any case where `NI_MAXHOST` is not defined?
+It's standard. Should be fine.
+
+What about `hints.ai_family = AF_UNSPEC;`?
+This allows both IPv4 and IPv6, which matches `InetAddress.getByName()`. `InetAddress` has `Inet4Address` and `Inet6Address`, and `getByName` can return either depending on what resolves.
+
+Wait, `InetAddress.getByName(String host)` documentation:
+"If a literal IP address is supplied, only the validity of the address format is checked."
+This means for `"192.168.1.1"`, it doesn't do a DNS lookup, it just parses it.
+For `"google.com"`, it does a DNS lookup.
+`getaddrinfo` does exactly this: for numeric IPs it parses them; for hostnames it resolves them.
+
+Is there any difference in how `InetAddress.getByName` parses IPv6?
+Java accepts standard IPv6 formats. `getaddrinfo` also accepts standard IPv6 formats.
+
+What about IPv4-mapped IPv6 addresses, like `::ffff:192.168.1.1`?
+Java's `InetAddress.getByName("::ffff:192.168.1.1")` returns an `Inet6Address` object.
+`isValidIpv6("::ffff:192.168.1.1")` -> contains `:`, returns `true`.
+`isValidIpv4("::ffff:192.168.1.1")` -> contains `.`, but also contains `:`, so returns `false`.
+In C++, `getaddrinfo("::ffff:192.168.1.1", ...)` succeeds. `find('.')` is true, `find(':')` is true. `isValidIpv4` returns `false`. `isValidIpv6` returns `true`.
+Matches Java perfectly.
+
+What about `getHostname("::ffff:192.168.1.1")`?
+Java's `getCanonicalHostName` returns `"::ffff:192.168.1.1"` if reverse DNS fails.
+C++ `getnameinfo` returns `"::ffff:192.168.1.1"`.
+Equals `ipAddress`, returns `null`. Matches Java.
+
+Wait, does `getnameinfo` return `"::ffff:192.168.1.1"` or `"192.168.1.1"`?
+By default, `getnameinfo` without `NI_NUMERICHOST` might return the IPv4 hostname if it resolves the IPv4 part, or the numeric IPv6 format.
+Actually, Java's `Inet6Address.getCanonicalHostName()` returns the IPv6 format.
+If it doesn't match the input string, it might return a different format?
+Wait, if `ipAddress` is `"::ffff:192.168.1.1"`, and `getnameinfo` returns `"::ffff:192.168.1.1"`, they are equal, so `std::nullopt`.
+What if `getnameinfo` returns the IPv4 format `"192.168.1.1"`? Then they are not equal, and it returns `"192.168.1.1"`.
+Does Java's `getCanonicalHostName` return the IPv4 format for an IPv4-mapped IPv6 address?
+Java's `Inet6Address.getCanonicalHostName()` returns the FQDN if resolved, otherwise the IP address in IPv6 format.
+So it returns `"::ffff:192.168.1.1"`. It equals the input, so it returns `null`.
+C++ `getnameinfo` also returns the IPv6 format by default. So it matches.
+
+Let's check if there's any memory leak in `getHostname` when `ipAddress == "0.0.0.0"`.
+```cpp
+if (ipAddress == "0.0.0.0") {
+    char hostname[1024];
+    if (gethostname(hostname, sizeof(hostname)) != 0) {
+        return std::nullopt;
+    }
+    struct addrinfo hints{}, *res;
+    hints.ai_family = AF_UNSPEC;
+    int status = getaddrinfo(hostname, nullptr, &hints, &res);
+    if (status != 0) {
+        return std::nullopt;
+    }
+    freeaddrinfo(res);
+    return std::string(hostname);
+}
+```
+No leak here. `freeaddrinfo` is called.
+
+Wait, what if `ipAddress` is `"0.0.0.0"` and `hostname` is longer than 1023 characters?
+`gethostname` truncates and null-terminates if the buffer is too small, returning 0 on success (on POSIX) or -1 if buffer is too small (on some systems, though POSIX says it's unspecified if it truncates, but usually it truncates). 1024 is generally safe for hostnames (usually limited to 255 or 1024 by OS). `MAXHOSTNAMELEN` is typically 256. So 1024 is very safe.
+
+Wait, what if `getaddrinfo` returns `nullptr` for `res`?
+The standard says if `getaddrinfo` succeeds (returns 0), `res` points to a linked list of `addrinfo` structures. So `res` is not `nullptr`. We can safely dereference `res->ai_addr`.
+
+Is there any issue with `freeaddrinfo(res)` being called before `getnameinfo`?
+No, `getnameinfo` uses `res->ai_addr` and `res->ai_addrlen` which we pass by value (or rather, the struct contents). Wait!
+`res->ai_addr` is a pointer! If we free `res`, `res->ai_addr` might become invalid!
+Ah! Good catch!
+```cpp
+        struct sockaddr_storage addr;
+        socklen_t addrlen = res->ai_addrlen;
+        memcpy(&addr, res->ai_addr, addrlen);
+        freeaddrinfo(res);
+
+        char host[NI_MAXHOST];
+        status = getnameinfo((struct sockaddr*)&addr, addrlen, host, sizeof(host), nullptr, 0, 0);
+```
+Wait, `getnameinfo` takes a `const struct sockaddr*` and `socklen_t`. If we free `res`, the `ai_addr` pointer is invalidated!
+So we MUST copy the address before freeing `res`.
+Let's fix this:
+
+```cpp
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        struct sockaddr_storage addr;
+        socklen_t addrlen = res->ai_addrlen;
+        if (addrlen > sizeof(addr)) {
+            freeaddrinfo(res);
+            return std::nullopt; // Should not happen
+        }
+        memcpy(&addr, res->ai_addr, addrlen);
+        freeaddrinfo(res);
+
+        char host[NI_MAXHOST];
+        status = getnameinfo((struct sockaddr*)&addr, addrlen, host, sizeof(host), nullptr, 0, 0);
+```
+This is much safer and correct.
+
+Let's double check `getnameinfo` signature.
+`int getnameinfo(const struct sockaddr *addr, socklen_t addrlen, char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags);`
+Yes, it takes the address by pointer. So we must keep the address alive.
+Using `sockaddr_storage` is the standard way to store any socket address.
+
+Let's review the `0.0.0.0` block again.
+```cpp
+        if (ipAddress == "0.0.0.0") {
+            char hostname[1024];
+            if (gethostname(hostname, sizeof(hostname)) != 0) {
+                return std::nullopt;
+            }
+            struct addrinfo hints{}, *res;
+            hints.ai_family = AF_UNSPEC;
+            int status = getaddrinfo(hostname, nullptr, &hints, &res);
+            if (status != 0) {
+                return std::nullopt;
+            }
+            freeaddrinfo(res);
+            return std::string(hostname);
+        }
+```
+This is fine, we don't use the address after freeing it here.
+
+Wait, in `isValidIpv4` and `isValidIpv6`, we only check if `getaddrinfo` succeeds, and then free `res`. That's correct.
+
+Let's do a final review of the code.
+
+```cpp
+#include <string>
+#include <optional>
+#include <cstring>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+
+static void ensureWsaInitialized() {
+    static bool initialized = []() {
+        WSADATA wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+        return true;
+    }();
+    (void)initialized;
+}
+
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+#endif
+
+class IpUtil {
+public:
+    static bool isValidIpv4(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false;
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find('.') != std::string::npos && ipAddress.find(':') == std::string::npos;
+    }
+
+    static bool isValidIpv6(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false;
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find(':') != std::string::npos;
+    }
+
+    static std::optional<std::string> getHostname(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        if (ipAddress == "0.0.0.0") {
+            char hostname[1024];
+            if (gethostname(hostname, sizeof(hostname)) != 0) {
+                return std::nullopt;
+            }
+            struct addrinfo hints{}, *res;
+            hints.ai_family = AF_UNSPEC;
+            int status = getaddrinfo(hostname, nullptr, &hints, &res);
+            if (status != 0) {
+                return std::nullopt;
+            }
+            freeaddrinfo(res);
+            return std::string(hostname);
+        }
+
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        struct sockaddr_storage addr;
+        socklen_t addrlen = res->ai_addrlen;
+        if (addrlen > sizeof(addr)) {
+            freeaddrinfo(res);
+            return std::nullopt;
+        }
+        memcpy(&addr, res->ai_addr, addrlen);
+        freeaddrinfo(res);
+
+        char host[NI_MAXHOST];
+        status = getnameinfo((struct sockaddr*)&addr, addrlen, host, sizeof(host), nullptr, 0, 0);
+
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        std::string canonicalHostName(host);
+        if (canonicalHostName == ipAddress) {
+            return std::nullopt;
+        }
+        return canonicalHostName;
+    }
+};
+```
+
+Wait, `socklen_t` is POSIX. On Windows, it's `int`.
+To make it compile on Windows, I should use `auto` or the appropriate type.
+`auto addrlen = res->ai_addrlen;`
+`res->ai_addrlen` is `size_t` on Windows, and `socklen_t` on POSIX. Using `auto` handles this gracefully.
+
+Also, `memcpy` needs `<cstring>`, which is included.
+`std::optional` needs `<optional>`, which is included.
+`std::string` needs `<string>`, which is included.
+
+Let's check `getaddrinfo` on Windows.
+`getaddrinfo` on Windows takes `const char* nodename`, `const char* servname`, `const addrinfo* hints`, `addrinfo** res`.
+This matches exactly.
+
+One detail: `getaddrinfo` on Windows might require `ws2_32.lib`, which is handled by `#pragma comment(lib, "ws2_32.lib")`.
+
+Is there any issue with `NI_MAXHOST` on Windows?
+`NI_MAXHOST` is defined in `ws2tcpip.h` as 1025. This is fine.
+
+What about `struct sockaddr_storage`?
+It's defined in `winsock2.h` on Windows and `sys/socket.h` on POSIX. This is fine.
+
+What about `memcpy`?
+It's standard C++.
+
+Let's trace `ipAddress` = `"192.168.1.1"`
+`isValidIpv4` -> `getaddrinfo` succeeds. `find('.') != npos` (true), `find(':') == npos` (true). Returns `true`.
+`isValidIpv6` -> `getaddrinfo` succeeds. `find(':') != npos` (false). Returns `false`.
+`getHostname` -> `getaddrinfo` succeeds. `getnameinfo` returns `"192.168.1.1"`. `canonicalHostName == ipAddress` (true). Returns `std::nullopt`.
+Matches Java.
+
+What if `ipAddress` = `"google.com"`
+`isValidIpv4` -> `getaddrinfo` succeeds. `find('.') != npos` (true), `find(':') == npos` (true). Returns `true`.
+`isValidIpv6` -> `getaddrinfo` succeeds. `find(':') != npos` (false). Returns `false`.
+`getHostname` -> `getaddrinfo` succeeds. `getnameinfo` returns canonical hostname (e.g. `"sea30s12-in-f14.1e100.net"`). Not equal to `"google.com"`. Returns `"sea30s12-in-f14.1e100.net"`.
+Matches Java.
+
+Wait, what if `ipAddress` = `"2001:db8::1"`
+`isValidIpv4` -> `getaddrinfo` succeeds. `find('.') != npos` (false). Returns `false`.
+`isValidIpv6` -> `getaddrinfo` succeeds. `find(':') != npos` (true). Returns `true`.
+`getHostname` -> `getaddrinfo` succeeds. `getnameinfo` returns `"2001:db8::1"`. `canonicalHostName == ipAddress` (true). Returns `std::nullopt`.
+Matches Java.
+
+What if `ipAddress` = `"::1"`
+`isValidIpv4` -> `getaddrinfo` succeeds. `find('.') != npos` (false). Returns `false`.
+`isValidIpv6` -> `getaddrinfo` succeeds. `find(':') != npos` (true). Returns `true`.
+`getHostname` -> `getaddrinfo` succeeds. `getnameinfo` returns `"localhost"` or `"ip6-localhost"`. Not equal to `"::1"`. Returns `"localhost"`.
+Matches Java.
+
+What if `ipAddress` = `"0.0.0.0"`
+`isValidIpv4` -> `getaddrinfo` succeeds. `find('.') != npos` (true), `find(':') == npos` (true). Returns `true`.
+`isValidIpv6` -> `getaddrinfo` succeeds. `find(':') != npos` (false). Returns `false`.
+`getHostname` -> explicitly handled, returns local hostname.
+Matches Java.
+
+The logic seems completely solid and accurately translates the Java behavior to C++ using the standard POSIX/Winsock APIs.
+
+One minor point: in Java, `InetAddress.getByName` can handle hostnames with spaces? No, it throws `UnknownHostException`. `getaddrinfo` also fails with `EAI_NONAME` for hostnames with spaces. So it matches.
+
+Another point: `InetAddress.getByName` can resolve NetBIOS names on Windows. `getaddrinfo` on Windows also resolves NetBIOS names. So it matches.
+
+The translation is robust. I will present the code clearly with comments explaining the choices.
+</think>
+
+=== RAW ANSWER ===
+To translate this Java code to C++, we need to replicate the behavior of Java's `InetAddress` class using the native C/C++ networking APIs (`getaddrinfo`, `getnameinfo`, and `gethostname`). 
+
+Here are a few key considerations for an identical behavioral translation:
+1. **Null vs Empty String**: In Java, `InetAddress.getByName("")` resolves to the loopback address, just like `null`. In C++, `getaddrinfo` expects `nullptr` to resolve the loopback address, so we map empty strings to `nullptr`.
+2. **`0.0.0.0` Handling**: Java's `InetAddress.getLocalHost()` attempts to resolve the local hostname into an address and throws `UnknownHostException` if it fails. We mimic this by calling `gethostname` and then verifying its resolvability with `getaddrinfo`.
+3. **Memory Safety**: The result of `getaddrinfo` is dynamically allocated and must be freed using `freeaddrinfo`. Also, because `getnameinfo` requires the socket address structure, we must copy it before freeing the `addrinfo` linked list.
+4. **Windows Compatibility**: Windows requires Winsock initialization (`WSAStartup`) before using socket functions. We use a thread-safe static initializer to handle this automatically.
+5. **Nullable Strings**: Java's `String` can be `null`, which is perfectly modeled by `std::optional<std::string>` in C++.
+
+### C++ Code
+
+```cpp
+#include <string>
+#include <optional>
+#include <cstring>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+
+// Ensure Winsock is initialized exactly once per process
+static void ensureWsaInitialized() {
+    static bool initialized = []() {
+        WSADATA wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+        return true;
+    }();
+    (void)initialized;
+}
+
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+#endif
+
+class IpUtil {
+public:
+    static bool isValidIpv4(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC; // Accept both IPv4 and IPv6
+        
+        // Java's InetAddress.getByName("") behaves like null, resolving to loopback
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false; // Mimics UnknownHostException
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find('.') != std::string::npos && 
+               ipAddress.find(':') == std::string::npos;
+    }
+
+    static bool isValidIpv6(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false; // Mimics UnknownHostException
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find(':') != std::string::npos;
+    }
+
+    static std::optional<std::string> getHostname(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        if (ipAddress == "0.0.0.0") {
+            char hostname[1024];
+            if (gethostname(hostname, sizeof(hostname)) != 0) {
+                return std::nullopt; // Mimics UnknownHostException
+            }
+            
+            // Mimic InetAddress.getLocalHost() which validates that the hostname is actually resolvable
+            struct addrinfo hints{}, *res;
+            hints.ai_family = AF_UNSPEC;
+            int status = getaddrinfo(hostname, nullptr, &hints, &res);
+            if (status != 0) {
+                return std::nullopt; // Mimics UnknownHostException
+            }
+            freeaddrinfo(res);
+            
+            return std::string(hostname);
+        }
+
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return std::nullopt; // Mimics UnknownHostException
+        }
+
+        // Copy address struct before freeing the linked list
+        struct sockaddr_storage addr;
+        auto addrlen = res->ai_addrlen;
+        if (addrlen > sizeof(addr)) {
+            freeaddrinfo(res);
+            return std::nullopt;
+        }
+        std::memcpy(&addr, res->ai_addr, addrlen);
+        freeaddrinfo(res);
+
+        // Mimics getCanonicalHostName(): resolves DNS if possible, returns IP string otherwise
+        char host[NI_MAXHOST];
+        status = getnameinfo(reinterpret_cast<struct sockaddr*>(&addr), addrlen, 
+                             host, sizeof(host), nullptr, 0, 0);
+
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        std::string canonicalHostName(host);
+        if (canonicalHostName == ipAddress) {
+            return std::nullopt; // Mimics returning null
+        }
+        return canonicalHostName;
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <optional>
+#include <cstring>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+
+// Ensure Winsock is initialized exactly once per process
+static void ensureWsaInitialized() {
+    static bool initialized = []() {
+        WSADATA wsaData;
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+        return true;
+    }();
+    (void)initialized;
+}
+
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+#endif
+
+class IpUtil {
+public:
+    static bool isValidIpv4(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC; // Accept both IPv4 and IPv6
+        
+        // Java's InetAddress.getByName("") behaves like null, resolving to loopback
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false; // Mimics UnknownHostException
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find('.') != std::string::npos && 
+               ipAddress.find(':') == std::string::npos;
+    }
+
+    static bool isValidIpv6(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return false; // Mimics UnknownHostException
+        }
+        freeaddrinfo(res);
+        
+        return ipAddress.find(':') != std::string::npos;
+    }
+
+    static std::optional<std::string> getHostname(const std::string& ipAddress) {
+#ifdef _WIN32
+        ensureWsaInitialized();
+#endif
+        if (ipAddress == "0.0.0.0") {
+            char hostname[1024];
+            if (gethostname(hostname, sizeof(hostname)) != 0) {
+                return std::nullopt; // Mimics UnknownHostException
+            }
+            
+            // Mimic InetAddress.getLocalHost() which validates that the hostname is actually resolvable
+            struct addrinfo hints{}, *res;
+            hints.ai_family = AF_UNSPEC;
+            int status = getaddrinfo(hostname, nullptr, &hints, &res);
+            if (status != 0) {
+                return std::nullopt; // Mimics UnknownHostException
+            }
+            freeaddrinfo(res);
+            
+            return std::string(hostname);
+        }
+
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        const char* node = ipAddress.empty() ? nullptr : ipAddress.c_str();
+        
+        int status = getaddrinfo(node, nullptr, &hints, &res);
+        if (status != 0) {
+            return std::nullopt; // Mimics UnknownHostException
+        }
+
+        // Copy address struct before freeing the linked list
+        struct sockaddr_storage addr;
+        auto addrlen = res->ai_addrlen;
+        if (addrlen > sizeof(addr)) {
+            freeaddrinfo(res);
+            return std::nullopt;
+        }
+        std::memcpy(&addr, res->ai_addr, addrlen);
+        freeaddrinfo(res);
+
+        // Mimics getCanonicalHostName(): resolves DNS if possible, returns IP string otherwise
+        char host[NI_MAXHOST];
+        status = getnameinfo(reinterpret_cast<struct sockaddr*>(&addr), addrlen, 
+                             host, sizeof(host), nullptr, 0, 0);
+
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        std::string canonicalHostName(host);
+        if (canonicalHostName == ipAddress) {
+            return std::nullopt; // Mimics returning null
+        }
+        return canonicalHostName;
+    }
+};

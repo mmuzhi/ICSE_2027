@@ -1,0 +1,539 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.io.*;
+import java.nio.file.*;
+import java.util.zip.*;
+import java.util.logging.*;
+
+public class ZipFileProcessor {
+
+    private static final Logger logger = Logger.getLogger(ZipFileProcessor.class.getName());
+    private final Path zipFilePath;
+
+    public ZipFileProcessor(String zipFileName) {
+        this.zipFilePath = Paths.get(zipFileName);
+    }
+
+    ZipFile readZipFile() {
+        if (Files.notExists(zipFilePath)) {
+            logger.log(Level.SEVERE, "Zip file does not exist: " + zipFilePath.toAbsolutePath());
+            return null;
+        }
+        try {
+            return new ZipFile(zipFilePath.toFile());
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Failed to read the zip file: " + zipFilePath.toAbsolutePath(), e);
+            return null;
+        }
+    }
+
+    public boolean extractAll(String outputDir) {
+        Path outputDirPath = Paths.get(outputDir);
+        try (ZipFile zipFile = readZipFile()) {
+            if (zipFile == null) return false;
+
+            if (Files.notExists(outputDirPath)) {
+                try {
+                    Files.createDirectories(outputDirPath);
+                    logger.info("Created output directory: " + outputDirPath.toAbsolutePath());
+                } catch (IOException e) {
+                    logger.log(Level.SEVERE, "Failed to create output directory: " + outputDirPath.toAbsolutePath(), e);
+                    return false;
+                }
+            }
+
+            zipFile.stream().forEach(entry -> {
+                Path filePath = outputDirPath.resolve(entry.getName());
+                try {
+                    if (entry.isDirectory()) {
+                        if (Files.notExists(filePath)) {
+                            Files.createDirectories(filePath);
+                            logger.info("Created directory: " + filePath.toAbsolutePath());
+                        }
+                    } else {
+                        try (InputStream in = zipFile.getInputStream(entry);
+                             OutputStream out = Files.newOutputStream(filePath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                            byte[] buffer = new byte[1024];
+                            int len;
+                            while ((len = in.read(buffer)) > 0) {
+                                out.write(buffer, 0, len);
+                            }
+                            logger.info("Extracted file: " + filePath.toAbsolutePath());
+                        }
+                    }
+                } catch (IOException e) {
+                    logger.log(Level.SEVERE, "Failed to process entry: " + entry.getName(), e);
+                }
+            });
+
+            return true;
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Failed to extract files from zip: " + zipFilePath.toAbsolutePath(), e);
+            return false;
+        }
+    }
+
+    public boolean extractFile(String fileName, String outputDir) {
+        Path outputDirPath = Paths.get(outputDir);
+        Path filePath = outputDirPath.resolve(fileName);
+        try (ZipFile zipFile = readZipFile()) {
+            if (zipFile == null) return false;
+
+            ZipEntry entry = zipFile.getEntry(fileName);
+            if (entry == null) {
+                logger.warning("File not found in zip: " + fileName);
+                return false;
+            }
+
+            if (Files.notExists(filePath.getParent())) {
+                try {
+                    Files.createDirectories(filePath.getParent());
+                    logger.info("Created parent directory: " + filePath.getParent().toAbsolutePath());
+                } catch (IOException e) {
+                    logger.log(Level.SEVERE, "Failed to create parent directory: " + filePath.getParent().toAbsolutePath(), e);
+                    return false;
+                }
+            }
+
+            try (InputStream in = zipFile.getInputStream(entry);
+                 OutputStream out = Files.newOutputStream(filePath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                byte[] buffer = new byte[1024];
+                int len;
+                while ((len = in.read(buffer)) > 0) {
+                    out.write(buffer, 0, len);
+                }
+                logger.info("Extracted file: " + filePath.toAbsolutePath());
+            }
+
+            return true;
+        } catch (IOException e) {
+            logger.log(Level.SEVERE, "Failed to extract file: " + fileName, e);
+            return false;
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate this Java code to C++. The Java code uses java.util.zip.ZipFile, java.nio.file.*, java.util.logging.*, etc. We need to implement equivalent functionality in C++ using standard libraries (C++17 or later) and potentially some platform-specific or external libraries. However, the instruction says "Use idiomatic C++ only when it doesn't change behavior." So we should aim for a straightforward translation that mimics the Java behavior.
+
+In C++, there is no built-in zip file handling in the standard library. We need to use a library like zlib (which is ubiquitous) or perhaps libzip. Since the environment is not specified, we can assume we can use libzip which provides C API for zip files, or we can use minizip (part of zlib contrib). For simplicity and to match the Java behavior (ZipFile with entries, streams), we could use the "minizip" library that comes with zlib, or we could use the "zip" library from https://github.com/kuba--/zip (a single-header library). However, to keep it idiomatic and avoid heavy dependencies, we might implement a simple wrapper around zlib/minizip. But the translation must be accurate.
+
+Given that the user expects a translation from Java to C++, we should use standard C++ with some external library for zip handling. Since the instruction says "Translate the following Java code to C++" and "Keep behavior identical", we need to produce C++ code that compiles and works similarly. The Java code logs messages, checks file existence, creates directories, extracts files, and handles exceptions. We'll need to replicate that.
+
+We'll use the 'zip.h' from the minizip library (which is often bundled with zlib). Alternatively, we could use the 'libzip' library which is more modern. But to keep the translation straightforward, I'll choose the 'minizip' approach because it's widely available. However, the code will need to link with zlib and minizip. I'll assume that the environment has those libraries.
+
+Alternatively, we could implement a pure C++ solution without external libraries by using system commands (like calling unzip) but that would break behavior (not identical). So we need a real library.
+
+Let's outline the translation:
+
+- Package org.example -> namespace org::example or just a class.
+- Logger: In C++, we can use spdlog or boost::log, or just implement simple logging to std::cerr. The Java logger uses levels SEVERE, INFO, WARNING. We can mimic with a simple Logger class that outputs to std::cerr with appropriate prefixes. Since the behavior is identical, we can implement a minimal Logger using standard streams. However, to keep it simple, we can use std::cerr with fixed formatting. The Java logger also logs exception stack traces; we can log e.what().
+
+- ZipFile: In Java, ZipFile is a class that represents a zip file and allows reading entries. In C++, we can use minizip's unzFile (unzip handle) which is a C struct. We'll create a wrapper class ZipFile that wraps unzFile and provides similar methods: getEntry, getInputStream (returns an input stream), stream() (or rather iterate over entries). The Java ZipFile implements AutoCloseable (try-with-resources). We'll need to manage resources with RAII.
+
+- Path: use std::filesystem::path and related functions (std::filesystem::exists, create_directories, etc.). C++17 has std::filesystem.
+
+- InputStream/OutputStream: In Java, they use InputStream and OutputStream. In C++, we can use std::ifstream/ofstream or directly use file descriptors. For simplicity, we can use std::ifstream and std::ofstream for reading/writing files. However, for reading from the zip entry, we need to read raw bytes using unzReadCurrentFile. We can create a custom std::streambuf or just use a simple buffer and write to an output stream.
+
+Alternatively, we can use the minizip functions: unzOpen, unzGetCurrentFileInfo, unzOpenCurrentFile, unzReadCurrentFile, unzCloseCurrentFile, unzGoToNextFile, unzClose.
+
+- The translation of ZipFile.readZipFile(): returns a ZipFile object or nullptr on failure. In C++, we could return a std::unique_ptr<ZipFile> or a raw pointer. Since Java method returns null on failure, we'll adopt similar: return nullptr and use pointer semantics. However, we should wrap it in a class with proper RAII. We'll define a ZipFile class that owns the unzFile handle and provides methods.
+
+- The extractAll method iterates over all entries using unzGoToFirstFile/unzGoToNextFile. The Java code uses zipFile.stream().forEach(entry -> ...). In C++, we can loop with while (unzGoToNextFile(...) == UNZ_OK).
+
+- The extractFile method uses zipFile.getEntry(fileName) and then processes it. In minizip, to locate a file by name, we need to iterate over entries or use unzLocateFile. We can use unzLocateFile.
+
+- Exception handling: Java uses IOException. In C++, we can catch std::exception and log errors.
+
+We'll need to handle path separators: On Windows, Java's ZipEntry.getName() uses '/' as separator. In C++, std::filesystem::path resolves '/' correctly.
+
+We'll need to include relevant headers: <iostream>, <fstream>, <filesystem>, <string>, <memory>, <cstring>, <vector> for buffer, and the minizip headers (zip.h/unzip.h). We'll also need to link with -lz and -lminizip (or compile minizip source). For simplicity, we can include the minizip source in the code or assume it's available.
+
+Given the complexity, I'll provide a C++ translation that uses the minizip library (unzip.h). I'll create a simple Logger class that mimics the Java logger's output format: "SEVERE:
+</think>
+
+=== RAW ANSWER ===
+```
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#include <string>
+#include <vector>
+#include <memory>
+#include <cstring>
+#include <ctime>
+#include <unzip.h>
+#include <zlib.h>
+
+namespace fs = std::filesystem;
+
+// Simple logger mimicking java.util.logging.Logger
+class Logger {
+public:
+    enum Level { SEVERE, WARNING, INFO };
+
+    static Logger& getLogger(const std::string& name) {
+        static Logger instance(name);
+        return instance;
+    }
+
+    void log(Level level, const std::string& msg) {
+        std::ostream& out = (level == SEVERE) ? std::cerr : std::cout;
+        out << timestamp() << " " << levelToString(level) << " " << name_ << " - " << msg << std::endl;
+    }
+
+    void log(Level level, const std::string& msg, const std::exception& e) {
+        std::ostream& out = (level == SEVERE) ? std::cerr : std::cout;
+        out << timestamp() << " " << levelToString(level) << " " << name_ << " - " << msg;
+        out << " Exception: " << e.what() << std::endl;
+    }
+
+    void warning(const std::string& msg) {
+        log(WARNING, msg);
+    }
+
+    void info(const std::string& msg) {
+        log(INFO, msg);
+    }
+
+private:
+    std::string name_;
+    Logger(const std::string& name) : name_(name) {}
+
+    static std::string timestamp() {
+        std::time_t now = std::time(nullptr);
+        char buf[20];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+        return std::string(buf);
+    }
+
+    static std::string levelToString(Level level) {
+        switch (level) {
+            case SEVERE: return "SEVERE";
+            case WARNING: return "WARNING";
+            case INFO: return "INFO";
+            default: return "UNKNOWN";
+        }
+    }
+};
+
+// Wrapper around minizip unzFile to behave like java.util.zip.ZipFile
+class ZipFile {
+public:
+    explicit ZipFile(const fs::path& path) : zipPath_(path), handle_(nullptr) {
+        handle_ = unzOpen(path.string().c_str());
+    }
+
+    ~ZipFile() {
+        if (handle_) {
+            unzClose(handle_);
+            handle_ = nullptr;
+        }
+    }
+
+    ZipFile(const ZipFile&) = delete;
+    ZipFile& operator=(const ZipFile&) = delete;
+    ZipFile(ZipFile&&) = delete;
+    ZipFile& operator=(ZipFile&&) = delete;
+
+    bool isOpen() const { return handle_ != nullptr; }
+
+    // returns -1 if not found
+    int getEntryIndex(const std::string& name) const {
+        if (!handle_) return -1;
+        if (unzLocateFile(handle_, name.c_str(), 0) == UNZ_OK) {
+            unz_file_info64 fileInfo;
+            char fileName[256];
+            if (unzGetCurrentFileInfo64(handle_, &fileInfo, fileName, sizeof(fileName), nullptr, 0, nullptr, 0) == UNZ_OK) {
+                return fileInfo.number_entry; // not correct index but arbitrary; we just need existence
+            }
+        }
+        return -1;
+    }
+
+    // Returns a pointer to a ZipEntry (caller must delete) for the current file, or nullptr if fails.
+    // Must be called after successful unzGoToFirstFile/unzGoToNextFile
+    std::unique_ptr<unz_file_info64> getCurrentEntryInfo() const {
+        if (!handle_) return nullptr;
+        auto info = std::make_unique<unz_file_info64>();
+        char fileName[256];
+        if (unzGetCurrentFileInfo64(handle_, info.get(), fileName, sizeof(fileName), nullptr, 0, nullptr, 0) == UNZ_OK) {
+            return info;
+        }
+        return nullptr;
+    }
+
+    std::string getCurrentFileName() const {
+        if (!handle_) return "";
+        char fileName[256];
+        unz_file_info64 fileInfo;
+        if (unzGetCurrentFileInfo64(handle_, &fileInfo, fileName, sizeof(fileName), nullptr, 0, nullptr, 0) == UNZ_OK) {
+            return std::string(fileName);
+        }
+        return "";
+    }
+
+    bool openCurrentFile() {
+        if (!handle_) return false;
+        return unzOpenCurrentFile(handle_) == UNZ_OK;
+    }
+
+    void closeCurrentFile() {
+        if (handle_) {
+            unzCloseCurrentFile(handle_);
+        }
+    }
+
+    int readCurrentFile(void* buf, unsigned len) {
+        if (!handle_) return -1;
+        return unzReadCurrentFile(handle_, buf, len);
+    }
+
+    // Navigate entries
+    bool goToFirstFile() {
+        if (!handle_) return false;
+        return unzGoToFirstFile(handle_) == UNZ_OK;
+    }
+
+    bool goToNextFile() {
+        if (!handle_) return false;
+        return unzGoToNextFile(handle_) == UNZ_OK;
+    }
+
+    bool goToFile(const std::string& name) {
+        if (!handle_) return false;
+        return unzLocateFile(handle_, name.c_str(), 0) == UNZ_OK;
+    }
+
+    const fs::path& path() const { return zipPath_; }
+
+private:
+    fs::path zipPath_;
+    unzFile handle_;
+};
+
+class ZipFileProcessor {
+public:
+    explicit ZipFileProcessor(const std::string& zipFileName)
+        : zipFilePath_(fs::path(zipFileName)), logger_(Logger::getLogger("org.example.ZipFileProcessor"))
+    {}
+
+    std::unique_ptr<ZipFile> readZipFile() {
+        if (!fs::exists(zipFilePath_)) {
+            logger_.log(Logger::SEVERE, "Zip file does not exist: " + fs::absolute(zipFilePath_).string());
+            return nullptr;
+        }
+        auto zipFile = std::make_unique<ZipFile>(zipFilePath_);
+        if (!zipFile->isOpen()) {
+            logger_.log(Logger::SEVERE, "Failed to read the zip file: " + fs::absolute(zipFilePath_).string());
+            return nullptr;
+        }
+        return zipFile;
+    }
+
+    bool extractAll(const std::string& outputDir) {
+        fs::path outputDirPath(outputDir);
+        auto zipFile = readZipFile();
+        if (!zipFile) return false;
+
+        if (!fs::exists(outputDirPath)) {
+            try {
+                fs::create_directories(outputDirPath);
+                logger_.info("Created output directory: " + fs::absolute(outputDirPath).string());
+            } catch (const fs::filesystem_error& e) {
+                logger_.log(Logger::SEVERE, "Failed to create output
+
+=== TRANSLATED CODE (cpp) ===
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#include <string>
+#include <vector>
+#include <memory>
+#include <cstring>
+#include <ctime>
+#include <unzip.h>
+#include <zlib.h>
+
+namespace fs = std::filesystem;
+
+// Simple logger mimicking java.util.logging.Logger
+class Logger {
+public:
+    enum Level { SEVERE, WARNING, INFO };
+
+    static Logger& getLogger(const std::string& name) {
+        static Logger instance(name);
+        return instance;
+    }
+
+    void log(Level level, const std::string& msg) {
+        std::ostream& out = (level == SEVERE) ? std::cerr : std::cout;
+        out << timestamp() << " " << levelToString(level) << " " << name_ << " - " << msg << std::endl;
+    }
+
+    void log(Level level, const std::string& msg, const std::exception& e) {
+        std::ostream& out = (level == SEVERE) ? std::cerr : std::cout;
+        out << timestamp() << " " << levelToString(level) << " " << name_ << " - " << msg;
+        out << " Exception: " << e.what() << std::endl;
+    }
+
+    void warning(const std::string& msg) {
+        log(WARNING, msg);
+    }
+
+    void info(const std::string& msg) {
+        log(INFO, msg);
+    }
+
+private:
+    std::string name_;
+    Logger(const std::string& name) : name_(name) {}
+
+    static std::string timestamp() {
+        std::time_t now = std::time(nullptr);
+        char buf[20];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+        return std::string(buf);
+    }
+
+    static std::string levelToString(Level level) {
+        switch (level) {
+            case SEVERE: return "SEVERE";
+            case WARNING: return "WARNING";
+            case INFO: return "INFO";
+            default: return "UNKNOWN";
+        }
+    }
+};
+
+// Wrapper around minizip unzFile to behave like java.util.zip.ZipFile
+class ZipFile {
+public:
+    explicit ZipFile(const fs::path& path) : zipPath_(path), handle_(nullptr) {
+        handle_ = unzOpen(path.string().c_str());
+    }
+
+    ~ZipFile() {
+        if (handle_) {
+            unzClose(handle_);
+            handle_ = nullptr;
+        }
+    }
+
+    ZipFile(const ZipFile&) = delete;
+    ZipFile& operator=(const ZipFile&) = delete;
+    ZipFile(ZipFile&&) = delete;
+    ZipFile& operator=(ZipFile&&) = delete;
+
+    bool isOpen() const { return handle_ != nullptr; }
+
+    // returns -1 if not found
+    int getEntryIndex(const std::string& name) const {
+        if (!handle_) return -1;
+        if (unzLocateFile(handle_, name.c_str(), 0) == UNZ_OK) {
+            unz_file_info64 fileInfo;
+            char fileName[256];
+            if (unzGetCurrentFileInfo64(handle_, &fileInfo, fileName, sizeof(fileName), nullptr, 0, nullptr, 0) == UNZ_OK) {
+                return fileInfo.number_entry; // not correct index but arbitrary; we just need existence
+            }
+        }
+        return -1;
+    }
+
+    // Returns a pointer to a ZipEntry (caller must delete) for the current file, or nullptr if fails.
+    // Must be called after successful unzGoToFirstFile/unzGoToNextFile
+    std::unique_ptr<unz_file_info64> getCurrentEntryInfo() const {
+        if (!handle_) return nullptr;
+        auto info = std::make_unique<unz_file_info64>();
+        char fileName[256];
+        if (unzGetCurrentFileInfo64(handle_, info.get(), fileName, sizeof(fileName), nullptr, 0, nullptr, 0) == UNZ_OK) {
+            return info;
+        }
+        return nullptr;
+    }
+
+    std::string getCurrentFileName() const {
+        if (!handle_) return "";
+        char fileName[256];
+        unz_file_info64 fileInfo;
+        if (unzGetCurrentFileInfo64(handle_, &fileInfo, fileName, sizeof(fileName), nullptr, 0, nullptr, 0) == UNZ_OK) {
+            return std::string(fileName);
+        }
+        return "";
+    }
+
+    bool openCurrentFile() {
+        if (!handle_) return false;
+        return unzOpenCurrentFile(handle_) == UNZ_OK;
+    }
+
+    void closeCurrentFile() {
+        if (handle_) {
+            unzCloseCurrentFile(handle_);
+        }
+    }
+
+    int readCurrentFile(void* buf, unsigned len) {
+        if (!handle_) return -1;
+        return unzReadCurrentFile(handle_, buf, len);
+    }
+
+    // Navigate entries
+    bool goToFirstFile() {
+        if (!handle_) return false;
+        return unzGoToFirstFile(handle_) == UNZ_OK;
+    }
+
+    bool goToNextFile() {
+        if (!handle_) return false;
+        return unzGoToNextFile(handle_) == UNZ_OK;
+    }
+
+    bool goToFile(const std::string& name) {
+        if (!handle_) return false;
+        return unzLocateFile(handle_, name.c_str(), 0) == UNZ_OK;
+    }
+
+    const fs::path& path() const { return zipPath_; }
+
+private:
+    fs::path zipPath_;
+    unzFile handle_;
+};
+
+class ZipFileProcessor {
+public:
+    explicit ZipFileProcessor(const std::string& zipFileName)
+        : zipFilePath_(fs::path(zipFileName)), logger_(Logger::getLogger("org.example.ZipFileProcessor"))
+    {}
+
+    std::unique_ptr<ZipFile> readZipFile() {
+        if (!fs::exists(zipFilePath_)) {
+            logger_.log(Logger::SEVERE, "Zip file does not exist: " + fs::absolute(zipFilePath_).string());
+            return nullptr;
+        }
+        auto zipFile = std::make_unique<ZipFile>(zipFilePath_);
+        if (!zipFile->isOpen()) {
+            logger_.log(Logger::SEVERE, "Failed to read the zip file: " + fs::absolute(zipFilePath_).string());
+            return nullptr;
+        }
+        return zipFile;
+    }
+
+    bool extractAll(const std::string& outputDir) {
+        fs::path outputDirPath(outputDir);
+        auto zipFile = readZipFile();
+        if (!zipFile) return false;
+
+        if (!fs::exists(outputDirPath)) {
+            try {
+                fs::create_directories(outputDirPath);
+                logger_.info("Created output directory: " + fs::absolute(outputDirPath).string());
+            } catch (const fs::filesystem_error& e) {
+                logger_.log(Logger::SEVERE, "Failed to create output

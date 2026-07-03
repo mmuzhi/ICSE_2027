@@ -1,0 +1,312 @@
+=== SOURCE CODE (cpp) ===
+
+#include <stdexcept>
+#include <tuple>
+
+#include <winsqlite/winsqlite3.h>
+#include <string>
+#include <memory>
+
+class UserLoginDB {
+public:
+    explicit UserLoginDB(const std::string& db_name);
+    ~UserLoginDB();
+
+    void insert_user(const std::string& username, const std::string& password);
+    std::unique_ptr<std::tuple<std::string, std::string>> search_user_by_username(const std::string& username);
+    void delete_user_by_username(const std::string& username);
+    bool validate_user_login(const std::string& username, const std::string& password);
+
+    void close_connection();
+    void create_table();
+
+private:
+    sqlite3* connection;
+    sqlite3_stmt* stmt;
+    void prepare_statement(const std::string& query);
+    void finalize_statement();
+};
+
+UserLoginDB::UserLoginDB(const std::string& db_name) : connection(nullptr), stmt(nullptr) {
+    if (sqlite3_open(db_name.c_str(), &connection) != SQLITE_OK) {
+        throw std::runtime_error("Cannot open database: " + std::string(sqlite3_errmsg(connection)));
+    }
+    create_table(); 
+}
+
+UserLoginDB::~UserLoginDB() {
+    finalize_statement();
+    if (connection) {
+        sqlite3_close(connection);
+    }
+}
+
+void UserLoginDB::prepare_statement(const std::string& query) {
+    finalize_statement();
+    if (sqlite3_prepare_v2(connection, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement: " + std::string(sqlite3_errmsg(connection)));
+    }
+}
+
+void UserLoginDB::finalize_statement() {
+    if (stmt) {
+        sqlite3_finalize(stmt);
+        stmt = nullptr;
+    }
+}
+
+void UserLoginDB::insert_user(const std::string& username, const std::string& password) {
+    prepare_statement("INSERT INTO users (username, password) VALUES (?, ?)");
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to insert user: " + std::string(sqlite3_errmsg(connection)));
+    }
+    finalize_statement();
+}
+
+std::unique_ptr<std::tuple<std::string, std::string>> UserLoginDB::search_user_by_username(const std::string& username) {
+    prepare_statement("SELECT username, password FROM users WHERE username = ?");
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    std::unique_ptr<std::tuple<std::string, std::string>> user = nullptr;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        user = std::make_unique<std::tuple<std::string, std::string>>(
+            std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0))),
+            std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)))
+        );
+    }
+    finalize_statement();
+    return user;
+}
+
+void UserLoginDB::delete_user_by_username(const std::string& username) {
+    prepare_statement("DELETE FROM users WHERE username = ?");
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to delete user: " + std::string(sqlite3_errmsg(connection)));
+    }
+    finalize_statement();
+}
+
+bool UserLoginDB::validate_user_login(const std::string& username, const std::string& password) {
+    auto user = search_user_by_username(username);
+    if (user && std::get<1>(*user) == password) {
+        return true;
+    }
+    return false;
+}
+
+void UserLoginDB::create_table() {
+    const char* create_table_query = R"(
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT,
+            password TEXT
+        )
+    )";
+    if (sqlite3_exec(connection, create_table_query, nullptr, nullptr, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Cannot create table: " + std::string(sqlite3_errmsg(connection)));
+    }
+}
+
+void UserLoginDB::close_connection() {
+    if (connection) {
+        sqlite3_close(connection);
+        connection = nullptr;
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate the C++ code to Python. The code uses SQLite via winsqlite3 (a Windows-specific library but likely similar to sqlite3). In Python, we'll use the built-in sqlite3 module. The class UserLoginDB has methods: constructor (opens db, creates table), destructor (closes), insert_user, search_user_by_username (returns tuple or None), delete_user_by_username, validate_user_login, close_connection, create_table.
+
+Key points:
+- Keep behavior identical: same exceptions (runtime errors), same logic.
+- The search_user_by_username returns a pointer to a tuple (or nullptr). In Python, we return a tuple or None.
+- The prepare_statement and finalize_statement are internal; in Python, we can use cursor? But the C++ uses prepared statements directly. For identical behavior, we should use sqlite3's execute and fetchone, but prepared statements are more efficient. However, Python's sqlite3 module automatically uses prepared statements internally. To mimic the error handling and step-by-step, we can use connection.execute() which returns a cursor. But the C++ code manually binds parameters and steps. In Python, we can do similar using cursor.execute() with parameters. So we'll implement methods with cursor.
+
+We need to handle closing: C++ destructor ensures statement finalized and connection closed. In Python, we can use context managers or explicit close. But the requirement is to keep behavior identical: the class should be used without context manager? We can implement __del__ to close, but it's unreliable. Better to follow the same pattern: no __enter__/__exit__. We'll provide a close_connection method and rely on __del__ for cleanup if needed. But typically Python uses __del__ for cleanup. However, to ensure no memory leaks, we'll implement __del__ to close connection if not already closed.
+
+Also note: C++ uses unique_ptr for returned tuple; Python just returns None or tuple.
+
+Edge cases: same sqlite3 errors should raise exceptions (RuntimeError). We'll map sqlite3.Error to RuntimeError (or just let it propagate as sqlite3.Error, but C++ throws std::runtime_error). So we'll catch sqlite3.Error and raise RuntimeError.
+
+Also: the create_table uses CREATE TABLE IF NOT EXISTS; that's fine.
+
+In Python, we need to handle None checks for search.
+
+Let's write the Python code with class UserLoginDB.
+
+I'll include imports: sqlite3, maybe typing for Optional.
+
+We'll use ? placeholders.
+
+We'll store connection and cursor? The C++ code uses a single prepared statement handle (stmt) that is reused per operation (finalized before new prepare). In Python, we can use the connection directly; each execute creates its own statement internally. That's fine. But to exactly replicate the behavior of preparing and finalizing per call, we can use cursor.execute() which does the same. So no need to keep a single stmt.
+
+We'll implement:
+- __init__(self, db_name): open connection, create table.
+- __del__(self): close connection if open.
+- create_table(self): execute DDL.
+- insert_user, delete_user: execute with params.
+- search_user_by_username: execute SELECT, fetchone, return tuple or None.
+- validate_user_login: call search and compare.
+- close_connection: close.
+
+Potential pitfalls: C++ code uses sqlite3_bind_text with SQLITE_STATIC (no copy). In Python, parameters are bound automatically. Should be fine.
+
+Also note: The C++ code finalizes statement after each operation except in search (which finalizes after fetching). That's exactly what we'll do: after execute, the cursor's statement is finalized automatically.
+
+One nuance: The C++ prepare_statement throws if fails; similarly Python execute will raise sqlite3.Error, which we'll catch and re-raise as RuntimeError.
+
+Let's produce final answer.
+</think>
+
+=== RAW ANSWER ===
+```python
+import sqlite3
+from typing import Optional, Tuple
+
+class UserLoginDB:
+    def __init__(self, db_name: str):
+        self.connection = None
+        try:
+            self.connection = sqlite3.connect(db_name)
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Cannot open database: {str(e)}") from e
+        self.create_table()
+
+    def __del__(self):
+        self.close_connection()
+
+    def create_table(self):
+        query = (
+            "CREATE TABLE IF NOT EXISTS users ("
+            "    username TEXT,"
+            "    password TEXT"
+            ")"
+        )
+        try:
+            self.connection.execute(query)
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Cannot create table: {str(e)}") from e
+
+    def insert_user(self, username: str, password: str):
+        try:
+            self.connection.execute(
+                "INSERT INTO users (username, password) VALUES (?, ?)",
+                (username, password)
+            )
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to insert user: {str(e)}") from e
+
+    def search_user_by_username(self, username: str) -> Optional[Tuple[str, str]]:
+        cursor = None
+        try:
+            cursor = self.connection.execute(
+                "SELECT username, password FROM users WHERE username = ?",
+                (username,)
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return (row[0], row[1])
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to search user: {str(e)}") from e
+        finally:
+            if cursor is not None:
+                cursor.close()
+
+    def delete_user_by_username(self, username: str):
+        try:
+            self.connection.execute(
+                "DELETE FROM users WHERE username = ?",
+                (username,)
+            )
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to delete user: {str(e)}") from e
+
+    def validate_user_login(self, username: str, password: str) -> bool:
+        user = self.search_user_by_username(username)
+        if user is not None and user[1] == password:
+            return True
+        return False
+
+    def close_connection(self):
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
+```
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+from typing import Optional, Tuple
+
+class UserLoginDB:
+    def __init__(self, db_name: str):
+        self.connection = None
+        try:
+            self.connection = sqlite3.connect(db_name)
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Cannot open database: {str(e)}") from e
+        self.create_table()
+
+    def __del__(self):
+        self.close_connection()
+
+    def create_table(self):
+        query = (
+            "CREATE TABLE IF NOT EXISTS users ("
+            "    username TEXT,"
+            "    password TEXT"
+            ")"
+        )
+        try:
+            self.connection.execute(query)
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Cannot create table: {str(e)}") from e
+
+    def insert_user(self, username: str, password: str):
+        try:
+            self.connection.execute(
+                "INSERT INTO users (username, password) VALUES (?, ?)",
+                (username, password)
+            )
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to insert user: {str(e)}") from e
+
+    def search_user_by_username(self, username: str) -> Optional[Tuple[str, str]]:
+        cursor = None
+        try:
+            cursor = self.connection.execute(
+                "SELECT username, password FROM users WHERE username = ?",
+                (username,)
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return (row[0], row[1])
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to search user: {str(e)}") from e
+        finally:
+            if cursor is not None:
+                cursor.close()
+
+    def delete_user_by_username(self, username: str):
+        try:
+            self.connection.execute(
+                "DELETE FROM users WHERE username = ?",
+                (username,)
+            )
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to delete user: {str(e)}") from e
+
+    def validate_user_login(self, username: str, password: str) -> bool:
+        user = self.search_user_by_username(username)
+        if user is not None and user[1] == password:
+            return True
+        return False
+
+    def close_connection(self):
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None

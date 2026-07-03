@@ -1,0 +1,30 @@
+class ChandrasekharSieve:
+    def __init__(self, n):
+        self.n = n
+        self.primes = self.generate_primes()
+
+    def generate_primes(self):
+        if self.n < 2:
+            return []
+        
+        sieve = [True] * (self.n + 1)
+        sieve[0] = sieve[1] = False
+        
+        p = 2
+        while p * p <= self.n:
+            if sieve[p]:
+                start = p * p
+                # Mark multiples starting from p*p
+                for i in range(start, self.n + 1, p):
+                    sieve[i] = False
+            p += 1
+        
+        primes = [i for i, is_prime in enumerate(sieve) if is_prime]
+        return primes
+
+    def get_primes(self):
+        return self.primes
+
+if __name__ == '__main__':
+    cs = ChandrasekharSieve(20)
+    print(cs.get_primes())

@@ -1,0 +1,46 @@
+def main():
+    import sys
+    data = sys.stdin.read().splitlines()
+    first_line = data[0].split()
+    n = int(first_line[0])
+    k = int(first_line[1])
+    s = data[1].strip()
+    
+    # We'll convert the string into a list of characters for mutation, but note: we are allowed to choose any segment arbitrarily.
+    # However, the problem is: we can choose the order arbitrarily, so we can simulate by scanning for consecutive K 'O's and then mark them as used (change to 'X') and count.
+
+    # But note: after marking, the string changes and we cannot use the same tooth twice.
+
+    # However, the problem constraints are small (N, K <= 100). We can simulate by repeatedly scanning for a segment of K consecutive 'O's and then marking them, until none exists.
+
+    # But note: the segments might not be independent. We can choose the order arbitrarily, so we can choose the leftmost or any segment. However, we want maximum strawberries.
+
+    # Alternate approach: we can use a greedy algorithm that scans from left to right and whenever we find K consecutive 'O's, we mark them and count one. But note: if we mark from left, then we might break a longer segment that could be used for multiple strawberries? Actually, no: because each strawberry requires exactly K consecutive, and if we break a longer segment, we might break two overlapping strawberries.
+
+    # Example: "OOOO" with K=2. We can eat two strawberries: first use the first two, then the next two (which are the last two) but note the middle two are broken. Alternatively, we could use the second and third? But then we break the middle two. However, note that the problem does not require contiguous segments to be non-overlapping. But the same tooth cannot be used twice.
+
+    # Actually, the problem says: "When he has K consecutive healthy teeth, he can eat one strawberry using those K teeth." and then those K teeth become unhealthy.
+
+    # So we can use overlapping segments? But note: if we use a segment, then the teeth in that segment become unhealthy and cannot be used again. So if two strawberries overlap, then the overlapping teeth would have been used twice, which is not allowed.
+
+    # Therefore, the segments must be disjoint? Actually, they can be overlapping in the sense of being in the same contiguous block, but then the same tooth cannot be used twice. So we must choose non-overlapping segments? Not necessarily: we can choose segments that are not adjacent but still in the same block? Actually, the problem does not require the segments to be disjoint, but they cannot share a tooth.
+
+    # However, note: if we have a block of consecutive healthy teeth of length L, then the maximum number of strawberries we can get from that block is floor(L / K) if we are allowed to break the block arbitrarily? But wait, we can choose any K consecutive, but if we choose one, then the block is broken and we cannot use the same tooth again.
+
+    # Actually, we can use a greedy strategy: we can simulate by scanning from left to right and whenever we find K consecutive 'O's, we mark them as used (change to 'X') and count one. But note: after marking, the string changes and we continue scanning from the beginning? Or from the next tooth?
+
+    # However, consider: "OOOO" with K=2. If we mark the first two, then the string becomes "XXOO", then we can mark the next two (the last two) and get two strawberries. But if we mark the middle two (i.e., the second and third) then we break the block into two separate blocks: "OXXO", then we cannot get two strawberries.
+
+    # So the order matters. But note: the problem does not specify the order. We are allowed to choose any segment arbitrarily. So we can choose the segments optimally.
+
+    # We can use a greedy algorithm that always takes the leftmost available segment of K consecutive 'O's. Then mark them and continue scanning from the beginning? But note: the problem constraints are small (N<=100). We can simulate by repeatedly scanning from left to right until we can't find a segment.
+
+    # Steps:
+    #   count = 0
+    #   while there exists a segment of K consecutive 'O's in the string:
+    #       find the leftmost occurrence of K consecutive 'O's
+    #       mark those K teeth as 'X'
+    #       count += 1
+    #   print(count)
+
+    # But is this optimal? Consider: "OOXOOOO" with K=3. The leftmost segment is at index 0: "OOX" -> not 3. Then at index 3: "OOO" -> that's a

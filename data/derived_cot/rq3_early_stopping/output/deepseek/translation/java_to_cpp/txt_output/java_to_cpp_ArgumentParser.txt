@@ -1,0 +1,441 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.*;
+
+public class ArgumentParser {
+    Map<String, Object> arguments;
+    Set<String> required;
+    Map<String, Class<?>> types;
+
+    public ArgumentParser() {
+        this.arguments = new HashMap<>();
+        this.required = new HashSet<>();
+        this.types = new HashMap<>();
+    }
+
+    public Tuple<Boolean, Set<String>> parseArguments(String commandString) {
+        String[] args = commandString.split("\\s+");
+        for (int i = 1; i < args.length; i++) {
+            String arg = args[i];
+            if (arg.startsWith("--")) {
+                String[] keyValue = arg.substring(2).split("=");
+                if (keyValue.length == 2) {
+                    arguments.put(keyValue[0], convertType(keyValue[0], keyValue[1]));
+                }
+                else {
+                    arguments.put(keyValue[0], true);
+                }
+            }
+            else if (arg.startsWith("-")) {
+                String key = arg.substring(1);
+                if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
+                    arguments.put(key, convertType(key, args[i + 1]));
+                    i++;
+                }
+                else {
+                    arguments.put(key, true);
+                }
+            }
+        }
+        Set<String> missingArgs = new HashSet<>(required);
+        missingArgs.removeAll(arguments.keySet());
+        if (!missingArgs.isEmpty()) {
+            return new Tuple<>(false, missingArgs);
+        }
+        return new Tuple<>(true, null);
+    }
+
+    public Object getArgument(String key) {
+        return arguments.get(key);
+    }
+
+    public void addArgument(String arg, boolean required, Class<?> argType) {
+        if (required) {
+            this.required.add(arg);
+        }
+        this.types.put(arg, argType);
+    }
+
+    Object convertType(String arg, String value) {
+        try {
+            Class<?> type = types.get(arg);
+            if (type == Integer.class) {
+                return Integer.parseInt(value);
+            }
+            else if (type == Boolean.class) {
+                return Boolean.parseBoolean(value);
+            }
+            else if (type == String.class) {
+                return value;
+            }
+        } catch (Exception e) {
+            return value;
+        }
+        return value;
+    }
+
+    public static class Tuple<X, Y> {
+        public final X x;
+        public final Y y;
+
+        public Tuple(X x, Y y) {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    public static void main(String[] args) {
+        ArgumentParser parser = new ArgumentParser();
+        parser.addArgument("arg1", true, Integer.class);
+        parser.addArgument("arg2", false, String.class);
+        parser.addArgument("option1", false, Boolean.class);
+        parser.addArgument("option2", false, Boolean.class);
+
+        Tuple<Boolean, Set<String>> result = parser.parseArguments("python script.py --arg1=123 -arg2 value2 --option1 -option2");
+        System.out.println(result.x);
+        System.out.println(result.y);
+        System.out.println(parser.arguments);
+    }
+}
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++. The code defines an ArgumentParser class with a map of arguments, a set of required arguments, and a map of types. It parses command string (not actual command-line args but a string like "python script.py --arg1=123 -arg2 value2 --option1 -option2"). It returns a Tuple<Boolean, Set<String>> indicating success and missing required arguments. Also has a main method for demonstration.
+
+Key points:
+- Use C++ standard library: unordered_map, unordered_set, vector, string.
+- Convert types: Integer, Boolean, String -> in C++ we can use type erasure with something like std::any or a variant. But Java's Class<?> is runtime type checking. We can simulate with enum or store type info as a custom enum or use std::type_info? But in C++ we need to store the desired type for each argument. Could use an enum: ArgType { INT, BOOL, STRING }. Or we can store a function that converts. Simpler: use an enum.
+
+- Tuple: use std::pair or create a simple struct. Since Java tuple has fields x and y, we can make a struct template.
+
+- parseArguments: splits on whitespace, iterates from index 1 (skip command name). For each arg: if starts with "--", split on '=' to get key-value; if no '=', treat as boolean true. If starts with "-", short option: if next arg doesn't start with '-', use it as value; else treat as boolean true.
+
+- convertType: based on stored type, convert string to int/bool/string. If conversion fails, return value as string (original). In Java it catches exception and returns value. In C++ we need to handle exceptions: std::stoi throws std::invalid_argument; bool conversion: we can use std::istringstream or custom. We'll catch std::exception.
+
+- The main method: creates parser, adds arguments, parses, prints result.
+
+We need to ensure identical behavior:
+</think>
+
+=== RAW ANSWER ===
+```
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#include <stdexcept>
+#include <memory>
+#include <typeinfo>
+#include <cxxabi.h> // maybe not needed
+
+// Simulate Java's Class<?> with enum
+enum class ArgType { INT, BOOL, STRING, UNKNOWN };
+
+// Simple tuple struct
+template<typename X, typename Y>
+struct Tuple {
+    X x;
+    Y y;
+    Tuple(X x, Y y) : x(x), y(y) {}
+};
+
+class ArgumentParser {
+private:
+    std::unordered_map<std::string, std::string> arguments; // key -> value stored as string? Java stores Object. We'll store string and convert on get? Or use variant. Simpler: store string representation and convert when needed. But for consistency, we need to return Object. In C++ we can store std::any or boost::any. But for simplicity and to match behavior, we'll store as std::string but keep conversion inside parseArguments. Actually Java stores the converted value in arguments map. So we need to store the converted value. Use std::any.
+    std::unordered_map<std::string, std::any> arguments;
+    std::unordered_set<std::string> required;
+    std::unordered_map<std::string, ArgType> types;
+
+    std::any convertType(const std::string& arg, const std::string& value) {
+        auto it = types.find(arg);
+        if (it == types.end()) return value; // unknown type, return string
+        try {
+            switch (it->second) {
+                case ArgType::INT:
+                    return std::stoi(value);
+                case ArgType::BOOL:
+                    // Java's Boolean.parseBoolean: true if "true" (case insensitive?)
+                    // Actually Java's Boolean.parseBoolean: "true" (case insensitive) -> true; else false.
+                    // We'll do the same.
+                    {
+                        std::string lower = value;
+                        for (auto& c : lower) c = std::tolower(c);
+                        return lower == "true";
+                    }
+                case ArgType::STRING:
+                    return value;
+                default:
+                    return value;
+            }
+        } catch (const std::exception&) {
+            return value; // on error return original string
+        }
+    }
+
+public:
+    ArgumentParser() {}
+
+    Tuple<bool, std::unordered_set<std::string>> parseArguments(const std::string& commandString) {
+        // Split by whitespace
+        std::vector<std::string> args;
+        std::istringstream iss(commandString);
+        std::string token;
+        while (iss >> token) {
+            args.push_back(token);
+        }
+        for (size_t i = 1; i < args.size(); ++i) {
+            const std::string& arg = args[i];
+            if (arg.size() >= 2 && arg[0] == '-' && arg[1] == '-') {
+                // long option
+                std::string keyValue = arg.substr(2);
+                size_t eqPos = keyValue.find('=');
+                if (eqPos != std::string::npos) {
+                    std::string key = keyValue.substr(0, eqPos);
+                    std::string value = keyValue.substr(eqPos + 1);
+                    arguments[key] = convertType(key, value);
+                } else {
+                    arguments[keyValue] = true; // boolean true
+                }
+            } else if (arg.size() >= 2 && arg[0] == '-' && arg[1] != '-') {
+                // short option
+                std::string key = arg.substr(1);
+                if (i + 1 < args.size() && args[i+1][0] != '-') {
+                    arguments[key] = convertType(key, args[i+1]);
+                    ++i;
+                } else {
+                    arguments[key] = true;
+                }
+            }
+        }
+        std::unordered_set<std::string> missingArgs = required;
+        for (auto& kv : arguments) {
+            missingArgs.erase(kv.first);
+        }
+        if (!missingArgs.empty()) {
+            return Tuple<bool, std::unordered_set<std::string>>(false, missingArgs);
+        }
+        return Tuple<bool, std::unordered_set<std::string>>(true, std::unordered_set<std::string>());
+    }
+
+    std::any getArgument(const std::string& key) {
+        auto it = arguments.find(key);
+        if (it != arguments.end()) return it->second;
+        return std::any();
+    }
+
+    void addArgument(const std::string& arg, bool required, ArgType argType) {
+        if (required) this->required.insert(arg);
+        types[arg] = argType;
+    }
+
+    // For demonstration: print arguments as Java's map print
+    void printArguments() {
+        std::cout << "{";
+        bool first = true;
+        for (const auto& kv : arguments) {
+            if (!first) std::cout << ", ";
+            first = false;
+            std::cout << kv.first << "=";
+            // Print the any value
+            if (kv.second.type() == typeid(int)) {
+                std::cout << std::any_cast<int>(kv.second);
+            } else if (kv.second.type() == typeid(bool)) {
+                std::cout << (std::any_cast<bool>(kv.second) ? "true" : "false");
+            } else if (kv.second.type() == typeid(std::string)) {
+                std::cout << std::any_cast<std::string>(kv.second);
+            } else {
+                std::cout << "?";
+            }
+        }
+        std::cout << "}" << std::endl;
+    }
+};
+
+int main() {
+    ArgumentParser parser;
+    parser.addArgument("arg1", true, ArgType::INT);
+    parser.addArgument("arg2", false, ArgType::STRING);
+    parser.addArgument("option1", false, ArgType::BOOL);
+    parser.addArgument("option2", false, ArgType::BOOL);
+
+    Tuple<bool, std::unordered_set<std::string>> result = parser.parseArguments("python script.py --arg1=123 -arg2 value2 --option1 -option2");
+    std::cout << (result.x ? "true" : "false") << std::endl;
+    if (!result.y.empty()) {
+        std::cout << "{";
+        bool first = true;
+        for (const auto& s : result.y) {
+            if (!first) std::cout << ", ";
+            first = false;
+            std::cout << s;
+        }
+        std::cout << "}" << std::endl;
+    } else {
+        std::cout << "null" << std::endl;
+    }
+    parser.printArguments();
+    return 0;
+}
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#include <stdexcept>
+#include <memory>
+#include <typeinfo>
+#include <cxxabi.h> // maybe not needed
+
+// Simulate Java's Class<?> with enum
+enum class ArgType { INT, BOOL, STRING, UNKNOWN };
+
+// Simple tuple struct
+template<typename X, typename Y>
+struct Tuple {
+    X x;
+    Y y;
+    Tuple(X x, Y y) : x(x), y(y) {}
+};
+
+class ArgumentParser {
+private:
+    std::unordered_map<std::string, std::string> arguments; // key -> value stored as string? Java stores Object. We'll store string and convert on get? Or use variant. Simpler: store string representation and convert when needed. But for consistency, we need to return Object. In C++ we can store std::any or boost::any. But for simplicity and to match behavior, we'll store as std::string but keep conversion inside parseArguments. Actually Java stores the converted value in arguments map. So we need to store the converted value. Use std::any.
+    std::unordered_map<std::string, std::any> arguments;
+    std::unordered_set<std::string> required;
+    std::unordered_map<std::string, ArgType> types;
+
+    std::any convertType(const std::string& arg, const std::string& value) {
+        auto it = types.find(arg);
+        if (it == types.end()) return value; // unknown type, return string
+        try {
+            switch (it->second) {
+                case ArgType::INT:
+                    return std::stoi(value);
+                case ArgType::BOOL:
+                    // Java's Boolean.parseBoolean: true if "true" (case insensitive?)
+                    // Actually Java's Boolean.parseBoolean: "true" (case insensitive) -> true; else false.
+                    // We'll do the same.
+                    {
+                        std::string lower = value;
+                        for (auto& c : lower) c = std::tolower(c);
+                        return lower == "true";
+                    }
+                case ArgType::STRING:
+                    return value;
+                default:
+                    return value;
+            }
+        } catch (const std::exception&) {
+            return value; // on error return original string
+        }
+    }
+
+public:
+    ArgumentParser() {}
+
+    Tuple<bool, std::unordered_set<std::string>> parseArguments(const std::string& commandString) {
+        // Split by whitespace
+        std::vector<std::string> args;
+        std::istringstream iss(commandString);
+        std::string token;
+        while (iss >> token) {
+            args.push_back(token);
+        }
+        for (size_t i = 1; i < args.size(); ++i) {
+            const std::string& arg = args[i];
+            if (arg.size() >= 2 && arg[0] == '-' && arg[1] == '-') {
+                // long option
+                std::string keyValue = arg.substr(2);
+                size_t eqPos = keyValue.find('=');
+                if (eqPos != std::string::npos) {
+                    std::string key = keyValue.substr(0, eqPos);
+                    std::string value = keyValue.substr(eqPos + 1);
+                    arguments[key] = convertType(key, value);
+                } else {
+                    arguments[keyValue] = true; // boolean true
+                }
+            } else if (arg.size() >= 2 && arg[0] == '-' && arg[1] != '-') {
+                // short option
+                std::string key = arg.substr(1);
+                if (i + 1 < args.size() && args[i+1][0] != '-') {
+                    arguments[key] = convertType(key, args[i+1]);
+                    ++i;
+                } else {
+                    arguments[key] = true;
+                }
+            }
+        }
+        std::unordered_set<std::string> missingArgs = required;
+        for (auto& kv : arguments) {
+            missingArgs.erase(kv.first);
+        }
+        if (!missingArgs.empty()) {
+            return Tuple<bool, std::unordered_set<std::string>>(false, missingArgs);
+        }
+        return Tuple<bool, std::unordered_set<std::string>>(true, std::unordered_set<std::string>());
+    }
+
+    std::any getArgument(const std::string& key) {
+        auto it = arguments.find(key);
+        if (it != arguments.end()) return it->second;
+        return std::any();
+    }
+
+    void addArgument(const std::string& arg, bool required, ArgType argType) {
+        if (required) this->required.insert(arg);
+        types[arg] = argType;
+    }
+
+    // For demonstration: print arguments as Java's map print
+    void printArguments() {
+        std::cout << "{";
+        bool first = true;
+        for (const auto& kv : arguments) {
+            if (!first) std::cout << ", ";
+            first = false;
+            std::cout << kv.first << "=";
+            // Print the any value
+            if (kv.second.type() == typeid(int)) {
+                std::cout << std::any_cast<int>(kv.second);
+            } else if (kv.second.type() == typeid(bool)) {
+                std::cout << (std::any_cast<bool>(kv.second) ? "true" : "false");
+            } else if (kv.second.type() == typeid(std::string)) {
+                std::cout << std::any_cast<std::string>(kv.second);
+            } else {
+                std::cout << "?";
+            }
+        }
+        std::cout << "}" << std::endl;
+    }
+};
+
+int main() {
+    ArgumentParser parser;
+    parser.addArgument("arg1", true, ArgType::INT);
+    parser.addArgument("arg2", false, ArgType::STRING);
+    parser.addArgument("option1", false, ArgType::BOOL);
+    parser.addArgument("option2", false, ArgType::BOOL);
+
+    Tuple<bool, std::unordered_set<std::string>> result = parser.parseArguments("python script.py --arg1=123 -arg2 value2 --option1 -option2");
+    std::cout << (result.x ? "true" : "false") << std::endl;
+    if (!result.y.empty()) {
+        std::cout << "{";
+        bool first = true;
+        for (const auto& s : result.y) {
+            if (!first) std::cout << ", ";
+            first = false;
+            std::cout << s;
+        }
+        std::cout << "}" << std::endl;
+    } else {
+        std::cout << "null" << std::endl;
+    }
+    parser.printArguments();
+    return 0;
+}

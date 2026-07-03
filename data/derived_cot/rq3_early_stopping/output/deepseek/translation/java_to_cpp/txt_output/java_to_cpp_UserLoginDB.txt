@@ -1,0 +1,311 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+public class UserLoginDB {
+    private Connection connection;
+
+    public UserLoginDB(String dbName) {
+        try {
+            connection = DriverManager.getConnection("jdbc:sqlite:" + dbName);
+            createTable();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void createTable() {
+        String createTableQuery = "CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)";
+        try (PreparedStatement pstmt = connection.prepareStatement(createTableQuery)) {
+            pstmt.execute();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void insertUser(String username, String password) {
+        String insertQuery = "INSERT INTO users (username, password) VALUES (?, ?)";
+        try (PreparedStatement pstmt = connection.prepareStatement(insertQuery)) {
+            pstmt.setString(1, username);
+            pstmt.setString(2, password);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public String searchUserByUsername(String username) {
+        String searchQuery = "SELECT * FROM users WHERE username = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(searchQuery)) {
+            pstmt.setString(1, username);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("username") + "," + rs.getString("password");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    public void deleteUserByUsername(String username) {
+        String deleteQuery = "DELETE FROM users WHERE username = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(deleteQuery)) {
+            pstmt.setString(1, username);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public boolean validateUserLogin(String username, String password) {
+        String user = searchUserByUsername(username);
+        if (user != null) {
+            String[] parts = user.split(",");
+            return parts[1].equals(password);
+        }
+        return false;
+    }
+
+    public void close() {
+        try {
+            if (connection != null) {
+                connection.close();
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++. The Java code interacts with SQLite via JDBC. In C++, we can use SQLite3's C API or a C++ wrapper like sqlite3.h. We'll use SQLite3 directly for simplicity and to keep behavior identical. We'll need to manage database connection, prepared statements, result sets, etc. We'll also need to handle exceptions (SQLite errors) similarly: Java prints stack trace on SQLException; in C++ we can print error messages to stderr if error occurs. Keep the class name UserLoginDB, methods: constructor, private createTable, insertUser, searchUserByUsername, deleteUserByUsername, validateUserLogin, close. Also need to include necessary headers and link with sqlite3 library.
+
+Key points:
+- Constructor takes dbName, opens SQLite database, calls createTable.
+- createTable uses "CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)".
+- insertUser uses prepared statement with placeholders.
+- searchUserByUsername returns "username,password" string if found, else null (return empty string or something? In Java it returns null; in C++ we can return std::string or nullptr? Better to return std::string and use empty string to indicate not found? But Java returns null, so we need to be careful. We'll return std::string, and check emptiness? Or use std::optional? To keep identical behavior, we can return std::string and the caller checks if string is empty? But Java checks `if (user != null)`. So we could return a pointer to string? Or use a unique_ptr? Simpler: have searchUserByUsername return std::string, and if not found, return an empty string. But the Java code checks `if (user != null)`, so we can change the check to `if (!user.empty())`. That changes behavior slightly if the username/password combo could be an empty string? But username is TEXT, could be empty? Possibly. To be safe, we can return a pointer: std::unique_ptr<std::string> and return nullptr if not found. Or we can return a bool with output parameter. But the Java signature returns String, so we'll mimic with std::string and use a special sentinel? Better to return std::string and treat empty as not found; but if a user has empty username and password, that would be problematic. To avoid that, we'll return a std::optional<std::string>. That's idiomatic C++ and doesn't change behavior. We'll use C++17 std::optional. If not found, return std::nullopt; validateUserLogin checks if optional has value.
+
+- validateUserLogin: gets user string (if found), splits by ',' (assuming format "username,password"), compares password. In Java it splits by "," and compares parts[1] (password) with input password. Need to ensure string contains a comma. We'll do similar.
+
+- close() closes the database connection.
+
+- Error handling: In Java, each SQLException prints stacktrace. In C++, we'll use try-catch?
+</think>
+
+=== RAW ANSWER ===
+```
+#include <sqlite3.h>
+#include <string>
+#include <iostream>
+#include <optional>
+#include <sstream>
+
+class UserLoginDB {
+private:
+    sqlite3* connection;
+
+    void createTable() {
+        const char* createTableQuery = "CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, createTableQuery, -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        } else {
+            std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        }
+    }
+
+public:
+    UserLoginDB(const std::string& dbName) : connection(nullptr) {
+        int rc = sqlite3_open(dbName.c_str(), &connection);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Can't open database: " << sqlite3_errmsg(connection) << std::endl;
+            sqlite3_close(connection);
+            connection = nullptr;
+        } else {
+            createTable();
+        }
+    }
+
+    void insertUser(const std::string& username, const std::string& password) {
+        const char* insertQuery = "INSERT INTO users (username, password) VALUES (?, ?)";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, insertQuery, -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        } else {
+            std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        }
+    }
+
+    std::optional<std::string> searchUserByUsername(const std::string& username) {
+        const char* searchQuery = "SELECT * FROM users WHERE username = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, searchQuery, -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+            rc = sqlite3_step(stmt);
+            if (rc == SQLITE_ROW) {
+                const unsigned char* user = sqlite3_column_text(stmt, 0);
+                const unsigned char* pass = sqlite3_column_text(stmt, 1);
+                std::string result = std::string(reinterpret_cast<const char*>(user)) + "," + std::string(reinterpret_cast<const char*>(pass));
+                sqlite3_finalize(stmt);
+                return result;
+            }
+            sqlite3_finalize(stmt);
+        } else {
+            std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        }
+        return std::nullopt;
+    }
+
+    void deleteUserByUsername(const std::string& username) {
+        const char* deleteQuery = "DELETE FROM users WHERE username = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, deleteQuery, -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        } else {
+            std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        }
+    }
+
+    bool validateUserLogin(const std::string& username, const std::string& password) {
+        auto user = searchUserByUsername(username);
+        if (user) {
+            std::string userStr = user.value();
+            size_t comma = userStr.find(',');
+            if (comma != std::string::npos) {
+                std::string storedPassword = userStr.substr(comma + 1);
+                return storedPassword == password;
+            }
+        }
+        return false;
+    }
+
+    void close() {
+        if (connection) {
+            sqlite3_close(connection);
+            connection = nullptr;
+        }
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <sqlite3.h>
+#include <string>
+#include <iostream>
+#include <optional>
+#include <sstream>
+
+class UserLoginDB {
+private:
+    sqlite3* connection;
+
+    void createTable() {
+        const char* createTableQuery = "CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, createTableQuery, -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        } else {
+            std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        }
+    }
+
+public:
+    UserLoginDB(const std::string& dbName) : connection(nullptr) {
+        int rc = sqlite3_open(dbName.c_str(), &connection);
+        if (rc != SQLITE_OK) {
+            std::cerr << "Can't open database: " << sqlite3_errmsg(connection) << std::endl;
+            sqlite3_close(connection);
+            connection = nullptr;
+        } else {
+            createTable();
+        }
+    }
+
+    void insertUser(const std::string& username, const std::string& password) {
+        const char* insertQuery = "INSERT INTO users (username, password) VALUES (?, ?)";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, insertQuery, -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        } else {
+            std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        }
+    }
+
+    std::optional<std::string> searchUserByUsername(const std::string& username) {
+        const char* searchQuery = "SELECT * FROM users WHERE username = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, searchQuery, -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+            rc = sqlite3_step(stmt);
+            if (rc == SQLITE_ROW) {
+                const unsigned char* user = sqlite3_column_text(stmt, 0);
+                const unsigned char* pass = sqlite3_column_text(stmt, 1);
+                std::string result = std::string(reinterpret_cast<const char*>(user)) + "," + std::string(reinterpret_cast<const char*>(pass));
+                sqlite3_finalize(stmt);
+                return result;
+            }
+            sqlite3_finalize(stmt);
+        } else {
+            std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        }
+        return std::nullopt;
+    }
+
+    void deleteUserByUsername(const std::string& username) {
+        const char* deleteQuery = "DELETE FROM users WHERE username = ?";
+        sqlite3_stmt* stmt;
+        int rc = sqlite3_prepare_v2(connection, deleteQuery, -1, &stmt, nullptr);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        } else {
+            std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        }
+    }
+
+    bool validateUserLogin(const std::string& username, const std::string& password) {
+        auto user = searchUserByUsername(username);
+        if (user) {
+            std::string userStr = user.value();
+            size_t comma = userStr.find(',');
+            if (comma != std::string::npos) {
+                std::string storedPassword = userStr.substr(comma + 1);
+                return storedPassword == password;
+            }
+        }
+        return false;
+    }
+
+    void close() {
+        if (connection) {
+            sqlite3_close(connection);
+            connection = nullptr;
+        }
+    }
+};

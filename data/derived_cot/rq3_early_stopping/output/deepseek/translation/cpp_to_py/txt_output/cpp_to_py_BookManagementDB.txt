@@ -1,0 +1,317 @@
+=== SOURCE CODE (cpp) ===
+
+#include <stdexcept>
+
+#include <winsqlite/winsqlite3.h>
+#include <string>
+#include <vector>
+#include <tuple>
+
+class BookManagementDB {
+public:
+    explicit BookManagementDB(const std::string& db_name);
+    ~BookManagementDB();
+
+    void create_table();
+    void add_book(const std::string& title, const std::string& author);
+    void remove_book(int id);
+    void borrow_book(int id);
+    void return_book(int id);
+    std::vector<std::tuple<int, std::string, std::string, int>> search_books();
+    sqlite3* get_connection();
+
+private:
+    sqlite3* connection;
+};
+
+BookManagementDB::BookManagementDB(const std::string& db_name) {
+    if (sqlite3_open(db_name.c_str(), &connection) != SQLITE_OK) {
+        throw std::runtime_error("Failed to open database");
+    }
+}
+
+BookManagementDB::~BookManagementDB() {
+    sqlite3_close(connection);
+}
+
+void BookManagementDB::create_table() {
+    const char* create_table_sql = R"(
+        CREATE TABLE IF NOT EXISTS books (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            author TEXT NOT NULL,
+            available INTEGER NOT NULL
+        )
+    )";
+    char* error_msg = nullptr;
+    if (sqlite3_exec(connection, create_table_sql, nullptr, nullptr, &error_msg) != SQLITE_OK) {
+        throw std::runtime_error(error_msg);
+    }
+}
+
+void BookManagementDB::add_book(const std::string& title, const std::string& author) {
+    const char* insert_sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(connection, insert_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error(sqlite3_errmsg(connection));
+    }
+    sqlite3_bind_text(stmt, 1, title.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, author.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(connection));
+    }
+    sqlite3_finalize(stmt);
+}
+
+void BookManagementDB::remove_book(int id) {
+    const char* delete_sql = "DELETE FROM books WHERE id = ?";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(connection, delete_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error(sqlite3_errmsg(connection));
+    }
+    sqlite3_bind_int(stmt, 1, id);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(connection));
+    }
+    sqlite3_finalize(stmt);
+}
+
+void BookManagementDB::borrow_book(int id) {
+    const char* update_sql = "UPDATE books SET available = 0 WHERE id = ?";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(connection, update_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error(sqlite3_errmsg(connection));
+    }
+    sqlite3_bind_int(stmt, 1, id);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(connection));
+    }
+    sqlite3_finalize(stmt);
+}
+
+void BookManagementDB::return_book(int id) {
+    const char* update_sql = "UPDATE books SET available = 1 WHERE id = ?";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(connection, update_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error(sqlite3_errmsg(connection));
+    }
+    sqlite3_bind_int(stmt, 1, id);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(connection));
+    }
+    sqlite3_finalize(stmt);
+}
+
+std::vector<std::tuple<int, std::string, std::string, int>> BookManagementDB::search_books() {
+    const char* select_sql = "SELECT * FROM books";
+    sqlite3_stmt* stmt;
+    std::vector<std::tuple<int, std::string, std::string, int>> books;
+
+    if (sqlite3_prepare_v2(connection, select_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error(sqlite3_errmsg(connection));
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int id = sqlite3_column_int(stmt, 0);
+        std::string title(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+        std::string author(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)));
+        int available = sqlite3_column_int(stmt, 3);
+        books.emplace_back(id, title, author, available);
+    }
+    sqlite3_finalize(stmt);
+    return books;
+}
+
+sqlite3* BookManagementDB::get_connection()
+{
+    return this->connection;
+}
+
+
+=== REASONING ===
+<think>
+We need to translate the given C++ class to Python. The C++ code uses SQLite3 via winsqlite3.h (Windows). In Python, we can use the built-in sqlite3 module. The behavior must be identical: same methods, same exceptions (raise exceptions on errors), same return types (list of tuples). The class should open/close the database connection in constructor/destructor. Python does not have destructors with deterministic timing like C++, but we can use context manager or ensure close() is called explicitly or via __del__. The prompt says "Keep behavior identical" and "side effects". We should implement __enter__/__exit__ for context manager? The C++ code doesn't have that; it's just constructor and destructor. In Python, we could have a close() method or rely on __del__ to close. But destructors are not guaranteed to run immediately. However, the C++ destructor runs when object goes out of scope. In Python, the equivalent is to either use context manager or explicitly call close. Since the C++ code doesn't provide a context manager, we should just have __del__ to close and perhaps also provide a close() method. The user may expect the object to be usable without context manager. We'll implement __del__ to close the connection if it's still open. Also we should handle that the connection might be None if open failed. But the constructor throws on failure, so connection is guaranteed to be valid if no exception. For safety, we'll check.
+
+Also note that sqlite3 module uses "?" placeholders, which is the same as C++.
+
+We'll translate each method:
+
+- __init__(self, db_name): open database, if fails raise RuntimeError.
+- create_table(): execute CREATE TABLE IF NOT EXISTS, raise RuntimeError on failure.
+- add_book(title, author): INSERT with placeholders, bind text. In Python, we can use execute with parameters.
+- remove_book(id): DELETE.
+- borrow_book(id): UPDATE available=0.
+- return_book(id): UPDATE available=1.
+- search_books(): SELECT *, fetch all, return list of tuples (id, title, author, available). Ensure string conversion from bytes? sqlite3 returns strings by default.
+- get_connection(): return self.connection (the raw sqlite3.Connection object). In Python, it's a Connection object, not a pointer.
+
+Edge cases: The C++ code uses sqlite3_prepare_v2, bind, step, finalize. In Python, we just use cursor.execute() which handles prepared statements and finalization automatically. However, to match behavior precisely (e.g., if a step fails, throw exception), we need to ensure that we check return values? In Python, if execute fails, it raises an exception. We'll catch and raise RuntimeError. Also, the C++ code throws on sqlite3_step != SQLITE_DONE. In Python, execute() will raise if it fails. For SELECT, step is called in a loop; Python's fetchall() collects all rows. That's fine.
+
+But careful: The C++ code in add_book, remove_book, borrow_book, return_book throws on sqlite3_step != SQLITE_DONE, which includes cases where no rows affected? Actually SQLITE_DONE indicates successful completion. If the operation fails (e.g., constraint violation), it returns an error code. In Python, if we try to insert invalid data, execute will raise sqlite3.IntegrityError etc. We need to raise RuntimeError as per C++. So we'll catch sqlite3.Error and raise RuntimeError.
+
+However, the C++ code in search_books does not throw if no rows; it returns empty vector. In Python, fetchall() returns empty list, that's fine.
+
+One more nuance: In C++, the destructor closes the connection. In Python, __del__ is called when the object is garbage collected. That might not be immediate. But for simple scripts, it's okay. Could also implement __enter__/__exit__ to allow with statement. The C++ doesn't have that, but we could add close() method and let __del__ call close(). Possibly the user expects to call a close method explicitly. We'll provide a close() method that closes the connection and sets it to None (to avoid double close). __del__ will call close() if connection not None. Also, to be safe, we can suppress exceptions during __del__.
+
+We also need to handle the case where get_connection is called;
+</think>
+
+=== RAW ANSWER ===
+```
+import sqlite3
+from typing import List, Tuple
+
+class BookManagementDB:
+    def __init__(self, db_name: str):
+        try:
+            self.connection = sqlite3.connect(db_name)
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def __del__(self):
+        self.close()
+
+    def close(self):
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
+
+    def create_table(self):
+        sql = (
+            "CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT NOT NULL, "
+            "author TEXT NOT NULL, "
+            "available INTEGER NOT NULL"
+            ")"
+        )
+        try:
+            self.connection.execute(sql)
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def add_book(self, title: str, author: str):
+        sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)"
+        try:
+            self.connection.execute(sql, (title, author))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def remove_book(self, id: int):
+        sql = "DELETE FROM books WHERE id = ?"
+        try:
+            self.connection.execute(sql, (id,))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def borrow_book(self, id: int):
+        sql = "UPDATE books SET available = 0 WHERE id = ?"
+        try:
+            self.connection.execute(sql, (id,))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def return_book(self, id: int):
+        sql = "UPDATE books SET available = 1 WHERE id = ?"
+        try:
+            self.connection.execute(sql, (id,))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def search_books(self) -> List[Tuple[int, str, str, int]]:
+        sql = "SELECT * FROM books"
+        try:
+            cursor = self.connection.execute(sql)
+            rows = cursor.fetchall()
+            books = [(row[0], row[1], row[2], row[3]) for row in rows]
+            return books
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def get_connection(self):
+        return self.connection
+```
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+from typing import List, Tuple
+
+class BookManagementDB:
+    def __init__(self, db_name: str):
+        try:
+            self.connection = sqlite3.connect(db_name)
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def __del__(self):
+        self.close()
+
+    def close(self):
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
+
+    def create_table(self):
+        sql = (
+            "CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT NOT NULL, "
+            "author TEXT NOT NULL, "
+            "available INTEGER NOT NULL"
+            ")"
+        )
+        try:
+            self.connection.execute(sql)
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def add_book(self, title: str, author: str):
+        sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)"
+        try:
+            self.connection.execute(sql, (title, author))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def remove_book(self, id: int):
+        sql = "DELETE FROM books WHERE id = ?"
+        try:
+            self.connection.execute(sql, (id,))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def borrow_book(self, id: int):
+        sql = "UPDATE books SET available = 0 WHERE id = ?"
+        try:
+            self.connection.execute(sql, (id,))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def return_book(self, id: int):
+        sql = "UPDATE books SET available = 1 WHERE id = ?"
+        try:
+            self.connection.execute(sql, (id,))
+            self.connection.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def search_books(self) -> List[Tuple[int, str, str, int]]:
+        sql = "SELECT * FROM books"
+        try:
+            cursor = self.connection.execute(sql)
+            rows = cursor.fetchall()
+            books = [(row[0], row[1], row[2], row[3]) for row in rows]
+            return books
+        except sqlite3.Error as e:
+            raise RuntimeError(str(e)) from e
+
+    def get_connection(self):
+        return self.connection

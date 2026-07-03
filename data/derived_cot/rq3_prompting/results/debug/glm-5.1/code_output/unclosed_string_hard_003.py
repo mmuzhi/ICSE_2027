@@ -1,0 +1,1 @@
+dct[(i,prev,ct,k)]='min(inc,exc)

@@ -1,0 +1,199 @@
+=== SOURCE CODE (cpp) ===
+
+#include <sstream>
+
+#include <string>
+#include <unordered_map>
+
+class VendingMachine {
+public:
+    VendingMachine();
+    void add_item(const std::string& item_name, double price, int quantity);
+    double insert_coin(double amount);
+    double purchase_item(const std::string& item_name);
+    bool restock_item(const std::string& item_name, int quantity);
+    std::string display_items() const;
+    std::unordered_map<std::string, std::unordered_map<std::string, double>> inventory() const;
+    void set_inventory(std::unordered_map<std::string, std::unordered_map<std::string, double>> x);
+    void set_balance(double y);
+
+private:
+    std::unordered_map<std::string, std::unordered_map<std::string, double>> inventory_;
+    double balance_;
+};
+
+VendingMachine::VendingMachine() : balance_(0) {}
+
+void VendingMachine::add_item(const std::string& item_name, double price, int quantity) {
+    if (!restock_item(item_name, quantity)) {
+        inventory_[item_name] = { {"price", price}, {"quantity", static_cast<double>(quantity)} };
+    }
+}
+
+double VendingMachine::insert_coin(double amount) {
+    balance_ += amount;
+    return balance_;
+}
+
+double VendingMachine::purchase_item(const std::string& item_name) {
+    if (inventory_.count(item_name)) {
+        auto& item = inventory_[item_name];
+        if (item["quantity"] > 0 && balance_ >= item["price"]) {
+            balance_ -= item["price"];
+            item["quantity"] -= 1;
+            return balance_;
+        }
+    }
+    return false;
+}
+
+bool VendingMachine::restock_item(const std::string& item_name, int quantity) {
+    if (inventory_.count(item_name)) {
+        inventory_[item_name]["quantity"] += static_cast<double>(quantity);
+        return true;
+    }
+    return false;
+}
+
+std::string VendingMachine::display_items() const {
+    if (inventory_.empty()) {
+        return "false";
+    }
+
+    std::ostringstream oss;
+    for (const auto& item : inventory_) {
+        oss << item.first << " - $" << item.second.at("price") << " [" << item.second.at("quantity") << "]\n";
+    }
+
+    std::string result = oss.str();
+    result.pop_back(); 
+    return result;
+}
+
+std::unordered_map<std::string, std::unordered_map<std::string, double>> VendingMachine::inventory() const {
+    return inventory_;
+}
+
+void VendingMachine::set_inventory(std::unordered_map<std::string, std::unordered_map<std::string, double>> x)
+{
+    this->inventory_ = x;
+}
+
+void VendingMachine::set_balance(double y)
+{
+    this->balance_ = y;
+}
+
+=== REASONING ===
+<think>
+We need to translate the C++ VendingMachine class to Python. The behavior must be identical: same inputs/outputs, side effects, edge cases, exceptions. Use idiomatic Python only if it doesn't change behavior.
+
+Key points:
+- Class VendingMachine with methods: add_item, insert_coin, purchase_item, restock_item, display_items, inventory (getter), set_inventory, set_balance.
+- Constructor sets balance_ to 0. inventory_ is a dictionary of dictionaries: item_name -> {"price": price (float), "quantity": quantity (float in C++? Actually they store quantity as double when converting to double from int, but Python float). 
+- add_item: if restock_item returns false (item not present), then set inventory_[item_name] = {"price": price, "quantity": quantity} (note: quantity as float? C++ stores static_cast<double>(quantity), so Python float). 
+- insert_coin: adds amount to balance_, returns new balance.
+- purchase_item: if item exists, quantity>0 and balance >= price, then subtract price, decrement quantity by 1, return balance. Otherwise return False (in C++ returns false, which is double? Actually return type is double, but they return false which is bool converted to double? In C++, false converts to 0.0. So Python must return 0.0? Wait: In C++, returning `false` from a function returning double returns double(0). So we should return 0.0. But careful: They return `balance_` on success, else `false` (0.0). So we should return 0.0 on failure. But also note: if item not present, they return false (0.0). So Python: return 0.0 on failure.
+- restock_item: if item exists, add quantity (int) to existing quantity (float). Return True if item existed, else False.
+- display_items: if inventory empty, return string "false". Else build string: "item_name - $price [quantity]\n" for each item, then remove trailing newline. Note: price is double, format "$" before price, no decimal formatting specified; C++ default output of double will print as needed (e.g., 2.5, 1.0). Python str(price) gives some representation. But to match exactly? The C++ output uses default `<<` for double, which prints with necessary decimal digits, e.g., 1.0 prints "1", 1.5 prints "1.5". In Python, str(price) will print "1.0" for 1.0, which differs. To match C++, we need to format similarly: if it's an integer value, print without decimal? But C++'s default `<<` for double prints "1" for 1.0? Actually, C++ default formatting for double: when the double is exactly an integer, it may omit the decimal point? No, by default, `std::cout << 1.0` prints "1". Actually I think it prints "1" because trailing zeros are omitted. Let's verify: In C++, `double d = 1.0; cout << d;` outputs "1". Yes, because default precision is 6 significant digits, and trailing zeros are not printed. So 1.0 prints as "1". In Python, `str(1.0)` returns "1.0". We need to replicate C++ output. So we should format price as a float that drops unnecessary trailing zeros. We can use something like `str(price).rstrip('0').rstrip('.')` if it ends with '.0', but careful for numbers like 1.5 -> "1.5". However, C++ also prints 1.5 as "1.5". We can do: if price is integer (no fractional part), format as int; else as float. But C++ default prints "1e-05" for very small numbers? Probably not needed. We'll use: `f"{price:g}"` which uses general format that drops trailing zeros. `"{:g}".format(price)` yields "1" for 1.0, "1.5" for 1.5, "1e-05" for 0.00001. That matches C++ default? Possibly. But C++ default also uses 6 digits of precision and scientific notation for very large/small. `:g` is similar. Alternatively, we could use `str(price).rstrip('0').rstrip('.')` but that would turn "1.0" into "1", but 1.5 becomes "1.5". That is fine for typical prices. However, C++ may print "1.5" as "1.5". That works. But note: for price = 123456789.0, C++ might print "1.23457e+08" due to default precision? Actually default precision is 6, so it would use scientific notation. But `:g` also uses 6 significant digits by default. So `:g` is good. We'll use `f"{price:g}"` to match. But check: C++ default for double uses 6 significant digits. `:g` also uses 6. So fine.
+- inventory() returns a deep copy? In C++ it returns by value, so a copy of the map. In Python, returning `self.inventory_` would return a reference. But to match behavior, we should return a deep copy, because modifications to the returned dict should not affect the original. However, the C++ return type is `std::unordered_map<std::string, std::unordered_map<std::string, double>>` returned by value, so it's a copy.
+</think>
+
+=== RAW ANSWER ===
+```
+class VendingMachine:
+    def __init__(self):
+        self._inventory = {}
+        self._balance = 0.0
+
+    def add_item(self, item_name: str, price: float, quantity: int) -> None:
+        if not self.restock_item(item_name, quantity):
+            self._inventory[item_name] = {"price": float(price), "quantity": float(quantity)}
+
+    def insert_coin(self, amount: float) -> float:
+        self._balance += amount
+        return self._balance
+
+    def purchase_item(self, item_name: str) -> float:
+        if item_name in self._inventory:
+            item = self._inventory[item_name]
+            if item["quantity"] > 0 and self._balance >= item["price"]:
+                self._balance -= item["price"]
+                item["quantity"] -= 1.0
+                return self._balance
+        return 0.0
+
+    def restock_item(self, item_name: str, quantity: int) -> bool:
+        if item_name in self._inventory:
+            self._inventory[item_name]["quantity"] += float(quantity)
+            return True
+        return False
+
+    def display_items(self) -> str:
+        if not self._inventory:
+            return "false"
+        lines = []
+        for name, attr in self._inventory.items():
+            price_str = f"{attr['price']:g}"
+            qty_str = f"{attr['quantity']:g}"
+            lines.append(f"{name} - ${price_str} [{qty_str}]")
+        return "\n".join(lines)
+
+    def inventory(self):
+        # Return a deep copy to match C++ return-by-value
+        return {k: dict(v) for k, v in self._inventory.items()}
+
+    def set_inventory(self, x):
+        self._inventory = {k: dict(v) for k, v in x.items()}
+
+    def set_balance(self, y: float) -> None:
+        self._balance = y
+```
+
+=== TRANSLATED CODE (py) ===
+class VendingMachine:
+    def __init__(self):
+        self._inventory = {}
+        self._balance = 0.0
+
+    def add_item(self, item_name: str, price: float, quantity: int) -> None:
+        if not self.restock_item(item_name, quantity):
+            self._inventory[item_name] = {"price": float(price), "quantity": float(quantity)}
+
+    def insert_coin(self, amount: float) -> float:
+        self._balance += amount
+        return self._balance
+
+    def purchase_item(self, item_name: str) -> float:
+        if item_name in self._inventory:
+            item = self._inventory[item_name]
+            if item["quantity"] > 0 and self._balance >= item["price"]:
+                self._balance -= item["price"]
+                item["quantity"] -= 1.0
+                return self._balance
+        return 0.0
+
+    def restock_item(self, item_name: str, quantity: int) -> bool:
+        if item_name in self._inventory:
+            self._inventory[item_name]["quantity"] += float(quantity)
+            return True
+        return False
+
+    def display_items(self) -> str:
+        if not self._inventory:
+            return "false"
+        lines = []
+        for name, attr in self._inventory.items():
+            price_str = f"{attr['price']:g}"
+            qty_str = f"{attr['quantity']:g}"
+            lines.append(f"{name} - ${price_str} [{qty_str}]")
+        return "\n".join(lines)
+
+    def inventory(self):
+        return {k: dict(v) for k, v in self._inventory.items()}
+
+    def set_inventory(self, x):
+        self._inventory = {k: dict(v) for k, v in x.items()}
+
+    def set_balance(self, y: float) -> None:
+        self._balance = y

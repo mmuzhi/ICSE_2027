@@ -1,0 +1,105 @@
+#include <map>
+#include <string>
+#include <optional>
+#include <utility>
+
+class Warehouse {
+private:
+    class Product {
+    public:
+        Product(std::string name, int quantity) 
+            : name(std::move(name)), quantity(quantity) {}
+
+        void addQuantity(int q) {
+            quantity += q;
+        }
+
+        int getQuantity() const {
+            return quantity;
+        }
+
+    private:
+        std::string name;
+        int quantity;
+    };
+
+    class Order {
+    public:
+        Order(int productId, int quantity, std::string status)
+            : productId(productId), quantity(quantity), status(std::move(status)) {}
+
+        std::string getStatus() const {
+            return status;
+        }
+
+        void setStatus(std::string s) {
+            status = std::move(s);
+        }
+
+    private:
+        int productId;
+        int quantity;
+        std::string status;
+    };
+
+    std::map<int, Product> inventory;
+    std::map<int, Order> orders;
+
+public:
+    Warehouse() = default;
+
+    void add_product(int productId, const std::string& name, int quantity) {
+        auto it = inventory.find(productId);
+        if (it != inventory.end()) {
+            it->second.addQuantity(quantity);
+        } else {
+            inventory.emplace(productId, Product(name, quantity));
+        }
+    }
+
+    void update_product_quantity(int productId, int quantity) {
+        auto it = inventory.find(productId);
+        if (it != inventory.end()) {
+            it->second.addQuantity(quantity);
+        }
+    }
+
+    int get_product_quantity(int productId) const {
+        auto it = inventory.find(productId);
+        if (it != inventory.end()) {
+            return it->second.getQuantity();
+        } else {
+            return -1;
+        }
+    }
+
+    bool create_order(int orderId, int productId, int quantity) {
+        auto it = inventory.find(productId);
+        if (it != inventory.end() && it->second.getQuantity() >= quantity) {
+            it->second.addQuantity(-quantity);
+            orders.emplace(orderId, Order(productId, quantity, "Shipped"));
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    bool change_order_status(int orderId, const std::string& status) {
+        auto it = orders.find(orderId);
+        if (it != orders.end()) {
+            it->second.setStatus(status);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    std::optional<std::string> trackOrder(int orderId) const {
+        auto it = orders.find(orderId);
+        if (it != orders.end()) {
+            return it->second.getStatus();
+        } else {
+            return std::nullopt;
+        }
+    }
+};

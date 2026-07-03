@@ -1,0 +1,409 @@
+=== SOURCE CODE (cpp) ===
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#include <iostream>
+#include <cstring>
+
+
+#pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "Iphlpapi.lib")
+
+#include <string>
+
+class IpUtil {
+public:
+    static bool is_valid_ipv4(const std::string& ip_address);
+    static bool is_valid_ipv6(const std::string& ip_address);
+    static std::string get_hostname(const std::string& ip_address);
+};
+
+bool IpUtil::is_valid_ipv4(const std::string& ip_address) {
+    struct sockaddr_in sa;
+    int result = inet_pton(AF_INET, ip_address.c_str(), &(sa.sin_addr));
+    return result == 1;
+}
+
+bool IpUtil::is_valid_ipv6(const std::string& ip_address) {
+    struct sockaddr_in6 sa;
+    int result = inet_pton(AF_INET6, ip_address.c_str(), &(sa.sin6_addr));
+    return result == 1;
+}
+
+std::string IpUtil::get_hostname(const std::string& ip_address) {
+    if (ip_address == "0.0.0.0") {
+        char hostname[NI_MAXHOST];
+        if (gethostname(hostname, sizeof(hostname)) == 0) {
+            
+            return std::string(hostname);
+        }
+        else {
+            
+            return "";
+        }
+    }
+
+    struct sockaddr_in sa;
+    sa.sin_family = AF_INET;
+    inet_pton(AF_INET, ip_address.c_str(), &(sa.sin_addr));
+
+    char host[NI_MAXHOST];
+
+    int result = getnameinfo((struct sockaddr*)&sa, sizeof(sa), host, sizeof(host), nullptr, 0, 0);
+    if (result == 0) {
+        return std::string(host);
+    }
+    else {
+        return "";
+    }
+}
+
+
+=== REASONING ===
+<think>
+
+We are translating C++ code that uses Windows Sockets and IP helper APIs to Python.
+ Since the original code is Windows-specific, we must use Python libraries that can provide similar functionality on Windows.
+
+ Steps:
+ 1. The original code uses Winsock2 and Iphlpapi. In Python, we can use the `socket` module for most operations, but note that `socket` is cross-platform. However, the behavior for "0.0.0.0" might differ.
+
+ 2. We'll create a class `IpUtil` with static methods:
+      - `is_valid_ipv4(ip_address: str) -> bool`
+      - `is_valid_ipv6(ip_address: str) -> bool`
+      - `get_hostname(ip_address: str) -> str`
+
+ 3. For `is_valid_ipv4` and `is_valid_ipv6`:
+      In C++, `inet_pton` is used. In Python, we can use `socket.inet_pton` and catch exceptions.
+
+ 4. For `get_hostname`:
+      - The C++ code has a special case for "0.0.0.0": it returns the local hostname (using `gethostname`).
+      - Otherwise, it uses `getnameinfo` (which in Python is available as `socket.getnameinfo`). However, note that in the C++ code, they are using `sockaddr_in` for IPv4.
+
+ 5. Important: The original code only handles IPv4 for the `get_hostname` method (except for the special case "0.0.0.0"). We must note that the provided C++ code does not handle IPv6 in `get_hostname` (it uses `sockaddr_in`). However, the problem states to keep behavior identical.
+
+ 6. Therefore, in Python we will do:
+      - If `ip_address` is "0.0.0.0", then use `socket.gethostname()` to get the local hostname.
+      - Otherwise, we assume it's an IPv4 address and create an IPv4 socket address structure.
+
+ 7. However, the original code does not validate the IP address in `get_hostname` beyond the special case. It directly uses `inet_pton` for IPv4. If the address is invalid, it would have undefined behavior? Actually, the original code does not check the return value of `inet_pton` in `get_hostname` (it does in the validation functions). So we must mimic: if the address is not "0.0.0.0", we try to convert it to an IPv4 address and then do the reverse lookup.
+
+ 8. But note: what if the address is IPv6? The original code does not handle it. So our Python code should also only handle IPv4 for the non-special case.
+
+ 9. Steps for `get_hostname` in Python:
+      if ip_address == "0.0.0.0":
+          return socket.gethostname()   (or empty string on error? The original code uses gethostname and returns empty on failure)
+
+      else:
+          try:
+              # Convert the string to a packed IPv4 address (like inet_pton)
+              packed_ip = socket.inet_pton(socket.AF_INET, ip_address)
+          except socket.error:
+              # If conversion fails, return empty string? The original code didn't check, but let's note: 
+              # The original code called inet_pton without checking the result? Actually, it did not check the result in get_hostname.
+              # But looking: the original code did not check the return value of inet_pton in get_hostname? Actually, it doesn't use the return value for error? 
+              # It goes ahead and calls getnameinfo. However, if inet_pton fails, then sa.sin_addr would be invalid? 
+              # And then getnameinfo would fail. So we can mimic by returning empty string if we get an exception in conversion?
+              # Actually, the original code does not return on failure of inet_pton. It proceeds. But we can see that inet_pton returns 0 on failure? 
+              # The original code in the validation functions checks for 1. But in get_hostname, it does not check. So if inet_pton fails, then the address is set to some invalid value? 
+              # Then getnameinfo will fail. So we can do the same: if conversion fails, we still call getnameinfo? But in Python, we can't create an invalid packed address arbitrarily.
+
+          Instead, we can do:
+
+          We'll create a tuple (ip_address, port) for the socket address. We use port 0 (arbitrary).
+          Then use socket.getnameinfo with the flags NI_NAMEREQD? But note the original code uses 0 flags.
+
+          Alternatively, we can use:
+          `socket.getnameinfo((ip_address, 0), 0)` -> but wait, the original code uses a sockaddr_in structure.
+
+          Actually, the Python socket.getnameinfo expects a sockaddr tuple. For IPv4, we can do:
+          `addr = (ip_address, 0)`
+          Then call: `socket.getnameinfo(addr, socket.NI_NAMEREQD)`? 
+
+          But note: the original code did not use NI_NAMEREQD. It used 0. So we should use 0.
+
+          However, the original code uses `getnameinfo` with the following parameters:
+          - sockaddr* pointing to a sockaddr_in (IPv4)
+          - length of sockaddr_in
+          - host buffer, size NI_MAXHOST
+          - service buffer: nullptr and 0
+          - flags: 0
+
+          In Python, we can do:
+
+          try:
+              # First, convert the string to a packed IPv4 address to validate? But the original doesn't validate. 
+              # Actually, we can skip the validation and let getnameinfo fail.
+
+          Instead, we'll create a tuple (ip_address, port) and then call getnameinfo.
+
+          However, the Python socket.getnameinfo expects a sockaddr tuple. For IPv4, the sockaddr is (address, port). We can set port to 0.
+
+          Example from Python docs: 
+          socket.getnameinfo(("127.0.0.1", 0), 0) returns ('localhost', '0')
+
+          But we want only the hostname. So we take the first element.
+
+          Steps:
+            try:
+                addr = (ip_address, 0)
+                hostname, service = socket.getnameinfo(addr, 0)
+                return hostname
+            except socket.gaierror:
+                return ""
+
+ 10. But note: the original code for the special case "0.0.0.0" uses `gethostname` and returns empty string on failure. In Python, `gethostname` doesn't throw an exception, so we can use it without try-except? Actually, the original checks the return value.
+
+ 11. In Python, `gethostname` might raise? Actually, according to the Python docs: it doesn't raise an exception. But we can use it safely.
+
+ 12. However, the original code for "0.0.0.0" returns an empty string if `gethostname` fails. How does it fail? The C function `gethostname` returns 0 on success, non-zero on failure. In Python, we don't have a direct way to check. Actually, `socket.gethostname()` should always work? But to mimic, we can try:
+
+      For "0.0.0.0":
+          try:
+              return socket.gethostname()
+          except: 
+              return ""
+
+      But the Python `socket.gethostname` doesn't raise? Actually, it might on failure? Let's check: the Python implementation doesn't mention raising any exception. It calls the C function and returns the string. So we can just use it.
+
+      However, the original code returns an empty string on failure. In Python, if the call fails, how would we know? Actually, the C function `gethostname` returns an error, but Python does not expose that. So we cannot mimic exactly? 
+
+      But note: the original code does:
+
+          if (gethostname(hostname, sizeof(hostname)) == 0) {
+              return hostname;
+          } else {
+              return "";
+          }
+
+      In Python, we don't have a way to know if `gethostname` fails? So we must rely on the fact that `gethostname` in Python is implemented and should not fail. 
+
+      Alternatively, we can use `socket.gethostname` and assume it never fails? But to be safe, we can do:
+
+          try:
+              return socket.gethostname()
+          except:
+              return ""
+
+      However, the Python documentation doesn't specify that `gethostname` can raise. So we might skip the exception? But to mimic the original behavior, we should handle any error.
+
+ 13. Considering the above, let's design:
+
+      For `is_valid_ipv4` and `is_valid_ipv6`:
+
+          def is_valid_ipv4(ip_address):
+              try:
+                  socket.inet_pton(socket.AF_INET, ip_address)
+                  return True
+              except socket.error:
+                  return False
+
+          Similarly for IPv6.
+
+      For `get_hostname`:
+
+          def get_hostname(ip_address):
+              if ip_address == "0.0.0.0":
+                  # Try to get the local hostname
+                  try:
+                      return socket.gethostname()
+                  except:
+                      return ""
+              else:
+                  # We are going to assume IPv4
+                  try:
+                      # First, we try to convert to packed format? Actually, we don't need to explicitly.
+                      # We'll create a tuple (ip_address, 0) and call getnameinfo.
+                      # But note: what if the address is not valid? Then getnameinfo will raise an exception.
+                      addr = (ip_address, 0)
+                      hostname, service = socket.getnameinfo(addr, 0)
+                      return hostname
+                  except socket.gaierror:
+                      return ""
+                  # We catch gaierror, which is for getaddrinfo errors. But note: the original code returns empty string on any non-zero result.
+
+ 14. However, the original code uses `getnameinfo` with a sockaddr_in structure. In Python, when we pass a string, it tries to resolve it? Actually, the Python `getnameinfo` function expects a sockaddr tuple. For IPv4, we pass a (ip, port). 
+
+ 15. But note: the original code does not check if the IP is valid. So if we pass an invalid IP, the original would have called `inet_pton` which would leave `sa.sin_addr` as invalid? Then `getnameinfo` would fail. We mimic by catching the exception and returning empty string.
+
+ 16. However, the original code does not handle IPv6. So if we pass an IPv6 address to `get_hostname`, it would be treated as IPv4? That might be an issue. But the problem says: keep behavior identical. So we don't handle IPv6 in `get_hostname`.
+
+ 17. But what if the user passes an IPv6 address? The original code would try to convert it with `inet_pton(AF_INET, ...)`, which would fail (return 0) and then `getnameinfo` would be called with an invalid address? Then `getnameinfo` would return an error. We mimic by catching the exception and returning empty string.
+
+ 18. Therefore, we can leave the `get_hostname` as above: only handle IPv4 and treat any error (including invalid address) as an empty string.
+
+ 19. However, what about the case when the address is a valid IPv6? The original code would not handle it. So we don't need to handle it.
+
+ 20. But note: the original code does not have a function for IPv6 reverse lookup. So we are safe.
+
+ 21. Let's code accordingly.
+
+ 22. We must import the socket module.
+
+ 23. We'll write the class in Python.
+
+ 24. However, note: the original code uses `#include <winsock2.h>` and `#include <ws2tcpip.h>`. We are using the standard `socket` module which on Windows uses Winsock underneath.
+
+ 25. We'll write:
+
+      import socket
+
+      class IpUtil:
+          @staticmethod
+          def is_valid_ipv4(ip_address):
+              try:
+                  socket.inet_pton(socket.AF_INET, ip_address)
+                  return True
+              except socket.error:
+                  return False
+
+          @staticmethod
+          def is_valid_ipv6(ip_address):
+              try:
+                  socket.inet_pton(socket.AF_INET6, ip_address)
+                  return True
+              except socket.error:
+                  return False
+
+          @staticmethod
+          def get_hostname(ip_address):
+              if ip_address == "0.0.0.0":
+                  try:
+                      return socket.gethostname()
+                  except:
+                      return ""
+              else:
+                  try:
+                      # We are using a tuple (ip_address, port) for IPv4
+                      addr = (ip_address, 0)
+                      hostname, _ = socket.getnameinfo(addr, 0)
+                      return hostname
+                  except socket.gaierror:
+                      return ""
+                  # We catch only gaierror? But what if there's another exception? The original code returns empty on any non-zero.
+                  # According to Python docs, getnameinfo raises gaierror for errors. So we catch that.
+                  except:
+                      # To be safe, catch any exception? But the original code returns empty string on any failure.
+                      return ""
+
+ 26. However, note: the original code uses `getnameinfo` and returns empty string for any non-zero result. In Python, `getnameinfo` only raises `gaierror` for errors? So we can catch `gaierror`. But also note: the original code did not specify a port and used 0. We did the same.
+
+ 27. But what about the possibility of a timeout? The original code did not set any timeout. In Python, the `getnameinfo` might block? But that's the same as the original.
+
+ 28. We'll run the code as above.
+
+ 29. However, the original code initializes Winsock? We don't do that in Python. The Python socket module initializes the socket library automatically.
+
+ 30. Therefore, we don't need explicit initialization.
+
+ 31. Let's test the functions with some examples.
+
+ 32. But note: the original code had a special case for "0.0.0.0". We are mimicking that.
+
+ 33. We'll write the code accordingly.
+
+ 34. One more note: the original code returns an empty string for any failure in `get_hostname`. We are doing the same.
+
+ 35. Let's write the final code.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate C++ code that validates IPv4 and IPv6 addresses and retrieves hostnames into equivalent Python code. The solution must maintain identical behavior, including handling inputs/outputs, side effects, edge cases, and exceptions. The original C++ code uses Windows-specific libraries, so we leverage Python's `socket` module to achieve similar functionality in a cross-platform manner.
+
+### Approach
+1. **IP Validation**:
+   - **IPv4 Validation**: Use `socket.inet_pton` to check if the given string is a valid IPv4 address. If the function succeeds, return `True`; otherwise, catch the exception and return `False`.
+   - **IPv6 Validation**: Similarly, use `socket.inet_pton` for IPv6 addresses, returning `True` on success and `False` on failure.
+
+2. **Hostname Retrieval**:
+   - **Special Case for "0.0.0.0"**: Return the local machine's hostname using `socket.gethostname`. Handle any exceptions by returning an empty string.
+   - **General Case**: For other IPv4 addresses, create a tuple of the IP address and port (0). Use `socket.getnameinfo` to perform a reverse DNS lookup. Return the hostname on success or an empty string on failure.
+
+### Solution Code
+```python
+import socket
+
+class IpUtil:
+    @staticmethod
+    def is_valid_ipv4(ip_address):
+        try:
+            socket.inet_pton(socket.AF_INET, ip_address)
+            return True
+        except socket.error:
+            return False
+
+    @staticmethod
+    def is_valid_ipv6(ip_address):
+        try:
+            socket.inet_pton(socket.AF_INET6, ip_address)
+            return True
+        except socket.error:
+            return False
+
+    @staticmethod
+    def get_hostname(ip_address):
+        if ip_address == "0.0.0.0":
+            try:
+                return socket.gethostname()
+            except:
+                return ""
+        else:
+            try:
+                addr = (ip_address, 0)
+                hostname, _ = socket.getnameinfo(addr, 0)
+                return hostname
+            except socket.gaierror:
+                return ""
+            except:
+                return ""
+```
+
+### Explanation
+- **IP Validation**:
+  - The `is_valid_ipv4` and `is_valid_ipv6` methods use `socket.inet_pton` to convert the IP string into a packed binary format. If the conversion fails, a `socket.error` exception is caught, and the method returns `False`. Successful conversion returns `True`.
+
+- **Hostname Retrieval**:
+  - For the special IP address "0.0.0.0", the method `get_hostname` uses `socket.gethostname` to fetch the local machine's hostname. Any exceptions during this operation result in an empty string being returned.
+  - For other IPv4 addresses, the method constructs a tuple with the IP and port 0. It then uses `socket.getnameinfo` to perform a reverse DNS lookup. If successful, the hostname is returned; otherwise, exceptions are caught, and an empty string is returned. This mirrors the original C++ behavior of handling both conversion and lookup errors gracefully.
+
+This approach ensures that the Python code behaves identically to the original C++ code, handling edge cases and exceptions in the same manner while leveraging Python's idiomatic socket operations.
+
+=== TRANSLATED CODE (py) ===
+import socket
+
+class IpUtil:
+    @staticmethod
+    def is_valid_ipv4(ip_address):
+        try:
+            socket.inet_pton(socket.AF_INET, ip_address)
+            return True
+        except socket.error:
+            return False
+
+    @staticmethod
+    def is_valid_ipv6(ip_address):
+        try:
+            socket.inet_pton(socket.AF_INET6, ip_address)
+            return True
+        except socket.error:
+            return False
+
+    @staticmethod
+    def get_hostname(ip_address):
+        if ip_address == "0.0.0.0":
+            try:
+                return socket.gethostname()
+            except:
+                return ""
+        else:
+            try:
+                addr = (ip_address, 0)
+                hostname, _ = socket.getnameinfo(addr, 0)
+                return hostname
+            except socket.gaierror:
+                return ""
+            except:
+                return ""

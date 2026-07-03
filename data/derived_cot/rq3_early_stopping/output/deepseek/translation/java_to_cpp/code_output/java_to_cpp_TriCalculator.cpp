@@ -1,0 +1,101 @@
+#include <cmath>
+#include <iomanip>
+#include <sstream>
+#include <cfenv>
+#include <iostream>
+#include <limits>
+#include <cstdlib>
+
+// Use __float128 for high precision (requires GCC or Clang with quadmath support)
+// If not available, fallback to long double.
+#if defined(__SIZEOF_FLOAT128__) && defined(__GNUC__)
+#include <quadmath.h>
+using high_precision = __float128;
+#else
+using high_precision = long double;
+#endif
+
+class TriCalculator {
+public:
+    TriCalculator() = default;
+
+    double cos(double x) {
+        return round(taylor(x, 50), 10);
+    }
+
+    // Factorial as high_precision (integer)
+    high_precision factorial(int a) {
+        high_precision result = 1.0Q; // for __float128, else 1.0L
+        while (a > 1) {
+            result = result * static_cast<high_precision>(a);
+            --a;
+        }
+        return result;
+    }
+
+    double taylor(double x, int n) {
+        high_precision a = 1.0Q;
+        x = x / 180.0 * M_PI; // convert degrees to radians
+        int count = 1;
+        for (int k = 1; k < n; ++k) {
+            // power : x^(2k) as high_precision
+            high_precision x_pow = static_cast<high_precision>(1.0);
+            for (int i = 0; i < 2 * k; ++i) {
+                x_pow *= static_cast<high_precision>(x);
+            }
+            high_precision fact_val = factorial(2 * k);
+            // Avoid division by zero: factorial is never zero
+            high_precision term = x_pow / fact_val;
+            if (count % 2 != 0) {
+                a = a - term;
+            } else {
+                a = a + term;
+            }
+            ++count;
+        }
+        return static_cast<double>(a);
+    }
+
+    double sin(double x) {
+        x = x / 180.0 * M_PI;
+        double g = 0.0;
+        double t = x;
+        int n = 1;
+        while (std::abs(t) >= 1e-15) {
+            g += t;
+            n += 1;
+            t = -t * x * x / (2.0 * n - 1.0) / (2.0 * n - 2.0);
+        }
+        return round(g, 10);
+    }
+
+    double tan(double x) {
+        double cosValue = cos(x);
+        if (cosValue != 0.0) {
+            return round(sin(x) / cosValue, 10);
+        } else {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+    }
+
+private:
+    double round(double value, int places) {
+        // Use rounding to nearest with HALF_UP
+        // This approximates BigDecimal.setScale(places, RoundingMode.HALF_UP)
+        // Using standard floor functions after shifting
+        double factor = std::pow(10.0, places);
+        // Use fenv rounding mode to nearest, ties to away? C++ default is round-to-nearest-even.
+        // For HALF_UP, we implement manually:
+        double shifted = value * factor;
+        double abs = std::abs(shifted);
+        double fractional = abs - std::floor(abs);
+        double rounded_abs;
+        if (fractional >= 0.5) {
+            rounded_abs = std::ceil(abs);
+        } else {
+            rounded_abs = std::floor(abs);
+        }
+        double result = (shifted < 0) ? -rounded_abs / factor : rounded_abs / factor;
+        return result;
+    }
+};

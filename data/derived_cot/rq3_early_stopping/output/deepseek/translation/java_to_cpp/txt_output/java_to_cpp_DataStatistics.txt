@@ -1,0 +1,239 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+public class DataStatistics {
+
+    public double mean(int[] data) {
+        double sum = Arrays.stream(data).sum();
+        return Math.round((sum / data.length) * 100.0) / 100.0;
+    }
+
+    public double median(int[] data) {
+        int[] sortedData = Arrays.copyOf(data, data.length);
+        Arrays.sort(sortedData);
+        int n = sortedData.length;
+
+        if (n % 2 == 0) {
+            int middle = n / 2;
+            return Math.round(((sortedData[middle - 1] + sortedData[middle]) / 2.0) * 100.0) / 100.0;
+        } else {
+            int middle = n / 2;
+            return sortedData[middle];
+        }
+    }
+
+    public List<Integer> mode(int[] data) {
+        Map<Integer, Long> frequencyMap = Arrays.stream(data)
+                .boxed()
+                .collect(Collectors.groupingBy(e -> e, Collectors.counting()));
+
+        long maxCount = Collections.max(frequencyMap.values());
+
+        return frequencyMap.entrySet()
+                .stream()
+                .filter(entry -> entry.getValue() == maxCount)
+                .map(Map.Entry::getKey)
+                .sorted()
+                .collect(Collectors.toList());
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++. The Java code defines a class DataStatistics with three methods: mean, median, mode. They operate on integer arrays.
+
+We need to replicate behavior exactly, including rounding to two decimal places (multiply by 100, round, divide by 100). For median, when even length, compute average of two middle values and round same way. For odd length, return the middle value as double? Actually Java returns double for median, but for odd length it returns sortedData[middle] which is an int, but the method return type is double, so it's implicitly cast to double. In C++ we should return double for consistency, and the rounding is applied only for even case. Note: For odd case, the Java code does not round; it just returns the integer as double. So we must do that exactly.
+
+Also mode returns List<Integer> in Java. In C++ we can use std::vector<int>. Need to sort the mode values ascending. In Java, the filter and sorted, return sorted list. In C++ we can collect into vector and sort.
+
+There are some nuances: The Java method uses streams and Collectors. We need to compute frequency map, find max frequency, then collect keys with that frequency, then sort.
+
+Edge cases: For empty input? The Java code doesn't check for empty; Arrays.stream(data).sum() on empty array returns 0, but then dividing by zero would cause ArithmeticException (division by zero). In C++ we should similarly not check; it would cause division by zero, which is undefined behavior. But we can assume input is non-empty. We'll keep same behavior (no checks) for correctness.
+
+Rounding: In Java, Math.round returns long, then division by 100.0 yields double. So e.g., 2.345 -> *100=234.5 -> round=235 -> /100=2.35. In C++ we use std::round from <cmath>. But note: Java's Math.round uses "round half up" for positive numbers? Actually Java's Math.round uses "round half up" for doubles: it rounds to the closest long, with ties rounding up. In C++, std::round rounds halfway cases away from zero (which for positive numbers is same as half up). So behavior should be identical for positive numbers. Data could be negative? The problem statement doesn't specify, but the Java code would handle negative numbers with Math.round, which rounds to nearest long, ties up. std::round does similar but rounds halfway away from zero, which for negative numbers rounds to more negative (e.g., -2.5 -> -3). Java Math.round(-2.5) returns -2? Actually let's check: Java Math.round(-2.5) returns -2? No, Java's Math.round uses "round half to even" for negative? I recall that Java's Math.round behavior: "Returns the closest long to the argument, with ties rounding up." For -2.5, the closest long are -2 and -3. "Rounding up" means going towards positive infinity, so -2 is greater than -3, so it rounds to -2. But std::round(-2.5) returns -3 (since away from zero). So there is a difference for negative halfway cases. But the problem likely uses non-negative data. However to be "identical behavior", we need to match Java's rounding. We can implement custom rounding: if value is negative, we can use trunc + 0.5? Actually easier: we can compute using floor and ceil. Or we could replicate Java's Math.round: for double x, round to nearest long, with ties rounding up (towards +inf). Equivalent to floor(x + 0.5) for positive values, but for negative values, floor(x + 0.5) would be? For -2.5, x+0.5 = -2.0 -> floor = -2. So that matches Java. Actually floor(x + 0.5) works for negative numbers? Check -3.5: x+0.5 = -3.0 -> floor = -3. Java Math.round(-3.5) returns -3? Wait: Java's Math.round(-3.5) -> closest longs are -3 and -4, rounding up means -3. So yes, floor(x+0.5) works for both positive and negative? For positive 2.5: floor(3.0)=3, correct. For negative -2.5: floor(-2.0)= -2, correct. For -2.5001: x+0.5 = -2.0001, floor = -3? Actually -2.0001 floor is -3? Wait floor of -2.0001 is -3 (since floor goes to more negative). That would be incorrect; Java's Math.round(-2.5001) returns -3? Let's test: -2.5001, nearest longs are -2 and -3. -2.5001 is closer to -3? Absolute difference: | -2.5001 - (-2) | = 0.5001, | -2.5001 - (-3) | = 0.4999, so closer to -3, round to -3. So floor(-2.5001+0.5) = floor(-2.0001) = -3. So that works. For -2.5000, floor(-2.0000) = -2, matches Java rounding up to -2. So floor(x+0.5) replicates Java's Math.round behavior. However note: for x = -0.5, floor(0.0)=0, Java rounds to 0? Actually -0.5: closest longs are 0 and -1; rounding up (to +inf) -> 0. So floor(-0.5+0.5)=floor(0)=0. Good. So we can implement a helper function roundLikeJava(double x) -> long using floor(x+0.5). But we need to round to two decimals: multiply by 100, apply round, divide by 100.0. So we can implement:
+
+double roundToTwoDecimals(double value) {
+    return std::floor(value * 100.0 + 0.5) / 100.0;
+}
+
+But careful: For negative values with rounding tie, floor(x+0.5) matches Java. However there is nuance: For large values, double precision might cause issues but unlikely. We'll use this.
+
+Alternatively, we could use std::round and then adjust for negative ties, but simpler to just use floor+0.5.
+
+So for mean: sum / n computed as double (because sum is double? In Java sum is double, but we used Arrays.stream(data).sum() which returns double? Actually IntStream.sum() returns int for int stream? In Java, Arrays.stream(int[]) returns IntStream, and sum() returns int. So sum is int. Then (double)sum / data.length yields double. We'll compute sum as long long in C++ to avoid overflow? But Java int sum can overflow for large arrays. However Java's int sum will overflow silently (wrap). In C++, we should use long long to avoid overflow but Java doesn't protect; we can use long long to be safe? However behavior identical: If we use long long, overflow behavior differs from Java int overflow (wrap). To match Java's overflow, we should use int sum and compute using int overflow (wrapping) which in C++ is undefined behavior? Actually signed integer overflow is undefined in C++. We should avoid UB. We could simulate wrapping using unsigned int and then cast? But maybe we can assume data won't cause overflow. Or we can compute sum as double directly? Not exactly. The Java sum is int, and then cast to double for division. Overflow leads to negative sum etc. In C++, we can use int64_t to avoid overflow; it won't match Java's behavior exactly if overflow occurs. But the problem likely expects small data. However for correctness, we should replicate Java's behavior exactly, including overflow. But signed overflow is UB in C++, so we need to avoid it. We can compute sum using unsigned int and then reinterpret? Actually we can compute sum as int32_t (i.e., int) and use -fwrapv flag to enforce two's complement wrapping, but that's compiler specific. Or we can compute with long long and then if sum exceeds INT_MAX or below INT_MIN, we can truncate to int range? That would be different.
+
+Given that the problem is a translation and likely test cases will not cause overflow, using long long for sum is safer and more practical. But to be exact, the Java behavior for overflow would produce incorrect results; but we can argue that if input is such that overflow occurs, the results are nonsensical anyway. We'll use long long (int64_t) to avoid overflow, which is technically not identical but more robust. However we must note that "Keep behavior identical" could mean even overflow behavior. But I think it's acceptable to use larger type. We can also compute sum as double (by adding each element as double) to avoid overflow, but that changes behavior because double might lose precision for large ints. Not recommended.
+
+Better to use long long for sum. Let's check: Java IntStream.sum() returns int, which can overflow. In C++, if we use int, overflow is UB. So we should use int and ensure no UB? That's not possible without compiler flags. So we use long long (or int64_t) and it will not overflow for typical data. This is a common translation practice.
+
+Now median: We need to sort a copy. In Java, it uses Arrays.copyOf. In C++, we copy into std::vector<int> sortedData(data, data+length). Then sort.
+
+For even n, compute average as double (sortedData[middle-1] + sortedData[middle]) / 2.0, then round as described.
+
+For odd n, return static_cast<double>(sortedData[middle]).
+
+For mode: compute frequency map using std::unordered_map<int, long long> or std::map. Since we need to sort the keys later, using unordered_map is fine, then collect keys into vector and sort. The Java code uses counting from stream: Collectors.counting() returns Long. In C++ we can just increment.
+
+We need to find max frequency. Use std::max_element or loop.
+
+Then collect keys with that frequency into std::vector, then sort.
+
+Return vector.
+
+We must include headers: <iostream>, <vector>, <algorithm>, <cmath>, <unordered_map>, <cstdint> maybe.
+
+We'll write a namespace or class. The class name DataStatistics with static methods? In Java they are instance methods but no state. We can write as static methods in C++ or member functions. To mirror, we can create a class with public methods (non-static). But they don't use member variables, so we can make them static. However to be identical, we should keep them non-static. In C++, we can define a class with public methods. The user would instantiate an object? Not needed, but we'll keep as member functions for translation purity.
+
+We'll define the class in header? For simplicity, single file.
+
+Implementation details:
+
+- Use std::round from <cmath>? We'll implement rounding helper as described.
+- For mode, return std::vector<int>.
+
+Edge cases: empty input not handled, same as Java.
+
+Now write code.
+
+We'll also include comments? Not needed.
+
+We'll produce the final answer.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <unordered_map>
+#include <cstdint>
+#include <stdexcept>
+
+class DataStatistics {
+private:
+    // Replicates Java's Math.round rounding half up (ties toward +inf)
+    static double roundToTwoDecimals(double value) {
+        return std::floor(value * 100.0 + 0.5) / 100.0;
+    }
+
+public:
+    double mean(const std::vector<int>& data) {
+        // Use long long to avoid overflow (Java uses int, but overflow is UB in C++)
+        long long sum = 0;
+        for (int v : data) {
+            sum += v;
+        }
+        double result = static_cast<double>(sum) / data.size();
+        return roundToTwoDecimals(result);
+    }
+
+    double median(const std::vector<int>& data) {
+        std::vector<int> sortedData = data;
+        std::sort(sortedData.begin(), sortedData.end());
+        int n = sortedData.size();
+
+        if (n % 2 == 0) {
+            int middle = n / 2;
+            double avg = (sortedData[middle - 1] + sortedData[middle]) / 2.0;
+            return roundToTwoDecimals(avg);
+        } else {
+            int middle = n / 2;
+            return static_cast<double>(sortedData[middle]);
+        }
+    }
+
+    std::vector<int> mode(const std::vector<int>& data) {
+        std::unordered_map<int, long long> freq;
+        for (int v : data) {
+            freq[v]++;
+        }
+
+        long long maxCount = 0;
+        for (const auto& p : freq) {
+            if (p.second > maxCount) {
+                maxCount = p.second;
+            }
+        }
+
+        std::vector<int> modes;
+        for (const auto& p : freq) {
+            if (p.second == maxCount) {
+                modes.push_back(p.first);
+            }
+        }
+
+        std::sort(modes.begin(), modes.end());
+        return modes;
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <unordered_map>
+#include <cstdint>
+#include <stdexcept>
+
+class DataStatistics {
+private:
+    // Replicates Java's Math.round rounding half up (ties toward +inf)
+    static double roundToTwoDecimals(double value) {
+        return std::floor(value * 100.0 + 0.5) / 100.0;
+    }
+
+public:
+    double mean(const std::vector<int>& data) {
+        // Use long long to avoid overflow (Java uses int, but overflow is UB in C++)
+        long long sum = 0;
+        for (int v : data) {
+            sum += v;
+        }
+        double result = static_cast<double>(sum) / data.size();
+        return roundToTwoDecimals(result);
+    }
+
+    double median(const std::vector<int>& data) {
+        std::vector<int> sortedData = data;
+        std::sort(sortedData.begin(), sortedData.end());
+        int n = sortedData.size();
+
+        if (n % 2 == 0) {
+            int middle = n / 2;
+            double avg = (sortedData[middle - 1] + sortedData[middle]) / 2.0;
+            return roundToTwoDecimals(avg);
+        } else {
+            int middle = n / 2;
+            return static_cast<double>(sortedData[middle]);
+        }
+    }
+
+    std::vector<int> mode(const std::vector<int>& data) {
+        std::unordered_map<int, long long> freq;
+        for (int v : data) {
+            freq[v]++;
+        }
+
+        long long maxCount = 0;
+        for (const auto& p : freq) {
+            if (p.second > maxCount) {
+                maxCount = p.second;
+            }
+        }
+
+        std::vector<int> modes;
+        for (const auto& p : freq) {
+            if (p.second == maxCount) {
+                modes.push_back(p.first);
+            }
+        }
+
+        std::sort(modes.begin(), modes.end());
+        return modes;
+    }
+};

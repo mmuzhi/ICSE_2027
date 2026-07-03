@@ -1,0 +1,1179 @@
+=== SOURCE CODE (cpp) ===
+
+#include <OpenXLSX.hpp>
+#include <iostream>
+#include <variant>
+#include <string>
+#include <vector>
+
+#include <string>
+#include <vector>
+#include <variant>
+
+class ExcelProcessor {
+public:
+    ExcelProcessor() = default;
+
+    std::vector<std::vector<std::variant<std::string, int>>> read_excel(const std::string& file_name);
+
+    int write_excel(const std::vector<std::vector<std::variant<std::string, int>>>& data, const std::string& file_name);
+
+    std::pair<int, std::string> process_excel_data(size_t N, const std::string& save_file_name);
+};
+
+std::vector<std::vector<std::variant<std::string, int>>> ExcelProcessor::read_excel(const std::string& file_name) {
+    std::vector<std::vector<std::variant<std::string, int>>> data;
+    try {
+        OpenXLSX::XLDocument doc;
+        doc.open(file_name);
+        auto sheet = doc.workbook().worksheet("Sheet1");
+
+        unsigned int rowCount = sheet.rowCount();
+        unsigned int colCount = sheet.columnCount();
+
+        for (unsigned int rowIndex = 1; rowIndex <= rowCount; ++rowIndex) {
+            std::vector<std::variant<std::string, int>> rowData;
+            for (unsigned int colIndex = 1; colIndex <= colCount; ++colIndex) {
+                auto cell = sheet.cell(rowIndex, colIndex);
+
+                if (cell.value().type() == OpenXLSX::XLValueType::Integer) {
+                    rowData.emplace_back(static_cast<int>(cell.value().get<int64_t>()));
+                }
+                else if (cell.value().type() == OpenXLSX::XLValueType::String) {
+                    rowData.emplace_back(cell.value().get<std::string>());
+                }
+            }
+            data.push_back(rowData);
+        }
+        doc.close();
+    }
+    catch (...) {
+        return {};
+    }
+    return data;
+}
+
+int ExcelProcessor::write_excel(const std::vector<std::vector<std::variant<std::string, int>>>& data, const std::string& file_name) {
+    try {
+        OpenXLSX::XLDocument doc;
+        doc.create(file_name);
+        auto sheet = doc.workbook().worksheet("Sheet1");
+
+        for (unsigned int rowIndex = 0; rowIndex < data.size(); ++rowIndex) {
+            for (unsigned int colIndex = 0; colIndex < data[rowIndex].size(); ++colIndex) {
+                auto cell = sheet.cell(rowIndex + 1, colIndex + 1);
+                if (std::holds_alternative<int>(data[rowIndex][colIndex])) {
+                    cell.value() = std::get<int>(data[rowIndex][colIndex]);
+                }
+                else {
+                    cell.value() = std::get<std::string>(data[rowIndex][colIndex]);
+                }
+            }
+        }
+        doc.save();
+        doc.close();
+        return 1;
+    }
+    catch (...) {
+        return 0;
+    }
+}
+
+std::pair<int, std::string> ExcelProcessor::process_excel_data(size_t N, const std::string& save_file_name) {
+    auto data = read_excel(save_file_name);
+    if (data.empty() || N >= data[0].size()) {
+        return { 0, "" };
+    }
+
+    std::vector<std::vector<std::variant<std::string, int>>> new_data;
+    for (const auto& row : data) {
+        std::vector<std::variant<std::string, int>> new_row(row);
+        if (auto value = std::get_if<std::string>(&row[N])) {
+            if (!std::isdigit((*value)[0])) {
+                std::string now = *value;
+                for (int i = 0; i < now.size(); ++i)
+                {
+                    if (now[i] > 'Z')
+                    {
+                        now[i] -= 32;
+                    }
+                }
+                new_row.emplace_back(now);
+            }
+            else {
+                new_row.emplace_back(value->substr(0, 1));
+            }
+        }
+        else {
+            new_row.emplace_back(std::get<int>(row[N]));
+        }
+        new_data.push_back(new_row);
+    }
+
+    std::string new_file_name = save_file_name.substr(0, save_file_name.find_last_of('.')) + "_process.xlsx";
+    int success = write_excel(new_data, new_file_name);
+    return { success, new_file_name };
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to use the openpyxl library in Python to handle Excel files.
+ The original C++ code uses OpenXLSX which uses 1-based indexing. Similarly, openpyxl uses 1-based indexing.
+ We'll create a class ExcelProcessor with the same methods.
+
+ Steps:
+ 1. read_excel: Reads an Excel file and returns a 2D list (list of lists) where each element is either a string or an integer.
+ 2. write_excel: Writes a 2D list (with elements being either string or int) to an Excel file.
+ 3. process_excel_data: Reads the Excel file, processes the Nth column (0-indexed column index in the data, but note the original code uses 0-indexed vector but the N is passed as the column index to process), and appends a new column.
+
+ Important: In the original C++ code, the process_excel_data function reads the file named by save_file_name, then writes to a new file with suffix "_process.xlsx". It returns a pair: (success, new_file_name).
+
+ Note: The original code in process_excel_data:
+   - If the data is empty or N is beyond the number of columns (>= data[0].size()), it returns (0, "").
+   - For each row, it checks the Nth element (which is at index N in the row list). 
+        - If it's a string:
+            - If the first character is not a digit, then convert the entire string to uppercase (by subtracting 32 from each lowercase letter) and append that as the new column.
+            - Else, append the first character of the string.
+        - If it's an integer, then just append the integer.
+
+ However, note the original C++ code uses:
+        if (!std::isdigit((*value)[0]))
+   This condition checks the first character of the string. But note: if the string is empty, then [0] is undefined. The original code doesn't handle that. We'll try to mimic.
+
+ Implementation in Python:
+
+ We'll use:
+   - openpyxl for reading and writing Excel files.
+
+ Since the original code returns a vector of vector of variant, in Python we can use list of list of elements that are either int or str.
+
+ Steps for read_excel:
+   - Load the workbook.
+   - Get the sheet named "Sheet1".
+   - Iterate over rows (from 1 to sheet.max_row) and columns (from 1 to sheet.max_column).
+   - For each cell, check the data type. We can check:
+        if cell.value is an integer -> store as int
+        otherwise, store as string.
+
+ Steps for write_excel:
+   - Create a new workbook and get the active sheet (which is named "Sheet1" by default).
+   - Iterate over the data rows and columns and write the value to the cell (rowIndex+1, colIndex+1).
+
+ Steps for process_excel_data:
+   - Read the Excel file from the given `save_file_name` (note: the function reads the same file it is going to process).
+   - Check if data is empty or if N is beyond the columns (if any row has less than N+1 columns? Actually the original uses the first row to check the column count. We'll check that N is beyond the number of columns in the first row? But note: the original code checks `N >= data[0].size()` -> meaning if the first row has M columns, then N must be less than M (0-indexed). If there are rows with fewer columns, we might get an exception. The original doesn't handle that. We'll stick to the condition: if data is empty OR N >= len(data[0]) then return (0, "").
+   - Then for each row:
+        new_row = row.copy()   # but note: we are going to append an extra element, so we make a copy of the row and then append.
+        Then check the element at index N in the original row.
+        If it is a string:
+            if the string is empty -> then we do what? The original would check the first character -> but if empty, then we get an error. We should avoid that.
+            Actually, the original condition: if the first character is not a digit -> then convert the whole string to uppercase? But note: the original does:
+                std::isdigit((*value)[0]) -> if the first char is digit? Then we take the first char? But wait: the code says:
+                if (!std::isdigit((*value)[0])) -> then convert to uppercase (by subtracting 32 from each char that is lower than 'Z'? Actually, it subtracts 32 for every char that is > 'Z'? That's not correct because it subtracts 32 if the char is greater than 'Z'. But in ASCII, lowercase letters are from 'a' to 'z' (97-122) and uppercase are 65-90. So if the char is greater than 'Z' (which is 90) then it subtracts 32 to convert to uppercase? But what about non-alphabet? The condition in the loop: if (now[i] > 'Z') then subtract 32. That would convert any character above 'Z'? That might include lowercase letters but also other characters. Actually, the condition in the C++ code is: if (now[i] > 'Z') then subtract 32. That would convert any character with ASCII value above 90 (which includes lowercase letters) to the character 32 positions before? That is the uppercase equivalent? But note: 'a' is 97 -> 97-32=65 which is 'A'. So it converts any character above 'Z' to uppercase? But what about non-alphabet? For example, '{' is 123 -> 123-32=91 which is '[' -> which is not the uppercase. So this is not a safe conversion. Actually, the intended logic is to convert the string to uppercase? But the C++ code does not use the standard toupper function.
+
+ However, the problem says: Keep behavior identical. So we have to replicate the same behavior.
+
+ But note: the C++ code condition: if (!std::isdigit((*value)[0])) ... else ... 
+        Then in the else, it appends the first character? Actually, it appends value->substr(0,1). But wait, the condition is on the first character: if the first character is a digit? Then we take the first character? Or if the first character is not a digit, we convert the whole string? And if it is a digit, we take the first character? 
+
+ Let me clarify the C++ code:
+
+    if (auto value = std::get_if<std::string>(&row[N])) { 
+        if (!std::isdigit((*value)[0])) {
+            // Convert entire string: for each char, if it is > 'Z' then subtract 32 -> which will convert to uppercase? But note: the condition is "if (now[i] > 'Z')", meaning any char above 'Z'. This includes lowercase letters and also other characters above 'Z' in ASCII. This is not safe for non-alphabet. But the problem says: keep identical.
+            // We'll do the same: convert every char that has ASCII value > 90 (which is 'Z') by subtracting 32.
+            // But note: what if the string has non-alphabet? For example, 'a' becomes 'A', but '{' becomes '[' -> which is not intended for a typical uppercase conversion. However, the original code does that.
+            // Then append the entire converted string.
+        } else {
+            // Append the first character of the string? Actually, the code appends value->substr(0,1). But note: the condition was on the first character? What if the string has more than one digit? Then we only take the first character? That seems odd. But that's what the code does.
+            new_row.emplace_back(value->substr(0,1));
+        }
+    } else {
+        // If it's an integer, just append the same integer.
+        new_row.emplace_back(std::get<int>(row[N]));
+    }
+
+ So in Python, we have to do:
+
+    for row in data:
+        new_row = row.copy()   # we are going to append one element
+        element = row[N]
+        if type(element) is str:
+            # Check the first character of the string: if it is not a digit?
+            if len(element) == 0:
+                # Then the condition !isdigit would be false? Because there is no first character? Actually, the C++ code would have undefined behavior. We'll treat as: if the string is empty, then we do the else branch? Because the condition std::isdigit on an empty string's first character is undefined? We'll avoid that. But note: the condition in C++: (*value)[0] -> if the string is empty, this is an access to index 0 -> which is out of bounds -> undefined behavior. So we must avoid that. However, the original code doesn't check for empty string. We'll mimic: if the string is empty, then we do the else branch? Actually, the condition would crash? But the original code doesn't check. We are going to avoid crashing? The problem says: edge cases. We'll note that the original code may crash on empty string? But in practice, we should avoid. Since the problem says "Keep behavior identical", we must replicate the undefined behavior? But the original code catches exceptions and returns empty? Actually, in read_excel, it catches ... and returns empty. But in process_excel_data, if we get an empty data, we return (0,""). However, if the string is empty, then in the condition we try to access element[0] -> which will throw an exception? Then the process_excel_data function doesn't catch? So the entire function would throw? But the original function process_excel_data doesn't catch? Therefore, we must let it throw? But note: the function returns a pair and doesn't throw? Actually, the original code doesn't catch any exception in process_excel_data. So if there's an empty string, then accessing element[0] would throw? So we must do the same in Python? 
+
+    However, note: the original code in the condition: 
+        if (auto value = std::get_if<std::string>(&row[N])) 
+        then inside the if, we have (*value)[0] -> if value is an empty string, then (*value)[0] is undefined -> which is an error. 
+
+    Therefore, we must replicate: if the string is empty, then accessing the first character will cause an exception? So the function will throw? 
+
+    But note: the original code doesn't catch exceptions in process_excel_data? So the exception will propagate to the caller? 
+
+    However, the problem says: Keep behavior identical. So we should not catch the exception? 
+
+    But the problem also says: edge cases. So we'll do:
+
+        if type(element) is str:
+            if element and not element[0].isdigit():
+                # Then convert: for each char in element, if ord(char) > 90 (which is 'Z'), then subtract 32 to get the new char? But note: the condition in C++: now[i] > 'Z' -> meaning char > 'Z'? So we do:
+                converted = ''.join(chr(ord(c) - 32) if ord(c) > 90 else c for c in element)
+                new_row.append(converted)
+            else:
+                # If the string is empty, then element[0] would fail -> so we must avoid? Actually, we can check: if element is empty, then we do the else branch? But note: the condition element[0].isdigit() would fail if element is empty. So we can combine: if the string is non-empty and the first char is not a digit -> then convert, else take the first char? But wait: the else branch does: take the first char? But if the string is empty, then we cannot take the first char? So we must avoid? 
+
+    Actually, we must replicate the behavior: if the string is empty, then the condition !isdigit(...) accesses element[0] -> which throws? So we don't handle it? 
+
+    But wait: the condition in the if: 
+        if (!std::isdigit((*value)[0])) 
+        This will throw if the string is empty? So the function process_excel_data will throw? 
+
+    Therefore, in Python, if we encounter an empty string at column N, then we try to check element[0].isdigit() -> which will throw an IndexError? 
+
+    So we don't need to handle empty string? We just let it throw? 
+
+    Alternatively, we can note that the original code does not handle it and we are required to keep behavior identical? So we let it throw? 
+
+    However, note: the original code uses a try-catch in read_excel and write_excel, but not in process_excel_data. So we don't catch.
+
+    But wait: the problem says: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)" -> so if the original code throws, we must throw? 
+
+    So we'll write:
+
+        if isinstance(element, str):
+            # Check the first character: if it is not a digit -> then convert the whole string by subtracting 32 from each char that has ord > 90
+            # But if the string is empty, then element[0] will raise IndexError -> so we let it raise?
+            if not element[0].isdigit():
+                # Now convert each character: for c in element: if ord(c) > 90 then convert to chr(ord(c)-32), else leave as is.
+                new_str = ''.join(chr(ord(c) - 32) if ord(c) > 90 else c for c in element)
+                new_row.append(new_str)
+            else:
+                # If the first char is digit, then take the first character? But note: what if the string is "123"? Then we take "1"
+                new_row.append(element[0])
+        else: # it's an integer
+            new_row.append(element)
+
+    However, note: the condition in the original code: 
+        if (auto value = std::get_if<std::string>(&row[N])) 
+        This checks if the element is a string. Then inside, we have the condition on the first character.
+
+    But what if the element is an integer? Then we do: 
+        new_row.emplace_back(std::get<int>(row[N]));
+
+    So we append the same integer.
+
+ 4. Then we write the new_data to a new file: 
+        new_file_name = save_file_name without extension + "_process.xlsx"
+        Then call write_excel(new_data, new_file_name) -> returns 1 on success, 0 on failure.
+
+ 5. Return (success, new_file_name) -> but note: in the original, if write_excel returns 1, then success=1; if 0 then success=0.
+
+ Implementation:
+
+ We'll use openpyxl.
+
+ For read_excel:
+   - We'll use load_workbook with read_only=True? But the original doesn't specify read-only. We'll use default.
+   - We get the sheet by name "Sheet1".
+
+   Steps:
+        wb = openpyxl.load_workbook(file_name)
+        sheet = wb["Sheet1"]
+        data = []
+        for row in sheet.iter_rows(values_only=True):
+            row_data = []
+            for cell_value in row:
+                if isinstance(cell_value, int):
+                    row_data.append(cell_value)
+                else:
+                    # Convert to string? But note: the original gets the string representation. But what if it's a float? The original code doesn't handle float. The original only handles Integer and String. 
+                    # In the original: if the cell is integer -> store as int, else if string -> store as string. But what about float? It would fall into ... not handled? Then skipped? Actually, the original code only handles Integer and String. So we must do the same.
+
+                    # How does openpyxl return values? 
+                    #   - If the cell is a number, it might be float or int. We can check: if it's an integer -> we can cast? But note: the original uses XLValueType::Integer -> which is integer. So if it's a float, then we should treat it as string? Or the original would skip? Actually, the original code doesn't handle float. So we'll mimic: if the cell is int -> store as int, else convert to string? But note: the original code uses:
+                    #        if (cell.value().type() == OpenXLSX::XLValueType::Integer) -> then int
+                    #        else if (cell.value().type() == OpenXLSX::XLValueType::String) -> then string
+                    #        otherwise, skip? Actually, the code doesn't add anything? So we skip.
+
+                    # Therefore, we do:
+                    #   if type(cell_value) is int:
+                    #       append int
+                    #   elif type(cell_value) is str:
+                    #       append str
+                    #   else:
+                    #       skip? But note: the rowData is built for every column? Then we skip? That would leave the row shorter? 
+
+                    # But the original iterates over columns 1 to colCount? And for each cell, if it's integer or string, it adds. Otherwise, it doesn't? So we'll do the same.
+
+                    # However, note: the original code does not skip? Because it doesn't have an else? So if the cell is neither integer nor string, then it doesn't append? Then the row might be shorter? 
+
+                    # Therefore, we must skip non-integer and non-string? 
+
+                    # But wait: the original code uses:
+                    #   if (cell.value().type() == ...Integer) ... else if ...String -> then append. Otherwise, nothing.
+
+                    # So we'll do the same.
+
+                    if isinstance(cell_value, str):
+                        row_data.append(cell_value)
+                    else:
+                        # We skip? But note: we are iterating over every cell? We must append something? Or leave it out? The original leaves it out. So we skip non-integer and non-string? But note: we already handled int. So we only handle str? 
+                        # Actually, we can skip non-integer and non-string? 
+                        pass
+            data.append(row_data)
+
+        But wait: what about None? The original doesn't handle empty cells? Then the type might be None? Then we skip? 
+
+        However, note: the original code doesn't check for empty cells? Then the cell.value().type() would be Empty? Then it doesn't append? So we skip.
+
+        But note: the original code iterates from colIndex=1 to colCount? So it iterates over every cell? But if the cell is empty, then it doesn't append? So the row might have fewer columns? 
+
+        Therefore, we skip non-integer and non-string? 
+
+        However, we can note: the original code's colCount might be the maximum column that has data? So we iterate over every cell in that range? But if a cell is empty, then we skip? 
+
+        So we'll do the same: skip non-integer and non-string? 
+
+        But wait: the original code does not skip? It appends an element for every column? Only if the cell is integer or string? 
+
+        Actually, the original code appends only for integer or string? Otherwise, it doesn't append? Then the row might have fewer columns? 
+
+        So we'll do the same.
+
+        However, note: the problem says: Keep behavior identical. So we skip non-integer and non-string? 
+
+        But wait: the original code does not skip the column? It appends nothing? Then the rowData for that row might be shorter? 
+
+        Example: if we have a row: [1, "hello", 3.5] -> then the rowData would be [1, "hello"]? 
+
+        So we skip the float? 
+
+        But note: the original code does not handle float? 
+
+        So we'll do:
+
+            for cell_value in row:
+                if isinstance(cell_value, int):
+                    row_data.append(cell_value)
+                elif isinstance(cell_value, str):
+                    row_data.append(cell_value)
+                # else: skip
+
+        But note: what if the cell contains a float? We skip? 
+
+        However, the original code would skip? 
+
+        But wait: the original code uses OpenXLSX::XLValueType::Integer and OpenXLSX::XLValueType::String. The float would be OpenXLSX::XLValueType::Float -> which is not handled? 
+
+        So skip.
+
+        But note: the original code does not have an else? 
+
+        Therefore, we skip non-integer and non-string? 
+
+        However, what if the cell is boolean? We skip? 
+
+        So we'll do the same.
+
+    But note: the original code iterates over columns from 1 to colCount? So if there are 10 columns, then we iterate 10 times? But if some cells are not integer/string, then we don't append? Then the row_data will have less than 10 elements? 
+
+    So the data we return might have rows of different lengths? 
+
+    The original code does that? 
+
+    Therefore, we do the same.
+
+    However, note: the original code uses:
+        unsigned int colCount = sheet.columnCount();
+        for (unsigned int colIndex = 1; colIndex <= colCount; ++colIndex) 
+        then if the cell is integer or string, append? Otherwise, skip? 
+
+    So we must iterate over every column index? 
+
+    But in openpyxl, when we use iter_rows, it returns the rows with the same number of columns? Actually, iter_rows returns rows with None for missing cells? 
+
+    However, we are iterating over the entire row? The original code uses the columnCount which is the maximum column? So we iterate from 1 to colCount? 
+
+    How can we get the maximum column? 
+
+    We can do: 
+        max_col = sheet.max_column
+        for row in range(1, sheet.max_row+1):
+            row_data = []
+            for col in range(1, max_col+1):
+                cell = sheet.cell(row, col)
+                value = cell.value
+                if type(value) is int:
+                    row_data.append(value)
+                elif type(value) is str:
+                    row_data.append(value)
+                # else: skip -> meaning we don't append anything for that cell? 
+
+    But note: the original code uses cell.value().type() -> which for an empty cell would be Empty? Then we skip? 
+
+    So we can do:
+
+        wb = openpyxl.load_workbook(file_name)
+        sheet = wb["Sheet1"]
+        data = []
+        max_row = sheet.max_row
+        max_col = sheet.max_column
+        for row_idx in range(1, max_row+1):
+            row_data = []
+            for col_idx in range(1, max_col+1):
+                cell = sheet.cell(row=row_idx, column=col_idx)
+                value = cell.value
+                if isinstance(value, int):
+                    row_data.append(value)
+                elif isinstance(value, str):
+                    row_data.append(value)
+                # else: skip -> do nothing
+            data.append(row_data)
+
+        wb.close()
+
+    But note: the original code iterates by row index and col index? 
+
+    However, the original code uses rowCount and colCount? Which are the maximum row and column? 
+
+    But wait: the original code uses:
+        unsigned int rowCount = sheet.rowCount();
+        unsigned int colCount = sheet.columnCount();
+
+    According to OpenXLSX documentation, rowCount and columnCount return the maximum row and column? 
+
+    So we use max_row and max_col? 
+
+    But note: what if the sheet has empty rows at the top? Then max_row might be the last row? But the original code iterates from 1 to rowCount? 
+
+    So we do the same.
+
+    However, note: openpyxl's max_row and max_column are the maximum row and column that contain data? So it's the same? 
+
+    So we'll use sheet.max_row and sheet.max_column? 
+
+    But note: the original code might include empty cells? But we skip? So we iterate over every cell? 
+
+    We'll do the same: iterate from 1 to max_row and 1 to max_col? 
+
+    Then skip non-int and non-string? 
+
+    But note: what if the cell is empty? Then value is None? Then we skip? 
+
+    So we skip? 
+
+    This matches the original? 
+
+    Therefore, we'll do that.
+
+    However, note: the original code does not skip the column? It just doesn't add an element? Then the row_data might have less than max_col elements? 
+
+    So we do the same.
+
+ For write_excel:
+
+        wb = openpyxl.Workbook()
+        sheet = wb.active
+        sheet.title = "Sheet1"
+
+        for row_index, row in enumerate(data):
+            for col_index, value in enumerate(row):
+                cell = sheet.cell(row=row_index+1, column=col_index+1)
+                if isinstance(value, int):
+                    cell.value = value
+                elif isinstance(value, str):
+                    cell.value = value
+                # else: skip? But the original code writes either int or string? So we skip? 
+
+        wb.save(file_name)
+        wb.close()
+
+        return 1 -> if no exception
+
+        catch any exception -> return 0
+
+    But note: the original code writes every element? Only if it's int or string? 
+
+    So we skip others? 
+
+    But note: the data is given as vector of vector of variant<string, int> -> so it should only contain int and string? 
+
+    So we don't need to skip? 
+
+    However, we'll write only int and string? 
+
+    But the data is supposed to be only int and string? 
+
+    So we can write without checking? But we'll check as in the original.
+
+    Actually, the original checks: 
+        if (std::holds_alternative<int>(...)) ... 
+        else if (std::holds_alternative<string>(...)) ... 
+
+    So we'll check for int and string? 
+
+    But what if the variant has something else? The original code uses variant<string, int> -> so it can only be string or int? 
+
+    So we don't need to skip? 
+
+    But we'll do the same condition.
+
+    However, in Python, the data passed to write_excel is supposed to be a list of list of either int or string? 
+
+    So we can write:
+
+        cell.value = value
+
+    without condition? But the original uses condition? 
+
+    We'll use condition to be safe? 
+
+    Alternatively, we can write without condition? 
+
+    But note: the original code uses condition? So we'll use condition? 
+
+    Also, the original code writes only if it's int or string? So if we get something else, skip? 
+
+    But the data type is variant<string, int> -> so we shouldn't get anything else? 
+
+    However, in Python we can get something else? Then we skip? 
+
+    So we'll do:
+
+        if type(value) is int:
+            cell.value = value
+        elif type(value) is str:
+            cell.value = value
+
+    But note: what about float? We skip? 
+
+    Since the original variant doesn't have float, we skip? 
+
+    But the data passed in should not have float? 
+
+    So we'll do the condition.
+
+    But note: the original code does not skip? Because the variant is either int or string? 
+
+    So we can write without condition? 
+
+    However, the problem says: Keep behavior identical. So we'll write conditionally? 
+
+    Actually, the original code writes conditionally? 
+
+    So we'll do:
+
+        if isinstance(value, int):
+            cell.value = value
+        elif isinstance(value, str):
+            cell.value = value
+
+    But note: what if the value is None? Then we skip? 
+
+    But the original variant doesn't have None? 
+
+    So we skip? 
+
+    But the original code doesn't write anything? 
+
+    So we skip? 
+
+    Therefore, we do the same.
+
+    However, if we skip, then the cell remains empty? 
+
+    The original code: if the variant is not int and not string, then it doesn't assign? So the cell remains empty? 
+
+    So we skip? 
+
+    But note: the data passed in is vector<vector<variant<string, int>>> -> so every element should be either int or string? 
+
+    So we don't expect anything else? 
+
+    But in Python, we might get something else? Then we skip? 
+
+    We'll do the condition.
+
+    Now, let's write the class:
+
+    We'll use:
+
+        import openpyxl
+
+    And we'll create:
+
+        class ExcelProcessor:
+            def __init__(self):
+                pass
+
+            def read_excel(self, file_name: str) -> list[list[int|str]]:
+                # ... as above
+
+            def write_excel(self, data: list[list[int|str]], file_name: str) -> int:
+                # ... as above
+
+            def process_excel_data(self, N: int, save_file_name: str) -> tuple[int, str]:
+                # ... as above
+
+    Note: the original process_excel_data takes size_t N -> which is an unsigned integer. In Python, we can take int. But note: the original checks N>=data[0].size() -> which is the number of columns in the first row? 
+
+    We'll do:
+
+        data = self.read_excel(save_file_name)
+        if not data or N >= len(data[0]):
+            return (0, "")
+
+    Then process each row as described.
+
+    But note: what if the rows have different lengths? Then for a row, if len(row) <= N, then accessing row[N] would be out of bounds? 
+
+    The original code: 
+        for (const auto& row : data) {
+            std::vector<std::variant<std::string, int>> new_row(row);   // copy the row
+            // then check row[N] -> but if row has less than N+1 elements, then row[N] is out of bounds -> undefined behavior? 
+
+    So the original code does not check that? 
+
+    Therefore, we must assume that every row has at least N+1 elements? 
+
+    But the condition: if (N >= data[0].size()) -> we return. So we check only the first row? 
+
+    Then if the first row has M columns, then we assume every row has at least M? 
+
+    But what if a row has less than M? Then we might access row[N] where N>=len(row) -> which would be an error? 
+
+    The original code does not check per row? 
+
+    So we'll do the same: we assume every row has at least as many columns as the first row? 
+
+    But note: the condition: 
+        if (data.empty() || N >= data[0].size()) 
+        then return {0, ""}
+
+    So we only check the first row? 
+
+    Then for each row, we access row[N] -> which for the first row we know N < len(data[0]), but for other rows, we don't know? 
+
+    So if a row has less than N+1 columns, then accessing row[N] would be an exception? 
+
+    Therefore, we let it throw? 
+
+    So we don't check per row? 
+
+    Therefore, in Python, we'll do the same: 
+        for row in data:
+            element = row[N]   # if the row has less than N+1 elements -> IndexError -> uncaught -> propagate
+
+    So we don't catch? 
+
+    Now, let's code accordingly.
+
+    However, note: the original code uses std::get_if for the variant? But if the variant index is out of bounds? Actually, the variant is either string or int? So std::get_if returns a pointer to the string if it is a string, or a pointer to the int if it is an int? But if the element is not present? Then we have an empty variant? But the variant is defined as std::variant<std::string, int> -> so every element must be one of these? 
+
+    So we don't worry? 
+
+    But in Python, we have stored either int or string? So we can check:
+
+        if type(row[N]) is str: 
+            ... 
+        elif type(row[N]) is int:
+            ...
+
+    But note: what if the element is a float? Then we skipped it in read? So it shouldn't be in the data? 
+
+    But the read_excel skipped non-int and non-string? So we only have int and string? 
+
+    Therefore, we are safe? 
+
+    So we'll do:
+
+        if isinstance(row[N], str):
+            # ... 
+        else: # it must be int? 
+            new_row.append(row[N])
+
+    But wait: what if the element is None? We skipped non-int and non-string? So we don't have None? 
+
+    Therefore, we don't need to check? 
+
+    However, we'll do:
+
+        if type(row[N]) is str:
+            # ... 
+        elif type(row[N]) is int:
+            new_row.append(row[N])
+        else:
+            # This should not happen? 
+            # But to be safe, we skip? 
+            new_row.append(None)   # but the original doesn't skip? The original appends the integer? Or string? 
+            # Actually, the original uses std::get_if for string -> if not, then it does the integer branch? 
+            # So we do the same: if it's string, then do the string branch, else (if it's int) do the integer branch? 
+            # But what if it's something else? Then the original code would go to the integer branch? But wait: the variant is either string or int? So if it's not string, then it must be int? 
+            # So we can do:
+            #   else: new_row.append(row[N])
+
+    So we can do:
+
+        element = row[N]
+        if type(element) is str:
+            # ... 
+        else:
+            new_row.append(element)
+
+    But note: the original code does:
+
+        if (auto value = std::get_if<std::string>(&row[N])) 
+        then string branch
+        else 
+            new_row.emplace_back(std::get<int>(row[N]));
+
+    So if the element is not a string, then it must be an int? 
+
+    Therefore, we can do:
+
+        if isinstance(element, str):
+            ... 
+        else:
+            new_row.append(element)   # which is an int
+
+    But note: what if the element is something else? Then the original would throw? Because std::get<int> would throw? 
+
+    So we let it throw? 
+
+    Therefore, we do:
+
+        if type(element) is str:
+            ... 
+        else:
+            new_row.append(element)   # and if it's not an int? Then we get an exception? 
+
+    But the data should only contain int and string? 
+
+    So we are safe.
+
+    Now, let's code accordingly.
+
+    However, note: the condition in the string branch: 
+        if not element[0].isdigit(): 
+            ... 
+        else: 
+            new_row.append(element[0])
+
+    But if the string is empty, element[0] fails -> IndexError -> uncaught -> propagate.
+
+    So we don't handle empty string? 
+
+    Therefore, we write:
+
+        if type(element) is str:
+            if not element[0].isdigit():
+                # Convert each char: if ord(c) > 90 then subtract 32, else leave unchanged.
+                new_str = ''.join(chr(ord(c) - 32) if ord(c) > 90 else c for c in element)
+                new_row.append(new_str)
+            else:
+                new_row.append(element[0])
+        else:
+            new_row.append(element)
+
+    Then we append the new_row to new_data.
+
+    Then write the new_data to a new file.
+
+    Finally, return (success, new_file_name)
+
+    But note: the original code writes the new_data? Then returns (success, new_file_name). 
+
+    We'll do the same.
+
+    One more note: the original code creates a new vector for each row: new_row = row, then appends one element? 
+
+    We do: new_row = row.copy() -> then append? 
+
+    But note: we are modifying the row? We append one element? 
+
+    So we do:
+
+        new_row = row.copy() 
+        # then append one element to new_row? 
+        new_row.append( ... )   # actually, we are appending the processed value? 
+
+        Then new_data.append(new_row)
+
+    But note: the original code does:
+
+        std::vector<std::variant<std::string, int>> new_row(row);   // copy the row
+        then appends one element to new_row? 
+        then new_data.push_back(new_row)
+
+    So we do the same.
+
+    We'll use:
+
+        new_file_name = save_file_name.rsplit('.', 1)[0] + "_process.xlsx"
+        But note: the original uses: save_file_name.substr(0, save_file_name.find_last_of('.')) + "_process.xlsx"
+
+    We can do: 
+        base = save_file_name[:save_file_name.rfind('.')]
+        new_file_name = base + "_process.xlsx"
+
+    But if there's no extension? Then rfind returns -1? Then base = save_file_name[0:-1] -> which is the whole string except the last character? That's not what we want? 
+
+    The original: 
+        save_file_name.find_last_of('.') -> returns the position of the last '.'? If not found, returns std::string::npos? Then substr(0, npos) -> returns the whole string? Then new_file_name = save_file_name + "_process.xlsx"
+
+    How to mimic?
+
+        if '.' in save_file_name:
+            base = save_file_name[:save_file_name.rindex('.')]
+        else:
+            base = save_file_name
+        new_file_name = base + "_process.xlsx"
+
+    But note: the original uses: save_file_name.find_last_of('.') -> which returns the last occurrence of '.'? 
+
+    So we can do:
+
+        pos = save_file_name.rfind('.')
+        if pos == -1:
+            base = save_file_name
+        else:
+            base = save_file_name[:pos]
+
+        new_file_name = base + "_process.xlsx"
+
+    Then call write_excel(new_data, new_file_name) -> returns 1 on success, 0 on failure? 
+
+    Then return (success, new_file_name)
+
+    Now, we code accordingly.
+
+    Let's write the entire class.
+
+    Note: We must import openpyxl.
+
+    We'll also handle exceptions? 
+
+    For read_excel: 
+        try:
+            ... 
+        except Exception:
+            return []   # empty list
+
+    For write_excel:
+        try:
+            ... 
+        except Exception:
+            return 0
+
+    But note: the original catches ... -> which catches everything? 
+
+    So we catch Exception? But note: KeyboardInterrupt and SystemExit are not caught? But that's acceptable? 
+
+    We'll catch Exception? 
+
+    However, the original catches everything? 
+
+    So we can do:
+
+        except:
+            return 0   # for write_excel
+
+    But in Python, catching everything is not recommended? But to mimic the behavior, we do:
+
+        except Exception:
+            return 0
+
+    But note: the original catches everything? So we catch BaseException? 
+
+    However, we don't want to catch KeyboardInterrupt? 
+
+    But the problem says: Keep behavior identical. 
+
+    Since the original catches everything, we catch everything? 
+
+    But in Python, we can do:
+
+        except:
+            return 0
+
+    Similarly for read_excel: 
+
+        except:
+            return []
+
+    So we'll do that.
+
+    However, note: the original code catches in read_excel and returns an empty vector? Then in process_excel_data, if data.empty() -> return (0, ""). 
+
+    Similarly, write_excel returns 0 on failure? 
+
+    So we do:
+
+        def read_excel(self, file_name):
+            try:
+                ... 
+            except:
+                return []
+
+        def write_excel(self, data, file_name):
+            try:
+                ... 
+                return 1
+            except:
+                return 0
+
+    Now, let's code the entire class.
+
+    We'll use:
+
+        import openpyxl
+
+    But note: the original code uses OpenXLSX? We use openpyxl? 
+
+    We assume openpyxl is installed? 
+
+    We'll write the code accordingly.
+
+    One more note: the original code uses "Sheet1". We use the same.
+
+    Let's code.
+
+    Note: We must be cautious about the indices: openpyxl uses 1-indexed for rows and columns? 
+
+    So we use:
+
+        cell = sheet.cell(row=row_index, column=col_index)   # row_index and col_index are 1-indexed? 
+
+    Yes.
+
+    For reading:
+
+        for row_index in range(1, max_row+1):
+            for col_index in range(1, max_col+1):
+                cell = sheet.cell(row=row_index, column=col_index)
+                value = cell.value
+
+    For writing:
+
+        for row_index in range(len(data)):
+            row = data[row_index]
+            for col_index in range(len(row)):
+                value = row[col_index]
+                cell = sheet.cell(row=row_index+1, column=col_index+1)
+
+    But note: the original write_excel uses:
+
+        for (unsigned int rowIndex = 0; rowIndex < data.size(); ++rowIndex) {
+            for (unsigned int colIndex = 0; colIndex < data[rowIndex].size(); ++colIndex) {
+                ... 
+                cell = sheet.cell(rowIndex+1, colIndex+1)
+
+    So same.
+
+    Now, we write the code.
+
+    We'll put it all together.
+
+    Important: We must import openpyxl.
+
+    We'll assume openpyxl is installed? 
+
+    Let's code.
+
+    Note: We are not using any advanced features? 
+
+    We'll write:
+
+        import openpyxl
+
+    And then the class.
+
+    One more note: the original process_excel_data function is a member function? We'll make it a method.
+
+    Now, we write.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a C++ program that processes Excel files into Python while maintaining identical behavior. The C++ code uses the OpenXLSX library for reading and writing Excel files, and we'll use the openpyxl library in Python for the same purpose. The solution involves three main functions: reading Excel data, writing Excel data, and processing the data by appending a new column based on specific conditions.
+
+### Approach
+1. **Reading Excel Data**: The `read_excel` function reads an Excel file ("Sheet1") and extracts cell values. It processes each cell, storing integers and strings while skipping other data types (like floats or booleans). The data is returned as a list of lists where each element is either an integer or a string.
+2. **Writing Excel Data**: The `write_excel` function writes the processed data (a list of lists containing integers or strings) into a new Excel file ("Sheet1"). It handles each cell value based on its data type (int or string) and skips other types.
+3. **Processing Excel Data**: The `process_excel_data` function reads the input Excel file, checks if the specified column index `N` is valid, and processes each row. For each row, it appends a new value to a new column:
+   - If the value in column `N` is a string and its first character is not a digit, it converts the entire string to uppercase by adjusting ASCII values.
+   - If the first character is a digit, it appends the first character of the string.
+   - If the value is an integer, it appends the integer as-is.
+   The processed data is saved to a new Excel file with "_process.xlsx" appended to the original filename.
+
+### Solution Code
+```python
+import openpyxl
+
+class ExcelProcessor:
+    def __init__(self):
+        pass
+
+    def read_excel(self, file_name):
+        try:
+            wb = openpyxl.load_workbook(file_name)
+            sheet = wb["Sheet1"]
+            data = []
+            max_row = sheet.max_row
+            max_col = sheet.max_column
+            for row_idx in range(1, max_row + 1):
+                row_data = []
+                for col_idx in range(1, max_col + 1):
+                    cell = sheet.cell(row=row_idx, column=col_idx)
+                    value = cell.value
+                    if isinstance(value, int):
+                        row_data.append(value)
+                    elif isinstance(value, str):
+                        row_data.append(value)
+                data.append(row_data)
+            wb.close()
+            return data
+        except:
+            return []
+
+    def write_excel(self, data, file_name):
+        try:
+            wb = openpyxl.Workbook()
+            sheet = wb.active
+            sheet.title = "Sheet1"
+            for row_idx, row in enumerate(data):
+                for col_idx, value in enumerate(row):
+                    if isinstance(value, int):
+                        sheet.cell(row=row_idx + 1, column=col_idx + 1).value = value
+                    elif isinstance(value, str):
+                        sheet.cell(row=row_idx + 1, column=col_idx + 1).value = value
+            wb.save(file_name)
+            wb.close()
+            return 1
+        except:
+            return 0
+
+    def process_excel_data(self, N, save_file_name):
+        data = self.read_excel(save_file_name)
+        if not data or N >= len(data[0]):
+            return (0, "")
+        
+        new_data = []
+        for row in data:
+            new_row = row.copy()
+            element = row[N]
+            if type(element) is str:
+                if not element[0].isdigit():
+                    new_str = ''.join(chr(ord(c) - 32) if ord(c) > 90 else c for c in element)
+                    new_row.append(new_str)
+                else:
+                    new_row.append(element[0])
+            else:
+                new_row.append(element)
+            new_data.append(new_row)
+        
+        if '.' in save_file_name:
+            base = save_file_name[:save_file_name.rfind('.')]
+        else:
+            base = save_file_name
+        new_file_name = base + "_process.xlsx"
+        success = self.write_excel(new_data, new_file_name)
+        return (success, new_file_name)
+```
+
+### Explanation
+1. **Reading Excel Data**:
+   - The `read_excel` function opens the specified Excel file and reads "Sheet1".
+   - It iterates over each cell from the first row/column to the maximum row/column in the sheet.
+   - For each cell, if the value is an integer or string, it is added to the current row's data list. Other data types are skipped.
+   - The collected data is returned as a list of lists. If any exception occurs, an empty list is returned.
+
+2. **Writing Excel Data**:
+   - The `write_excel` function creates a new Excel workbook and accesses "Sheet1".
+   - It iterates over the input data (a list of lists) and writes each value to the corresponding cell, handling integers and strings while skipping other types.
+   - The workbook is saved and closed. Returns 1 on success, 0 on failure.
+
+3. **Processing Excel Data**:
+   - The `process_excel_data` function first reads the input Excel file. If the data is empty or the column index `N` is invalid, it returns (0, "").
+   - For each row, it copies the existing data and processes the value at column `N`:
+     - If it's a string and the first character is not a digit, the entire string is converted to uppercase by adjusting ASCII values.
+     - If the first character is a digit, only the first character is appended.
+     - If it's an integer, the integer is appended as-is.
+   - The processed data is saved to a new file with "_process.xlsx" appended to the original filename's base name. The function returns a tuple indicating success (1 or 0) and the new filename.
+
+=== TRANSLATED CODE (py) ===
+import openpyxl
+
+class ExcelProcessor:
+    def __init__(self):
+        pass
+
+    def read_excel(self, file_name):
+        try:
+            wb = openpyxl.load_workbook(file_name)
+            sheet = wb["Sheet1"]
+            data = []
+            max_row = sheet.max_row
+            max_col = sheet.max_column
+            for row_idx in range(1, max_row + 1):
+                row_data = []
+                for col_idx in range(1, max_col + 1):
+                    cell = sheet.cell(row=row_idx, column=col_idx)
+                    value = cell.value
+                    if isinstance(value, int):
+                        row_data.append(value)
+                    elif isinstance(value, str):
+                        row_data.append(value)
+                data.append(row_data)
+            wb.close()
+            return data
+        except:
+            return []
+
+    def write_excel(self, data, file_name):
+        try:
+            wb = openpyxl.Workbook()
+            sheet = wb.active
+            sheet.title = "Sheet1"
+            for row_idx, row in enumerate(data):
+                for col_idx, value in enumerate(row):
+                    if isinstance(value, int):
+                        sheet.cell(row=row_idx + 1, column=col_idx + 1).value = value
+                    elif isinstance(value, str):
+                        sheet.cell(row=row_idx + 1, column=col_idx + 1).value = value
+            wb.save(file_name)
+            wb.close()
+            return 1
+        except:
+            return 0
+
+    def process_excel_data(self, N, save_file_name):
+        data = self.read_excel(save_file_name)
+        if not data or N >= len(data[0]):
+            return (0, "")
+        
+        new_data = []
+        for row in data:
+            new_row = row.copy()
+            element = row[N]
+            if type(element) is str:
+                if not element[0].isdigit():
+                    new_str = ''.join(chr(ord(c) - 32) if ord(c) > 90 else c for c in element)
+                    new_row.append(new_str)
+                else:
+                    new_row.append(element[0])
+            else:
+                new_row.append(element)
+            new_data.append(new_row)
+        
+        if '.' in save_file_name:
+            base = save_file_name[:save_file_name.rfind('.')]
+        else:
+            base = save_file_name
+        new_file_name = base + "_process.xlsx"
+        success = self.write_excel(new_data, new_file_name)
+        return (success, new_file_name)

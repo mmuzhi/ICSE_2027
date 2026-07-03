@@ -1,0 +1,15 @@
+class Solution:
+    def generate(self, numRows: int) -> List[List[int]]:
+        if numRows == 0:
+            return []
+        prev = self.generate(numRows - 1)
+        if not prev:
+            prev = [[1]]
+        else:
+            fin = prev[-1]
+            now = [1]
+            for i in range(len(fin) - 1):
+                now.append(fin[i] + fin[i + 1])
+            now.append(1)
+            prev.append(now)
+        return prev

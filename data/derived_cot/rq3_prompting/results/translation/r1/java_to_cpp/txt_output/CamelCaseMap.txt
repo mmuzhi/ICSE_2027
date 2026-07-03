@@ -1,0 +1,439 @@
+=== PROMPT VARIANT ===
+r1
+
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+
+public class CamelCaseMap {
+    private final Map<String, Object> data = new LinkedHashMap<>();
+
+    public Object get(String key) {
+        return data.get(_convertKey(key));
+    }
+
+    public void put(String key, Object value) {
+        data.put(_convertKey(key), value);
+    }
+
+    public void remove(String key) {
+        data.remove(_convertKey(key));
+    }
+
+    String _convertKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        return _toCamelCase(key);
+    }
+
+    static String _toCamelCase(String key) {
+        String[] parts = key.split("_");
+        StringBuilder camelCaseString = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            camelCaseString.append(parts[i].substring(0, 1).toUpperCase()).append(parts[i].substring(1).toLowerCase());
+        }
+        return camelCaseString.toString();
+    }
+
+    public Set<String> keySet() {
+        return data.keySet();
+    }
+
+    public int size() {
+        return data.size();
+    }
+}
+
+
+=== PROMPT ===
+You are an expert programmer. Translate the following java code to cpp.
+- Keep behavior identical, including inputs/outputs, side effects, edge cases, and exceptions.
+- Use idiomatic cpp only when it does not change behavior.
+
+```java
+package org.example;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+
+public class CamelCaseMap {
+    private final Map<String, Object> data = new LinkedHashMap<>();
+
+    public Object get(String key) {
+        return data.get(_convertKey(key));
+    }
+
+    public void put(String key, Object value) {
+        data.put(_convertKey(key), value);
+    }
+
+    public void remove(String key) {
+        data.remove(_convertKey(key));
+    }
+
+    String _convertKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        return _toCamelCase(key);
+    }
+
+    static String _toCamelCase(String key) {
+        String[] parts = key.split("_");
+        StringBuilder camelCaseString = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            camelCaseString.append(parts[i].substring(0, 1).toUpperCase()).append(parts[i].substring(1).toLowerCase());
+        }
+        return camelCaseString.toString();
+    }
+
+    public Set<String> keySet() {
+        return data.keySet();
+    }
+
+    public int size() {
+        return data.size();
+    }
+}
+
+```
+
+Use a short stable mapping path that preserves behavior.
+
+Keep the reasoning compact and forward-only:
+- Build only a short behavior checklist: interface, control flow, state mutation, key API replacements, and one or two main edge cases.
+- Translate in one forward pass from that checklist.
+- Do at most one short equivalence scan on the most likely semantic trap.
+- If a mismatch appears, patch only the affected local section and recheck once.
+- If no concrete mismatch appears, finalize immediately.
+
+Try to avoid:
+- repeated high-level redesign during translation;
+- rewriting for style when behavior is already preserved;
+- reopening the whole program because of a small local issue.
+
+Output only the translated cpp code in a code block.
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++. The Java class is CamelCaseMap, which wraps a LinkedHashMap with custom key conversion to camelCase. The key conversion splits by underscore, capitalizes first letter of each part except first, and lowercases the rest. Also handles null key. Methods: get, put, remove, keySet, size. The internal map is LinkedHashMap to preserve insertion order. In C++, we can use std::map or std::unordered_map? But Java's LinkedHashMap preserves insertion order, so std::map is ordered by key, not insertion order. We need insertion order. In C++ we can use boost::multi_index or a combination of list and unordered_map, but to keep it simple and more idiomatic, we could use a custom wrapper with a vector of keys and unordered_map for O(1) lookups, but that's more complex. Since the problem says "Keep behavior identical, including inputs/outputs, side effects, edge cases, and exceptions." The insertion order is important if the user relies on it via keySet() iteration order. So we need to preserve insertion order. We can use std::map (ordered by key) would change behavior. So we need an ordered map. C++ doesn't have one in standard library. Options: use boost::container::map with insertion order? No. Use an ordered map implemented with a list and unordered_map. Let's create a simple implementation: store pairs of key-value in a list (or vector) for order, and an unordered_map for O(1) lookup of value. But removal is tricky: need to remove from both. We can store iterator into list in map. That's typical. However, we need to keep code short and simple. The user might accept using std::unordered_map if iteration order doesn't matter? But the Java code explicitly uses LinkedHashMap which maintains insertion order. To be identical, we must preserve that. So we need to implement a simple ordered map. Since this is a translation exercise, we can use a vector of pairs and linear search for get/put/remove? That would be O(n) but acceptable for small maps? But the original Java uses HashMap for O(1) average. We can implement a simple ordered map using std::unordered_map and a std::list of keys. Let's do that.
+
+We'll have a class CamelCaseMap with private member: 
+- std::unordered_map<std::string, std::string> values; // key already converted?
+Actually we need to store the original key? The _convertKey converts the input key to camelCase, which is used as the internal key. The user's key might be snake_case, but after conversion it becomes camelCase. So the internal map stores camelCase keys. The user's input keys are converted. So the internal map stores the converted keys. But when we iterate keySet(), we return the internal keys (camelCase). That's fine. So we need to maintain insertion order of the internal keys.
+
+So we need an ordered map with insertion order. We'll have a std::list<std::string> order; and std::unordered_map<std::string, std::pair<std::string, std::list<std::string>::iterator>> data; Actually we need to store the value as well. So we can store a struct: value and iterator. Or we can have a map from key to pair<value, iterator>. Let's define:
+
+std::unordered_map<std::string, std::pair<std::string, std::list<std::string>::iterator>> data_map; // key -> (value, list iterator)
+std::list<std::string> order; // list of keys in insertion order.
+
+But we need to handle removal: remove from map and list (using iterator). Also put: if key exists, we need to update value and possibly keep order? Java's LinkedHashMap: if you put an existing key, the order is unaffected (it remains at the original insertion position). So we should not move it to the end. So we need to detect if key exists and then only update value, not move iterator. If new, add to end.
+
+So implement:
+
+- get: check if key exists in data_map after converting input key; if not, return null? In Java, return null. In C++, we can return a std::string? But the Java Object return type is generic; we can use std::string for simplicity, but then we need to handle null. Better to use std::optional<std::string> or just return empty string if not found? But behavior identical: if key not present, get returns null. In C++, we can use boost::optional or std::optional (C++17). We'll assume C++17 for std::optional. Or we can use std::unique_ptr or a sentinel. Since the problem doesn't specify C++ version, we can use std::experimental::optional or a pointer. To keep it simple, we can return a std::string and throw an exception? No. Java returns null for missing key. We can mimic with a pointer: const char*? Better to use std::optional<std::string>. We'll include <optional>. 
+
+But also note: Java's main method? No, just the class.
+
+We also need to handle null key: _convertKey returns null if key is null. Then data.get(null) returns null. In C++, we can't have null std::string. So we need to handle null pointer? In the Java code, the key parameter is a String, which can be null. In C++, we can accept std::string by value or const std::string&; but null is not possible. So we could accept a const char*? Or we can define the functions to accept a const std::string&, and then null would be a special case: we could treat empty string? Not the same. The behavior: if key is null, _convertKey returns null, and then data.get(null) returns null. So the map never contains a null key. In C++, we can handle this by accepting a const char* that could be nullptr, or by using std::optional<std::string> as parameter? That's more complex. Simpler: accept std::string by value, and if we want to allow null, we can use std::optional<std::string> for parameter. But that changes interface. The Java method signature: public Object get(String key). In C++, we can have std::optional<std::string> get(const std::string& key) but that doesn't allow null key. To be identical, we need to allow null key. We can overload the methods to accept const char* and check for nullptr. That would be consistent: if key is nullptr, return std::nullopt (for get), ignore for put etc. Let's do that.
+
+So methods: 
+- std::optional<std::string> get(const char* key);
+- void put(const char* key, const std::string& value);
+- void remove(const char* key);
+- std::vector<std::string> keySet() const; // but Java returns Set<String>, in C++ we can return a vector or set. To preserve order, return vector.
+- int size() const;
+
+We need to convert key to camelCase. We'll have a helper function _toCamelCase(const std::string& key) returning std::string. Also _convertKey(const char* key) returning converted string or empty? If key is null, we can return empty string and treat as null? But we need to distinguish from an empty string key. In Java, an empty string is a valid key that may be stored. So we need to differentiate null from empty. So we'll use std::optional<std::string> for the converted key, or we can store a sentinel for null. Simpler: keep a separate boolean? But we can just handle null at the public interface: if key is nullptr, treat specially: for get, return std::nullopt; for put, do nothing (or throw? Java would put null key? Actually data.put(null, value) would internally call _convertKey(null) which returns null, then data.put(null, value) will put null key into LinkedHashMap? In Java, LinkedHashMap allows null keys. But _convertKey returns null if key is null, so data.put(null, value) stores a null key. So null key is allowed and stored internally. So we need to support null key as a distinct key. In C++, we can store a special flag or use a separate map entry for null. Simpler: use a separate optional for null key? We can have a member std::optional<std::string> null_value; and a bool has_null_key; and track insertion order for null key as well. That's messy. Alternatively, we could use std::map<std::optional<std::string>, std::string> but the optional as key is tricky because ordering.
+
+Given Java's LinkedHashMap allows null keys, and we need identical behavior, we should support null key in C++. But it's rare. To keep translation simple, we could ignore null key support, but that would change behavior if someone passes null. The problem says "Keep behavior identical". So we must support null key.
+
+We can handle null key by using a separate variable for the null key's value and a boolean for whether it exists, and also track its position in order (if insertion order matters for null). But then keySet() would need to include null? In Java, keySet() includes null if present? Yes. The keySet of LinkedHashMap returns a Set view; if null key is present, it is in the set. So we need to include null in our keySet. In C++, we could return a vector of std::optional<std::string> or use a special string like "<null>". Not ideal.
+
+Given the complexity, perhaps the original developer doesn't expect null keys often, but we must be faithful. However, looking at the code: the _convertKey method returns null if key is null. Then data.get(null) returns null if no null key, or the value if present. So yes, null keys are allowed. In C++, we can use std::string "null" as a sentinel, but then it's not distinguishable from a user-provided key "null". That's dangerous. Better to use a separate member: std::string null_value; bool has_null; and also maintain a separate order for null? Actually insertion order: if the user puts null first, then later another key, then null's position is first in iteration. We can keep a list of strings where null is represented by a special token like "\0" (empty string not allowed) or use a separate list of optional? We can use a std::list<std::string> for keys, and for null key we can insert an empty string? But empty string might be a valid key (string of length 0). In Java, the key "" (empty string) is allowed and distinct from null. So we cannot use empty string for null. So we need to distinguish null from empty. We could use a separate flag and include null in the order list using a special marker like a unique pointer? 
+
+A more systematic approach: We can create a wrapper class Key that can be either a string or null. And use that as key in an unordered_map and store insertion order. That's overkill.
+
+Given the time, maybe we can assume that null keys are not used in typical use cases, and the problem likely expects just the basic translation with the assumption that keys are non-null. But the problem explicitly says "Keep behavior identical, including inputs/outputs, side effects, edge cases, and exceptions." So we must handle null.
+
+However, we can note that in the Java code, the _convertKey returns null if key is null. Then data.get(null) returns null. That means the map's get for null returns the value if a null key exists. In Java's HashMap, get(null) works. So we need to support that.
+
+In C++, we could store the null key as a separate optional value. For order, we could keep a list of bool and strings? Actually we can store keys as std::optional<std::string>. The ordered list can be std::list<std::optional<std::string>>. The unordered_map from std::optional<std::string> to value and iterator. std::optional can be used as key in unordered_map? It requires hash and equality. std::optional has std::hash specialization? In C++17, std::hash<optional<T>> is not defined, but we can define it. It's complicated.
+
+Alternatively, we could implement a simple ordered map using a vector of pairs of (std::optional<std::string>, value) and linear search. That would be O(n) for all operations, but matches behavior (including null). Since the map is likely small, it's acceptable. And it's simpler to implement correctly with null support. We'll do that.
+
+So we'll have a vector of pairs: (std::optional<std::string> key, std::string value). For insertion order, we push_back for new keys, for existing keys we update value without moving. Removal: find and erase from vector. keySet: iterate and push_back keys (if optional has value, push string; else push nothing? Actually Java's Set<String> contains null if present. So we need to represent null. We could return a vector of std::optional<std::string> from keySet, but that changes type. Alternatively, we could return a vector of std::string and include a special token, but that changes behavior. The user of the class expects keySet() to return a Set<String>. In C++, we can return a vector of std::string, but cannot include null because std::string cannot be null. So we need to change the return type to something that can represent null. The most faithful would be to return std::vector<std::optional<std::string>>. But that changes the signature from Java's Set<String>. The problem says "translate the following java code to cpp". It doesn't require exact API signature, but behavior identical including inputs/outputs. So if the user calls keySet() and expects to iterate over keys including possibly null, we must provide that. So we need to return a collection of optional strings. That's okay.
+
+Similarly, get returns Object, which can be null. So we'll return std::optional<std::string>.
+
+put: if key is null, we need to store with null key. The value is a std::string; could be empty. We'll treat the key as std::optional<std::string>; nullopt for null.
+
+remove: same.
+
+convertKey: if key is null, return nullopt; else return optional with camelCase string.
+
+Implementation: We'll have a private helper _convertKey that takes const char* key? Actually we'll have public methods that accept const char* (nullptr allowed) or std::string? Better to accept const char* for compatibility with null. Internally, we'll convert to std::optional<std::string> for the processed key. But then we need to store the processed key (camelCase) in the map. So for null, processed key is nullopt. So store nullopt as key. For a non-null key string, we convert to camelCase and store that as the key (optional with string). So the internal map keys are the converted camelCase strings (or null). That matches Java: the internal map keys are the result of _convertKey.
+
+Thus we have a vector of pairs: (std::optional<std::string> key, std::string value).
+
+Operations: 
+- get: iterate vector to find key; if found return value; else return nullopt.
+- put: iterate to find key. If found, update value. Else push_back new pair.
+- remove: find and erase.
+- keySet: iterate and collect keys (as optional strings).
+- size: vector size.
+
+That's O(n) for all, but works. It's simple and behavior identical.
+
+Now implement _toCamelCase: static method that takes const std::string& key, splits by '_', builds camelCase string. Note: In Java, parts[0] is kept as is (no lowercasing), but parts[1..] capitalize first letter and lowercase rest. So we replicate.
+
+Edge cases: key could be empty string? In Java, empty string not null. We should handle it: split("_") on "" yields [""] (one part). So camelCase returns "". That's fine.
+
+If key starts with '_'? e.g., "_abc". split("_") gives ["", "abc"]. Then parts[0] is "", so camelCase starts with "", then first part of parts[1] uppercase -> "Abc". So result is "Abc". That's correct per Java.
+
+If key ends with '_': "abc_". split("_") gives ["abc"]? In Java, trailing empty strings are omitted? Actually Java's String.split("_") by default omits trailing empty strings. So "abc_".split("_") gives ["abc"] only. So we must replicate that. In C++, split similar, but we need to handle this. We'll write a simple split function that omits empty trailing strings, or we can use stringstream and getline? But getline with delimiter includes empty strings. Better to use a loop to split and push non-empty? But Java's split omits trailing empty strings but includes leading empty strings? It includes leading empties. For "_abc", it gives ["", "abc"]. For "abc_", it gives ["abc"]. So we should replicate exactly. We'll implement: use a stringstream with getline, but that gives empty strings for consecutive delimiters and trailing. It's easier to write a manual split that mimics Java's behavior: split the string by '_', and if the string ends with '_', ignore the final empty string? Actually Java's split removes trailing empty strings (by default, since limit is 0). We'll implement a split that uses istringstream and getline, then remove trailing empty strings from the result. But careful: consecutive underscores: "a__b". Java split gives ["a","","b"]? Actually it gives ["a","","b"] because limit is 0 but it does not omit interior empty strings. Only trailing empty strings are omitted. So we need to preserve interior empties but remove trailing empty. We'll do: split into vector, then while last element is empty, pop_back. That matches Java.
+
+Then build camelCase: for first element, keep as is (no lowercasing). But Java's toCamelCase does: camelCaseString.append(parts[0]); then for rest, capitalize first letter and lowercase rest. So we do that.
+
+Now code.
+
+We'll include necessary headers: <vector>, <string>, <sstream>, <cctype>, <optional>, <algorithm>.
+
+We'll define class CamelCaseMap with private std::vector<std::pair<std::optional<std::string>, std::string>> entries; (using std::pair)
+
+public methods:
+- std::optional<std::string> get(const char* key);
+- void put(const char* key, const std::string& value);
+- void remove(const char* key);
+- std::vector<std::optional<std::string>> keySet() const;
+- int size() const;
+
+Also we need conversion helper: 
+- static std::optional<std::string> _convertKey(const char* key); // returns std::nullopt if key is nullptr, else camelCase string.
+- static std::string _toCamelCase(const std::string& key);
+
+Implementation details.
+
+Let's write the code.
+
+We need to handle const char* in methods; we can also overload for std::string. For simplicity, we'll define methods taking const char* and then convert to std::optional<std::string> using _convertKey.
+
+Now produce final code block.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <vector>
+#include <string>
+#include <optional>
+#include <cctype>
+#include <sstream>
+#include <algorithm>
+#include <utility>
+
+class CamelCaseMap {
+private:
+    // Each entry: optional key (nullopt for null key), value
+    std::vector<std::pair<std::optional<std::string>, std::string>> entries;
+
+    // Convert user-provided raw key (possibly null) to the internal key (camelCase or nullopt)
+    static std::optional<std::string> _convertKey(const char* key) {
+        if (key == nullptr) {
+            return std::nullopt;
+        }
+        return _toCamelCase(std::string(key));
+    }
+
+    // Convert snake_case to camelCase (replicates Java's _toCamelCase)
+    static std::string _toCamelCase(const std::string& key) {
+        // Split by '_', mimicking Java's String.split("_") (trailing empties removed)
+        std::vector<std::string> parts;
+        std::istringstream stream(key);
+        std::string segment;
+        while (std::getline(stream, segment, '_')) {
+            parts.push_back(segment);
+        }
+        // Remove trailing empty strings (Java's default split behavior for limit=0)
+        while (!parts.empty() && parts.back().empty()) {
+            parts.pop_back();
+        }
+
+        if (parts.empty()) {
+            return "";
+        }
+
+        std::string result = parts[0];
+        for (size_t i = 1; i < parts.size(); ++i) {
+            const std::string& part = parts[i];
+            if (!part.empty()) {
+                result += static_cast<char>(std::toupper(static_cast<unsigned char>(part[0])));
+                for (size_t j = 1; j < part.size(); ++j) {
+                    result += static_cast<char>(std::tolower(static_cast<unsigned char>(part[j])));
+                }
+            }
+        }
+        return result;
+    }
+
+public:
+    // Get value for key (nullptr for null). Returns std::nullopt if not found.
+    std::optional<std::string> get(const char* key) {
+        std::optional<std::string> internalKey = _convertKey(key);
+        for (const auto& entry : entries) {
+            if (entry.first == internalKey) {
+                return entry.second;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Insert or update key-value pair. Key can be nullptr for null key.
+    void put(const char* key, const std::string& value) {
+        std::optional<std::string> internalKey = _convertKey(key);
+        // Search for existing key
+        for (auto& entry : entries) {
+            if (entry.first == internalKey) {
+                entry.second = value; // Update value, preserve order
+                return;
+            }
+        }
+        // Not found: add new entry at the end
+        entries.emplace_back(std::move(internalKey), value);
+    }
+
+    // Remove key-value pair (if present). Key can be nullptr.
+    void remove(const char* key) {
+        std::optional<std::string> internalKey = _convertKey(key);
+        auto it = std::remove_if(entries.begin(), entries.end(),
+                                 [&](const auto& entry) {
+                                     return entry.first == internalKey;
+                                 });
+        entries.erase(it, entries.end());
+    }
+
+    // Return keys in insertion order (optional to represent null key)
+    std::vector<std::optional<std::string>> keySet() const {
+        std::vector<std::optional<std::string>> keys;
+        keys.reserve(entries.size());
+        for (const auto& entry : entries) {
+            keys.push_back(entry.first);
+        }
+        return keys;
+    }
+
+    // Number of entries
+    int size() const {
+        return static_cast<int>(entries.size());
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <vector>
+#include <string>
+#include <optional>
+#include <cctype>
+#include <sstream>
+#include <algorithm>
+#include <utility>
+
+class CamelCaseMap {
+private:
+    // Each entry: optional key (nullopt for null key), value
+    std::vector<std::pair<std::optional<std::string>, std::string>> entries;
+
+    // Convert user-provided raw key (possibly null) to the internal key (camelCase or nullopt)
+    static std::optional<std::string> _convertKey(const char* key) {
+        if (key == nullptr) {
+            return std::nullopt;
+        }
+        return _toCamelCase(std::string(key));
+    }
+
+    // Convert snake_case to camelCase (replicates Java's _toCamelCase)
+    static std::string _toCamelCase(const std::string& key) {
+        // Split by '_', mimicking Java's String.split("_") (trailing empties removed)
+        std::vector<std::string> parts;
+        std::istringstream stream(key);
+        std::string segment;
+        while (std::getline(stream, segment, '_')) {
+            parts.push_back(segment);
+        }
+        // Remove trailing empty strings (Java's default split behavior for limit=0)
+        while (!parts.empty() && parts.back().empty()) {
+            parts.pop_back();
+        }
+
+        if (parts.empty()) {
+            return "";
+        }
+
+        std::string result = parts[0];
+        for (size_t i = 1; i < parts.size(); ++i) {
+            const std::string& part = parts[i];
+            if (!part.empty()) {
+                result += static_cast<char>(std::toupper(static_cast<unsigned char>(part[0])));
+                for (size_t j = 1; j < part.size(); ++j) {
+                    result += static_cast<char>(std::tolower(static_cast<unsigned char>(part[j])));
+                }
+            }
+        }
+        return result;
+    }
+
+public:
+    // Get value for key (nullptr for null). Returns std::nullopt if not found.
+    std::optional<std::string> get(const char* key) {
+        std::optional<std::string> internalKey = _convertKey(key);
+        for (const auto& entry : entries) {
+            if (entry.first == internalKey) {
+                return entry.second;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Insert or update key-value pair. Key can be nullptr for null key.
+    void put(const char* key, const std::string& value) {
+        std::optional<std::string> internalKey = _convertKey(key);
+        // Search for existing key
+        for (auto& entry : entries) {
+            if (entry.first == internalKey) {
+                entry.second = value; // Update value, preserve order
+                return;
+            }
+        }
+        // Not found: add new entry at the end
+        entries.emplace_back(std::move(internalKey), value);
+    }
+
+    // Remove key-value pair (if present). Key can be nullptr.
+    void remove(const char* key) {
+        std::optional<std::string> internalKey = _convertKey(key);
+        auto it = std::remove_if(entries.begin(), entries.end(),
+                                 [&](const auto& entry) {
+                                     return entry.first == internalKey;
+                                 });
+        entries.erase(it, entries.end());
+    }
+
+    // Return keys in insertion order (optional to represent null key)
+    std::vector<std::optional<std::string>> keySet() const {
+        std::vector<std::optional<std::string>> keys;
+        keys.reserve(entries.size());
+        for (const auto& entry : entries) {
+            keys.push_back(entry.first);
+        }
+        return keys;
+    }
+
+    // Number of entries
+    int size() const {
+        return static_cast<int>(entries.size());
+    }
+};

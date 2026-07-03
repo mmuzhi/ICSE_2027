@@ -1,0 +1,475 @@
+=== PROMPT VARIANT ===
+r1
+
+=== SOURCE CODE (java) ===
+package org.example;
+
+public class NumberConverter {
+
+    public static String decimalToBinary(int decimalNum) {
+        return Integer.toBinaryString(decimalNum);
+    }
+
+    public static int binaryToDecimal(String binaryNum) {
+        return Integer.parseInt(binaryNum, 2);
+    }
+
+    public static String decimalToOctal(int decimalNum) {
+        return Integer.toOctalString(decimalNum);
+    }
+
+    public static int octalToDecimal(String octalNum) {
+        return Integer.parseInt(octalNum, 8);
+    }
+
+    public static String decimalToHex(int decimalNum) {
+        return Integer.toHexString(decimalNum);
+    }
+
+    public static int hexToDecimal(String hexNum) {
+        return Integer.parseInt(hexNum, 16);
+    }
+}
+
+=== PROMPT ===
+You are an expert programmer. Translate the following java code to py.
+- Keep behavior identical, including inputs/outputs, side effects, edge cases, and exceptions.
+- Use idiomatic py only when it does not change behavior.
+
+```java
+package org.example;
+
+public class NumberConverter {
+
+    public static String decimalToBinary(int decimalNum) {
+        return Integer.toBinaryString(decimalNum);
+    }
+
+    public static int binaryToDecimal(String binaryNum) {
+        return Integer.parseInt(binaryNum, 2);
+    }
+
+    public static String decimalToOctal(int decimalNum) {
+        return Integer.toOctalString(decimalNum);
+    }
+
+    public static int octalToDecimal(String octalNum) {
+        return Integer.parseInt(octalNum, 8);
+    }
+
+    public static String decimalToHex(int decimalNum) {
+        return Integer.toHexString(decimalNum);
+    }
+
+    public static int hexToDecimal(String hexNum) {
+        return Integer.parseInt(hexNum, 16);
+    }
+}
+```
+
+Use a short stable mapping path that preserves behavior.
+
+Keep the reasoning compact and forward-only:
+- Build only a short behavior checklist: interface, control flow, state mutation, key API replacements, and one or two main edge cases.
+- Translate in one forward pass from that checklist.
+- Do at most one short equivalence scan on the most likely semantic trap.
+- If a mismatch appears, patch only the affected local section and recheck once.
+- If no concrete mismatch appears, finalize immediately.
+
+Try to avoid:
+- repeated high-level redesign during translation;
+- rewriting for style when behavior is already preserved;
+- reopening the whole program because of a small local issue.
+
+Output only the translated py code in a code block.
+
+=== REASONING ===
+<think>
+Checklist:
+- Interface: 6 static methods, same signatures (int/String).
+- Control flow: straight-line, no loops/conditions.
+- State mutation: none (pure functions).
+- Key API replacements: Integer.toBinaryString -> bin()[2:], Integer.toOctalString -> oct()[2:], Integer.toHexString -> hex()[2:]; Integer.parseInt(s, radix) -> int(s, radix).
+- Edge cases: negative integers. Java's toBinaryString/toOctalString/toHexString produce two's complement representations for negatives (e.g. -1 -> "11111111111111111111111111111111"). Python's bin/oct/hex produce "-0b..." for negatives. To match Java exactly for negatives, use f"{n & 0xFFFFFFFF:b}" (and similarly for oct/hex) to get unsigned 32-bit two's complement. Wait, the problem says "Keep behavior identical, including inputs/outputs, side effects, edge cases, and exceptions." So I must match Java's two's complement behavior for negative numbers.
+- Integer.parseInt(s, radix) in Java throws NumberFormatException for invalid strings; Python's int(s, radix) throws ValueError. This is a close match for exceptions.
+- For the conversion to binary/octal/hex, Java uses 32-bit unsigned two's complement for negative numbers. Python's bin(-1) is '-0b1'. So I need to mask with 0xFFFFFFFF.
+- binaryToDecimal: Java's Integer.parseInt("11111111111111111111111111111111", 2) returns -1. Python's int("11111111111111111111111111111111", 2) returns 4294967295. To match Java, if the binary string length is 32 and starts with '1', we need to subtract 2^32. Wait, Java's parseInt parses it as a signed 32-bit integer if it's exactly 32 bits? No, parseInt parses the string as a signed integer. "11111111111111111111111111111111" is 2^32-1, which overflows a signed 32-bit int, so it throws NumberFormatException in Java! Let me double check. Yes, Integer.parseInt("11111111111111111111111111111111", 2) throws NumberFormatException because it exceeds Integer.MAX_VALUE. Wait, no, parseInt parses as a signed integer, so it allows '-' prefix. "11111111111111111111111111111111" is 4294967295, which is > 2147483647, so it throws NumberFormatException.
+Wait, Java's `Integer.parseUnsignedInt` exists, but `Integer.parseInt` throws exception for > 2^31-1.
+Let me verify Java's `Integer.parseInt("11111111111111111111111111111111", 2)`. It throws `NumberFormatException`.
+Wait, what about `Integer.parseInt("11111111111111111111111111111110", 2)`? 4294967294, also throws.
+So `binaryToDecimal` for strings >= 32 bits of 1s throws exception.
+Python's `int("11111111111111111111111111111111", 2)` returns 4294967295.
+To match Java's `parseInt`, we can use `int(s, 2)` and check if it fits in a signed 32-bit integer, raising ValueError if not. Or just `int(s, 2)` and if > 0x7FFFFFFF or < -0x80000000, raise ValueError.
+Wait, Java's `Integer.parseInt` allows negative sign, e.g., "-1".
+Let's just use `int(s, 2)` and then check the bounds: `val = int(s, 2)` (if it starts with '-', `int` handles it, but wait, `int("-1", 2)` is invalid in Python, raises ValueError. In Java, `Integer.parseInt("-1", 2)` also throws NumberFormatException! Because '-' is not a valid binary digit in base 2 for parseInt? Wait, Java `Integer.parseInt("-1", 2)` actually works and returns -1! Let me check: `Integer.parseInt("-1", 2)` -> -1. `Integer.parseInt("-10", 2)` -> -2. Python `int("-1", 2)` -> -1. `int("-10", 2)` -> -2.
+So `int(s, base)` perfectly matches Java's `parseInt` regarding the minus sign!
+The only difference is that Java's `parseInt` restricts the result to 32-bit signed range `[-2^31, 2^31-1]`.
+So for `binaryToDecimal`, `octalToDecimal`, `hexToDecimal`, we should parse with `int(s, base)` and then check if `-0x80000000 <= val <= 0x7FFFFFFF`. If not, raise `ValueError`.
+Wait, what if the string is like `"7FFFFFFF"`? `int("7FFFFFFF", 16)` -> 2147483647. Fits.
+`"80000000"` -> 2147483648. Java `Integer.parseInt("80000000", 16)` throws `NumberFormatException`. Python `int("80000000", 16)` -> 2147483648. We must raise ValueError.
+Wait, Java `Integer.parseInt("-80000000", 16)` -> -2147483648. Fits.
+So bounds check is necessary.
+
+Let's refine the negative number formatting:
+Java `Integer.toBinaryString(-1)` -> "11111111111111111111111111111111"
+Python: `f"{-1 & 0xFFFFFFFF:b}"` -> "11111111111111111111111111111111"
+Java `Integer.toOctalString(-1)` -> "37777777777"
+Python: `f"{-1 & 0xFFFFFFFF:o}"` -> "37777777777"
+Java `Integer.toHexString(-1)` -> "ffffffff"
+Python: `f"{-1 & 0xFFFFFFFF:x}"` -> "ffffffff"
+
+Wait, what about positive numbers?
+Java `Integer.toBinaryString(1)` -> "1"
+Python `f"{1 & 0xFFFFFFFF:b}"` -> "1"
+So `f"{decimalNum & 0xFFFFFFFF:b}"` works for both positive and negative!
+
+Let's double check `Integer.parseInt` bounds.
+Java:
+`Integer.parseInt("11111111111111111111111111111111", 2)` -> NumberFormatException (4294967295 > 2147483647)
+`Integer.parseInt("37777777777", 8)` -> NumberFormatException (4294967295 > 2147483647)
+`Integer.parseInt("ffffffff", 16)` -> NumberFormatException (4294967295 > 2147483647)
+So Python should raise ValueError for these.
+
+Wait, is there any case where `Integer.parseInt` parses strings with leading spaces? No, Java `Integer.parseInt(" 1", 2)` throws NumberFormatException. Python `int(" 1", 2)` throws ValueError. They match.
+
+Let's write a helper for parsing:
+```python
+def _parse_int(s, radix):
+    val = int(s, radix)
+    if not (-0x80000000 <= val <= 0x7FFFFFFF):
+        raise ValueError(f"Value out of range for int: {val}")
+    return val
+```
+
+Wait, what if `s` is `"+1"`?
+Java `Integer.parseInt("+1", 2)` -> 1
+Python `int("+1", 2)` -> 1
+Wait, Java `Integer.parseInt("+1", 2)` actually works? Let me check. Yes, Java allows `+` sign.
+Python `int("+1", 2)` -> 1.
+So `int(s, radix)` is perfectly compatible!
+
+Let's review the exact signatures:
+```python
+class NumberConverter:
+    @staticmethod
+    def decimalToBinary(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:b}"
+
+    @staticmethod
+    def binaryToDecimal(binaryNum: str) -> int:
+        val = int(binaryNum, 2)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+
+    @staticmethod
+    def decimalToOctal(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:o}"
+
+    @staticmethod
+    def octalToDecimal(octalNum: str) -> int:
+        val = int(octalNum, 8)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+
+    @staticmethod
+    def decimalToHex(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:x}"
+
+    @staticmethod
+    def hexToDecimal(hexNum: str) -> int:
+        val = int(hexNum, 16)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+```
+
+Wait, what if `decimalNum` is larger than 32-bit or smaller?
+Java `int` is strictly 32-bit, so `decimalNum` is already a 32-bit int in Java.
+In Python, `decimalNum` could be larger than 32-bit.
+If `decimalNum` is outside 32-bit range, `decimalNum & 0xFFFFFFFF` will truncate it to 32-bit unsigned, which exactly matches Java's 2's complement overflow behavior if a larger int was cast to `int` in Java. However, since the Python type is `int`, it can be arbitrarily large. Masking with `0xFFFFFFFF` mimics the 32-bit int overflow perfectly.
+
+Wait, are there any edge cases for `int(s, radix)`?
+What if `s` is an empty string?
+Java: `Integer.parseInt("", 2)` -> NumberFormatException
+Python: `int("", 2)` -> ValueError
+Matches.
+
+What if `s` has leading zeros?
+Java: `Integer.parseInt("01", 2)` -> 1
+Python: `int("01", 2)` -> 1
+Matches.
+
+What if `s` has underscores?
+Java 7+: `Integer.parseInt("1_0", 2)` -> NumberFormatException (underscores not supported in parseInt)
+Python 3.6+: `int("1_0", 2)` -> 2
+Ah! Python `int` allows underscores, Java `parseInt` does not!
+Wait, does `Integer.parseInt` allow underscores? No, `Integer.parseInt` does NOT allow underscores. `Integer.parseInt("1_0", 2)` throws `NumberFormatException`.
+So we should strip or reject underscores?
+If we want to perfectly match Java, we should reject underscores.
+Wait, `int(s.replace("_", ""), 2)` would make `"1_0"` valid, which violates Java's behavior.
+So we should check if `s` contains `_` and raise ValueError, or just leave it. Since the prompt says "Keep behavior identical, including inputs/outputs, side effects, edge cases, and exceptions", if a user passes `"1_0"`, Java throws `NumberFormatException`. Python `int("1_0", 2)` returns 2. This is a semantic trap!
+Let's fix it: check for underscores or other invalid chars?
+Actually, Java `Integer.parseInt` only allows `[-+]` followed by digits valid for the radix.
+Python `int` allows `[-+]` followed by digits and underscores valid for the radix.
+To strictly match, we can just check if `'_' in s` and raise ValueError, or better, use regex, but checking `'_' in s` is the simplest way to prevent Python from parsing it successfully when Java wouldn't.
+Wait, what about other characters? Python `int` doesn't accept anything else that Java rejects, except maybe Java rejects `+` in some old versions? No, Java `Integer.parseInt` accepts `+`.
+Are there any other characters Python `int` accepts but Java `Integer.parseInt` rejects? No, I don't think so.
+So `if '_' in s: raise ValueError("underscore not allowed")` is sufficient? Wait, what if the string is `"_1"`? Python `int("_1", 2)` -> ValueError. So no problem.
+What if it's `"1_"`? Python `int("1_", 2)` -> ValueError.
+What if it's `"1__0"`? Python `int("1__0", 2)` -> ValueError.
+So only `1_0` is valid in Python but invalid in Java.
+Let's add a check for `_` in the string before parsing.
+
+Wait, is there any other difference?
+Java `Integer.parseInt("0x10", 16)` -> NumberFormatException (0x not allowed in parseInt)
+Python `int("0x10", 16)` -> ValueError.
+Wait, Python `int("0x10", 16)` raises ValueError! `int("0x10", 0)` works, but with base 16 it requires strictly hex digits.
+Let me double check: `int("0x10", 16)` in Python raises `ValueError: invalid literal for int() with base 16: '0x10'`.
+So they match!
+
+Let's review the underscore trap:
+```python
+if '_' in s:
+    raise ValueError(f"Underscore not allowed in {s}")
+```
+This is safe and prevents the Python-specific underscore feature.
+
+Let's check the bounds check again.
+If `val` is out of `[-2147483648, 2147483647]`, Java throws `NumberFormatException`.
+Python `int` returns a larger integer.
+So:
+```python
+val = int(s, radix)
+if not (-0x80000000 <= val <= 0x7FFFFFFF):
+    raise ValueError(f"Value out of range for int: {val}")
+```
+This perfectly matches Java's exception.
+
+Let's double check `Integer.toBinaryString(0)`.
+Java: "0"
+Python: `f"{0 & 0xFFFFFFFF:b}"` -> "0"
+Matches.
+
+What about `Integer.toBinaryString(-0)`?
+In Java, `-0` is just `0`.
+In Python, `-0` is `0`.
+Matches.
+
+What about `Integer.toHexString(0)`?
+Java: "0"
+Python: `f"{0 & 0xFFFFFFFF:x}"` -> "0"
+Matches.
+
+Wait, does Java `Integer.toHexString` use uppercase or lowercase?
+Java uses lowercase `a-f`.
+Python `:x` uses lowercase `a-f`.
+Matches.
+
+Wait, what if `decimalNum` is negative in Python?
+`-1 & 0xFFFFFFFF` -> `4294967295`
+`f"{4294967295:b}"` -> `"11111111111111111111111111111111"`
+Matches.
+
+What if `decimalNum` is a very large positive number in Python, e.g., `0xFFFFFFFFF`?
+`0xFFFFFFFFF & 0xFFFFFFFF` -> `0xFFFFFFFF`
+`f"{0xFFFFFFFF:x}"` -> `"ffffffff"`
+Matches Java's overflow behavior if cast to `int` first.
+
+Is there any edge case in Python's `& 0xFFFFFFFF`?
+For negative numbers, Python's `&` operator on integers works perfectly as two's complement masking because Python uses infinite-precision two's complement internally. So `-1 & 0xFFFFFFFF` is `4294967295`.
+
+Let's assemble the code:
+
+```python
+class NumberConverter:
+
+    @staticmethod
+    def decimalToBinary(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:b}"
+
+    @staticmethod
+    def binaryToDecimal(binaryNum: str) -> int:
+        if '_' in binaryNum:
+            raise ValueError(f"Underscore not allowed in {binaryNum}")
+        val = int(binaryNum, 2)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+
+    @staticmethod
+    def decimalToOctal(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:o}"
+
+    @staticmethod
+    def octalToDecimal(octalNum: str) -> int:
+        if '_' in octalNum:
+            raise ValueError(f"Underscore not allowed in {octalNum}")
+        val = int(octalNum, 8)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+
+    @staticmethod
+    def decimalToHex(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:x}"
+
+    @staticmethod
+    def hexToDecimal(hexNum: str) -> int:
+        if '_' in hexNum:
+            raise ValueError(f"Underscore not allowed in {hexNum}")
+        val = int(hexNum, 16)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+```
+
+Wait, does Java `Integer.parseInt` allow leading/trailing spaces?
+No. `Integer.parseInt(" 1", 2)` throws `NumberFormatException`.
+Python `int(" 1", 2)` throws `ValueError`.
+Matches.
+
+Does Java `Integer.parseInt` allow `+` sign?
+Yes, `Integer.parseInt("+1", 2)` returns 1.
+Python `int("+1", 2)` returns 1.
+Matches.
+
+What about `Integer.parseInt("-1", 2)`?
+Java returns -1.
+Python returns -1.
+Matches.
+
+Are there any other differences in valid characters?
+Java `Integer.parseInt` allows digits `0` to `radix-1`. Python does too.
+Wait, Java `Integer.parseInt` for base 16 allows `a-f` and `A-F`. Python also allows both.
+Wait, Java `Integer.parseInt` for base 8 allows `0-7`. Python allows `0-7`.
+Wait, Java `Integer.parseInt` for base 2 allows `0-1`. Python allows `0-1`.
+
+Let's quickly check if Python's `int` allows any other characters.
+No, only `[-+]` and digits/underscores.
+So checking for `_` is sufficient.
+
+One more semantic trap:
+Java `Integer.parseInt` with base 16 does NOT allow `0x` prefix.
+Python `int` with base 16 does NOT allow `0x` prefix either (requires base 0 or omitting base).
+Matches.
+
+Is there any issue with `0` prefix in octal?
+Java `Integer.parseInt("010", 8)` -> 8.
+Python `int("010", 8)` -> 8.
+Matches.
+
+What about `decimalToBinary(0)`?
+`f"{0 & 0xFFFFFFFF:b}"` -> `"0"`.
+Java `Integer.toBinaryString(0)` -> `"0"`.
+Matches.
+
+Wait, what if `decimalNum` is exactly `0x80000000`?
+In Java, `0x80000000` is `-2147483648`.
+In Python, `0x80000000` is `2147483648`.
+`2147483648 & 0xFFFFFFFF` is `2147483648`.
+`f"{2147483648:b}"` is `"10000000000000000000000000000000"` (31 zeros).
+Java `Integer.toBinaryString(-2147483648)` is `"10000000000000000000000000000000"`.
+Matches perfectly!
+
+Is there any issue with `0`?
+`0 & 0xFFFFFFFF` is `0`.
+`f"{0:b}"` is `"0"`.
+Matches.
+
+What about `0xFFFFFFFF`?
+In Java, `0xFFFFFFFF` is `-1`.
+In Python, `0xFFFFFFFF` is `4294967295`.
+`4294967295 & 0xFFFFFFFF` is `4294967295`.
+`f"{4294967295:b}"` is `"11111111111111111111111111111111"`.
+Matches Java `Integer.toBinaryString(-1)`.
+
+Everything looks solid. The translation handles the 32-bit two's complement behavior of Java's `Integer.toXString` methods, the 32-bit signed bounds of `Integer.parseInt`, and the underscore parsing difference.
+</think>
+
+=== RAW ANSWER ===
+```python
+class NumberConverter:
+
+    @staticmethod
+    def decimalToBinary(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:b}"
+
+    @staticmethod
+    def binaryToDecimal(binaryNum: str) -> int:
+        if '_' in binaryNum:
+            raise ValueError(f"Underscore not allowed in {binaryNum}")
+        val = int(binaryNum, 2)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+
+    @staticmethod
+    def decimalToOctal(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:o}"
+
+    @staticmethod
+    def octalToDecimal(octalNum: str) -> int:
+        if '_' in octalNum:
+            raise ValueError(f"Underscore not allowed in {octalNum}")
+        val = int(octalNum, 8)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+
+    @staticmethod
+    def decimalToHex(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:x}"
+
+    @staticmethod
+    def hexToDecimal(hexNum: str) -> int:
+        if '_' in hexNum:
+            raise ValueError(f"Underscore not allowed in {hexNum}")
+        val = int(hexNum, 16)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+```
+
+=== TRANSLATED CODE (py) ===
+class NumberConverter:
+
+    @staticmethod
+    def decimalToBinary(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:b}"
+
+    @staticmethod
+    def binaryToDecimal(binaryNum: str) -> int:
+        if '_' in binaryNum:
+            raise ValueError(f"Underscore not allowed in {binaryNum}")
+        val = int(binaryNum, 2)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+
+    @staticmethod
+    def decimalToOctal(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:o}"
+
+    @staticmethod
+    def octalToDecimal(octalNum: str) -> int:
+        if '_' in octalNum:
+            raise ValueError(f"Underscore not allowed in {octalNum}")
+        val = int(octalNum, 8)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val
+
+    @staticmethod
+    def decimalToHex(decimalNum: int) -> str:
+        return f"{decimalNum & 0xFFFFFFFF:x}"
+
+    @staticmethod
+    def hexToDecimal(hexNum: str) -> int:
+        if '_' in hexNum:
+            raise ValueError(f"Underscore not allowed in {hexNum}")
+        val = int(hexNum, 16)
+        if not (-0x80000000 <= val <= 0x7FFFFFFF):
+            raise ValueError(f"Value out of range for int: {val}")
+        return val

@@ -1,0 +1,295 @@
+=== SOURCE CODE (cpp) ===
+
+#include <sstream>
+#include <algorithm>
+
+#include <string>
+#include <vector>
+#include <map>
+
+class SQLGenerator {
+public:
+    SQLGenerator(const std::string& table_name);
+
+    std::string select(const std::vector<std::string>& fields = {}, const std::string& condition = "") const;
+    std::string insert(const std::map<std::string, std::string>& data) const;
+    std::string update(const std::map<std::string, std::string>& data, const std::string& condition) const;
+    std::string delete_query(const std::string& condition) const;
+    std::string select_female_under_age(int age) const;
+    std::string select_by_age_range(int min_age, int max_age) const;
+
+private:
+    std::string table_name;
+};
+
+
+SQLGenerator::SQLGenerator(const std::string& table_name) : table_name(table_name) {}
+
+
+std::string SQLGenerator::select(const std::vector<std::string>& fields, const std::string& condition) const {
+    std::string fields_str = "*";
+    if (!fields.empty()) {
+        fields_str = fields[0];
+        for (size_t i = 1; i < fields.size(); ++i) {
+            fields_str += ", " + fields[i];
+        }
+    }
+
+    std::string sql = "SELECT " + fields_str + " FROM " + table_name;
+    if (!condition.empty()) {
+        sql += " WHERE " + condition;
+    }
+    return sql + ";";
+}
+
+
+std::string SQLGenerator::insert(const std::map<std::string, std::string>& data) const {
+    std::ostringstream fields_stream, values_stream;
+
+    for (auto it = data.begin(); it != data.end(); ++it) {
+        if (it != data.begin()) {
+            fields_stream << ", ";
+            values_stream << ", ";
+        }
+        fields_stream << it->first;
+        values_stream << "'" << it->second << "'";
+    }
+
+    std::string sql = "INSERT INTO " + table_name + " (" + fields_stream.str() + ") VALUES (" + values_stream.str() + ")";
+    return sql + ";";
+}
+
+
+std::string SQLGenerator::update(const std::map<std::string, std::string>& data, const std::string& condition) const {
+    std::ostringstream set_clause_stream;
+
+    for (auto it = data.begin(); it != data.end(); ++it) {
+        if (it != data.begin()) {
+            set_clause_stream << ", ";
+        }
+        set_clause_stream << it->first << " = '" << it->second << "'";
+    }
+
+    std::string sql = "UPDATE " + table_name + " SET " + set_clause_stream.str();
+    if (!condition.empty()) {
+        sql += " WHERE " + condition;
+    }
+    return sql + ";";
+}
+
+
+std::string SQLGenerator::delete_query(const std::string& condition) const {
+    std::string sql = "DELETE FROM " + table_name;
+    if (!condition.empty()) {
+        sql += " WHERE " + condition;
+    }
+    return sql + ";";
+}
+
+
+std::string SQLGenerator::select_female_under_age(int age) const {
+    std::string condition = "age < " + std::to_string(age) + " AND gender = 'female'";
+    return select({}, condition);
+}
+
+
+std::string SQLGenerator::select_by_age_range(int min_age, int max_age) const {
+    std::string condition = "age BETWEEN " + std::to_string(min_age) + " AND " + std::to_string(max_age);
+    return select({}, condition);
+}
+
+
+=== REASONING ===
+<think>
+We need to translate this C++ code to Python with identical behavior. The class SQLGenerator has methods: constructor taking table_name, select with optional fields vector and condition string, insert with map<string,string>, update with map and condition, delete_query with condition, select_female_under_age (int age), select_by_age_range (int min,max). Need to keep behavior: strings, concatenation, quoting values with single quotes, etc. In Python, use appropriate types: list for fields, dict for data. Need to handle empty fields (default to "*"), empty condition (omit WHERE). Ensure trailing semicolon. Also note that in C++, insert and update use stringstream to build comma-separated lists. We'll replicate logic.
+
+Also note: C++ map iteration order is not guaranteed (but in practice, it may be alphabetical? Actually std::map is ordered by key. Python dict insertion order is preserved since 3.7. The C++ code uses iterator, not ensuring order? std::map is ordered by key (comparison). For exact same behavior, we should preserve key order? In C++, the order is determined by key comparison, typically alphabetical. In the original code, the order of keys in data map matters for the generated SQL. Using Python dict will preserve insertion order but not alphabetical. To match C++ exactly, we should sort keys alphabetically, because std::map is ordered by key (default less). Need to verify: In C++ std::map iterates in ascending key order. So for exact behavior, we should iterate over sorted keys. But the problem says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". The input data comes from a map (C++ std::map) which is ordered. To mimic that, we need to sort the keys alphabetically when iterating in Python. However, note: The C++ code uses std::map which orders keys by < operator. Python strings sort lexicographically. So we'll sort data.items() by key. Similarly for insert and update.
+
+Edge cases: empty fields list -> "*". empty condition -> no WHERE. In C++, select's fields parameter is passed by value, so we can just check empty list. In insert, no special handling of empty dict? The code will produce "INSERT INTO table_name () VALUES ()" which is invalid SQL, but that's what C++ does. We'll keep that. Similarly update with empty data would produce "UPDATE table SET " with no assignments -> invalid SQL. Keep behavior identical.
+
+Also note: In C++, insert and update use ostringstream and build strings. In Python we'll join with commas.
+
+Select_female_under_age calls select with empty fields and condition string. Note: condition string is "age < " + age + " AND gender = 'female'". Must convert age to string. select returns the full SQL.
+
+Select_by_age_range: condition "age BETWEEN min AND max".
+
+Also note: In select method, if fields is empty, fields_str = "*". Else first field, then join with ", ". That's what we'll do.
+
+Also need to handle cases where fields is not empty but contains strings; we just use them as is.
+
+Implementation plan:
+
+class SQLGenerator:
+    def __init__(self, table_name):
+        self.table_name = table_name
+
+    def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        if not fields:
+            fields_str = "*"
+        else:
+            fields_str = fields[0]
+            for f in fields[1:]:
+                fields_str += ", " + f
+        sql = "SELECT " + fields_str + " FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        return sql + ";"
+
+    def insert(self, data):
+        # data is dict; need to iterate over keys sorted to match std::map order.
+        keys = sorted(data.keys())
+        fields_str = ", ".join(keys)
+        values_str = ", ".join("'" + data[k] + "'" for k in keys)
+        sql = f"INSERT INTO {self.table_name} ({fields_str}) VALUES ({values_str})"
+        return sql + ";"
+
+    def update(self, data, condition):
+        keys = sorted(data.keys())
+        set_clause = ", ".join(f"{k} = '{data[k]}'" for k in keys)
+        sql = f"UPDATE {self.table_name} SET {set_clause}"
+        if condition:
+            sql += " WHERE " + condition
+        return sql + ";"
+
+    def delete_query(self, condition):
+        sql = "DELETE FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        return sql + ";"
+
+    def select_female_under_age(self, age):
+        condition = f"age < {age} AND gender = 'female'"
+        return self.select([], condition)  # fields empty list, condition
+
+    def select_by_age_range(self, min_age, max_age):
+        condition = f"age BETWEEN {min_age} AND {max_age}"
+        return self.select([], condition)
+
+Need to ensure that default parameter for fields in select is None and then set to empty list? The C++ uses default empty vector. In Python, using [] as default is dangerous because it's mutable; better use None and then assign empty list. But also the user might pass an empty list explicitly. That's fine.
+
+Also note: In C++, select takes const std::vector<std::string>& fields, so it can be called with empty list or default. We'll mimic.
+
+Also, the C++ code uses const methods; we don't need to mark const in Python, but behavior is same.
+
+Edge: if fields is None, we treat as empty. If fields is passed as empty list, also empty. So fine.
+
+Now, test with given examples? The problem statement didn't include test cases, but we should ensure no deviations. For instance, the select method: if fields not empty, it constructs string with first field then loop adding ", " + field. That's same as join with ", ". We can use ', '.join(fields) which is simpler but we must keep identical behavior: join with ", " (space after comma). That is exactly what join does. So we can replace with ', '.join(fields). But to match the exact same string building in C++: fields_str = fields[0]; for i=1..n: fields_str += ", " + fields[i]; That's exactly what ', '.join(fields) does. So we can use that. But careful: C++ uses concatenation, but result is same. We'll use join for brevity.
+
+Similarly, in insert: we used sorted keys; that's to match std::map ordering. But is it guaranteed that std::map iterates in order? Yes, it's a ordered associative container, default comparison std::less<Key>. So alphabetical order for strings. So sorting keys alphabetically is correct. However, C++'s std::map ordering is by key, string comparison is lexicographic, which is same as Python's default sort. So we'll sort keys.
+
+But wait: In the C++ code, they iterate with iterator from begin to end, which is in order. So sorted keys is correct.
+
+One nuance: In C++, if the map contains duplicate keys? std::map doesn't allow duplicates; each key is unique. So fine.
+
+Now, what about the condition string in select? In C++, condition is passed by const string ref, default empty. In Python we use empty string default. Fine.
+
+Now, we need to output the code as final answer. The user asked "Translate the following C++ code to Python." So we just provide the Python code. We'll include the class definition and methods. No need for main function or example usage. We'll ensure it's syntactically correct Python 3.
+
+Also, note: C++ code uses std::ostringstream for insert and update. We don't need to replicate that exactly; just produce same string.
+
+Potential pitfalls: In insert, the C++ code uses single quotes around values. Yes. Also, they do not escape single quotes in the values. That's the same as Python: we just add quotes around the value as given. No escaping, so if value contains single quote, the SQL will be broken. That's identical behavior. We can't change it because it's what the C++ code does. So we'll just do it.
+
+Also, note: In select, if fields is empty, they set fields_str = "*". That's fine.
+
+All good.
+
+Now, produce final answer: Python code with class SQLGenerator and methods.
+
+
+</think>
+
+=== RAW ANSWER ===
+```
+class SQLGenerator:
+    def __init__(self, table_name):
+        self.table_name = table_name
+
+    def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        if not fields:
+            fields_str = "*"
+        else:
+            fields_str = ", ".join(fields)
+        sql = "SELECT " + fields_str + " FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        return sql + ";"
+
+    def insert(self, data):
+        keys = sorted(data.keys())
+        fields_str = ", ".join(keys)
+        values_str = ", ".join("'" + data[k] + "'" for k in keys)
+        sql = "INSERT INTO " + self.table_name + " (" + fields_str + ") VALUES (" + values_str + ")"
+        return sql + ";"
+
+    def update(self, data, condition):
+        keys = sorted(data.keys())
+        set_clause = ", ".join(k + " = '" + data[k] + "'" for k in keys)
+        sql = "UPDATE " + self.table_name + " SET " + set_clause
+        if condition:
+            sql += " WHERE " + condition
+        return sql + ";"
+
+    def delete_query(self, condition):
+        sql = "DELETE FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        return sql + ";"
+
+    def select_female_under_age(self, age):
+        condition = "age < " + str(age) + " AND gender = 'female'"
+        return self.select([], condition)
+
+    def select_by_age_range(self, min_age, max_age):
+        condition = "age BETWEEN " + str(min_age) + " AND " + str(max_age)
+        return self.select([], condition)
+```
+
+=== TRANSLATED CODE (py) ===
+class SQLGenerator:
+    def __init__(self, table_name):
+        self.table_name = table_name
+
+    def select(self, fields=None, condition=""):
+        if fields is None:
+            fields = []
+        if not fields:
+            fields_str = "*"
+        else:
+            fields_str = ", ".join(fields)
+        sql = "SELECT " + fields_str + " FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        return sql + ";"
+
+    def insert(self, data):
+        keys = sorted(data.keys())
+        fields_str = ", ".join(keys)
+        values_str = ", ".join("'" + data[k] + "'" for k in keys)
+        sql = "INSERT INTO " + self.table_name + " (" + fields_str + ") VALUES (" + values_str + ")"
+        return sql + ";"
+
+    def update(self, data, condition):
+        keys = sorted(data.keys())
+        set_clause = ", ".join(k + " = '" + data[k] + "'" for k in keys)
+        sql = "UPDATE " + self.table_name + " SET " + set_clause
+        if condition:
+            sql += " WHERE " + condition
+        return sql + ";"
+
+    def delete_query(self, condition):
+        sql = "DELETE FROM " + self.table_name
+        if condition:
+            sql += " WHERE " + condition
+        return sql + ";"
+
+    def select_female_under_age(self, age):
+        condition = "age < " + str(age) + " AND gender = 'female'"
+        return self.select([], condition)
+
+    def select_by_age_range(self, min_age, max_age):
+        condition = "age BETWEEN " + str(min_age) + " AND " + str(max_age)
+        return self.select([], condition)

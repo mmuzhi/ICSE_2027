@@ -1,0 +1,45 @@
+import json
+import sys
+
+
+class CookiesUtil:
+    def __init__(self, cookies_file):
+        self.cookies_file = cookies_file
+        self.cookies = {}
+
+    def get_cookies(self, response):
+        if "cookies" in response:
+            self.cookies = dict(response["cookies"])
+        self._save_cookies()
+
+    def load_cookies(self):
+        cookies_data = None
+        try:
+            f = open(self.cookies_file, "r")
+        except OSError:
+            return None
+        with f:
+            try:
+                cookies_data = json.load(f)
+            except Exception as e:
+                print(f"Error reading JSON file: {e}", file=sys.stderr)
+        return cookies_data
+
+    def _save_cookies(self):
+        try:
+            f = open(self.cookies_file, "w")
+        except OSError:
+            return False
+        with f:
+            try:
+                json.dump(self.cookies, f, indent=4)
+                return True
+            except Exception as e:
+                print(f"Error writing JSON file: {e}", file=sys.stderr)
+                return False
+
+    def set_cookies(self, request):
+        parts = []
+        for key, value in self.cookies.items():
+            parts.append(f"{key}={value}")
+        request["cookies"] = "; ".join(parts)

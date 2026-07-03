@@ -1,0 +1,855 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import org.w3c.dom.*;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.*;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+public class XMLProcessor {
+    private String fileName;
+    private Document document;
+
+    public XMLProcessor(String fileName) {
+        this.fileName = fileName;
+        this.document = null;
+    }
+
+    public Document readXml() {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            this.document = builder.parse(new File(this.fileName));
+            this.document.getDocumentElement().normalize();
+            return this.document;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    public boolean writeXml(String fileName) {
+        if (fileName == null || fileName.isEmpty()) {
+            return false;
+        }
+        try {
+            if (this.document == null) {
+                return false;
+            }
+
+            TransformerFactory transformerFactory = TransformerFactory.newInstance();
+            Transformer transformer = transformerFactory.newTransformer();
+            DOMSource source = new DOMSource(this.document);
+            StreamResult result = new StreamResult(new File(fileName));
+            transformer.transform(source, result);
+            return true;
+        } catch (TransformerException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public boolean processXmlData(String fileName) {
+        if (this.document == null) {
+            return false;
+        }
+
+        NodeList items = this.document.getElementsByTagName("item");
+        for (int i = 0; i < items.getLength(); i++) {
+            Node item = items.item(i);
+            if (item.getNodeType() == Node.ELEMENT_NODE) {
+                Element element = (Element) item;
+                element.setTextContent(element.getTextContent().toUpperCase());
+            }
+        }
+        return writeXml(fileName);
+    }
+
+    public List<Element> findElement(String elementName) {
+        List<Element> elements = new ArrayList<>();
+        if (this.document == null) {
+            return elements;
+        }
+
+        NodeList nodeList = this.document.getElementsByTagName(elementName);
+        for (int i = 0; i < nodeList.getLength(); i++) {
+            if (nodeList.item(i).getNodeType() == Node.ELEMENT_NODE) {
+                elements.add((Element) nodeList.item(i));
+            }
+        }
+        return elements;
+    }
+
+    public Document getDocument() {
+        return document;
+    }
+
+    public void setDocument(Document document) {
+        this.document = document;
+    }
+}
+
+
+=== REASONING ===
+<think>
+The user wants to translate a Java class `XMLProcessor` that uses the DOM API to parse, write, and process XML to C++.
+I need to use a C++ XML library. The most common and standard-like library available is `pugixml` or `tinyxml2`, or `xerces-c`. Since Xerces-C++ is the closest to the Java DOM API (it actually implements the DOM standard), it might be a good choice, but it's very verbose. `pugixml` is much more idiomatic and lightweight, but it doesn't have `NodeList` or `Document` in the exact same way. However, the prompt says "Keep behavior identical... Use idiomatic C++ only when it doesn't change behavior."
+
+Let's look at the Java code:
+- `XMLProcessor` class with `fileName` and `document` (which is a `Document`).
+- `readXml()`: parses the file, normalizes the document element, returns `Document*` (or null on error).
+- `writeXml(String fileName)`: checks if `fileName` is null/empty, if `document` is null, writes to file, returns boolean.
+- `processXmlData(String fileName)`: finds all "item" elements, sets their text content to uppercase, then calls `writeXml(fileName)`.
+- `findElement(String elementName)`: returns a list of Elements matching the tag name.
+- Getters and setters for `document`.
+
+Since C++ doesn't have a built-in XML DOM library in the standard library, I have to pick one. `pugixml` is extremely common for this kind of task in C++. Let's see how we can map the Java concepts to `pugixml`.
+
+Java `Document` -> `pugi::xml_document`
+Java `Element` -> `pugi::xml_node`
+Java `NodeList` -> `pugi::xml_object_range<pugi::xml_named_node_iterator>` or just iterating over `pugi::xml_node` children. Wait, `getElementsByTagName` in pugixml isn't a single simple call, but we can use `select_nodes` (XPath) or just write a small helper, or iterate. Actually, `pugi::xml_node::children()` or `select_nodes("//elementName")`. Wait, XPath requires `pugixml` to be compiled with XPath support. `document.select_nodes(("//" + elementName).c_str())` is an option.
+Alternatively, Xerces-C++ matches the Java DOM API perfectly. Let's consider Xerces-C++.
+Xerces-C++:
+```cpp
+#include <xercesc/parsers/XercesDOMParser.hpp>
+#include <xercesc/dom/DOM.hpp>
+#include <xercesc/framework/LocalFileFormatTarget.hpp>
+#include <xercesc/util/XMLString.hpp>
+```
+Xerces is very heavy and requires XMLString transcoding. It's a pain to write and read.
+
+What about `tinyxml2`?
+```cpp
+#include <tinyxml2.h>
+```
+`tinyxml2::XMLDocument`
+`readXml`: `doc->LoadFile(fileName)`
+`writeXml`: `doc->SaveFile(fileName)`
+`processXmlData`: iterate elements.
+`findElement`: returns a vector of `tinyxml2::XMLElement*`.
+
+`tinyxml2` is much simpler and widely used. Let's map the Java code to `tinyxml2`.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+
+#include "tinyxml2.h"
+
+class XMLProcessor {
+private:
+    std::string fileName;
+    tinyxml2::XMLDocument* document;
+
+public:
+    XMLProcessor(std::string fileName) : fileName(std::move(fileName)), document(nullptr) {}
+
+    // Note: tinyxml2::XMLDocument needs to be allocated on heap if we want to return it or manage it like Java.
+    // But wait, in Java, Document is an interface, we return it. In C++, we can return a pointer.
+    // Let's manage the document internally. 
+    tinyxml2::XMLDocument* readXml() {
+        try {
+            document = new tinyxml2::XMLDocument();
+            tinyxml2::XMLError error = document->LoadFile(fileName.c_str());
+            if (error != tinyxml2::XML_SUCCESS) {
+                std::cerr << "Error parsing XML: " << document->ErrorStr() << std::endl;
+                delete document;
+                document = nullptr;
+                return nullptr;
+            }
+            // normalize() is not needed in tinyxml2
+            return document;
+        } catch (const std::exception& e) {
+            std::cerr << e.what() << std::endl;
+            return nullptr;
+        }
+    }
+
+    bool writeXml(const std::string& fileName) {
+        if (fileName.empty()) {
+            return false;
+        }
+        if (document == nullptr) {
+            return false;
+        }
+        tinyxml2::XMLError error = document->SaveFile(fileName.c_str());
+        if (error != tinyxml2::XML_SUCCESS) {
+            std::cerr << "Error saving XML: " << document->ErrorStr() << std::endl;
+            return false;
+        }
+        return true;
+    }
+
+    static std::string toUpper(const std::string& str) {
+        std::string result = str;
+        std::transform(result.begin(), result.end(), result.begin(),
+                       [](unsigned char c){ return std::toupper(c); });
+        return result;
+    }
+
+    bool processXmlData(const std::string& fileName) {
+        if (document == nullptr) {
+            return false;
+        }
+
+        // tinyxml2 doesn't have getElementsByTagName directly on the document that returns all deeply nested.
+        // But it has FirstChildElement("item") and NextSiblingElement("item").
+        // To get all deeply nested, we might need a recursive function or use tinyxml2's visitor.
+        // Wait, Java's getElementsByTagName retrieves all elements in the document with the given tag name, in document order.
+        // tinyxml2 doesn't have this out of the box. We can write a recursive function or iterate.
+        // Actually, tinyxml2::XMLNode::FirstChildElement, etc.
+    }
+};
+```
+Wait, `pugixml` has `select_nodes` (XPath) which perfectly mimics `getElementsByTagName` if we use `"//item"`.
+But XPath might not be enabled. `pugixml` doesn't have `getElementsByTagName` either.
+Does Xerces-C++ have `getElementsByTagName`? Yes, `DOMDocument::getElementsByTagName(XMLCh*)`.
+Since the prompt requires "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)", using Xerces-C++ is the most faithful to the DOM API.
+However, writing a full Xerces-C++ implementation is extremely verbose and typically requires a lot of boilerplate for string conversions (`XMLString::transcode`).
+
+Let's look at `pugixml`. `pugi::xml_node::select_nodes` is very convenient.
+But wait, `pugixml` doesn't throw exceptions by default, it returns results.
+Let's implement a recursive helper for `getElementsByTagName` in `tinyxml2` or `pugixml` to avoid XPath dependency, OR just use `pugixml` with XPath since it's a standard feature (and often enabled).
+Wait, if I just use `pugixml` without XPath, I can write a helper:
+```cpp
+std::vector<pugi::xml_node> getElementsByTagName(pugi::xml_node root, const std::string& name) {
+    std::vector<pugi::xml_node> result;
+    for (pugi::xml_node child : root.children()) {
+        if (child.type() == pugi::node_element) {
+            if (child.name() == name) {
+                result.push_back(child);
+            }
+            auto nested = getElementsByTagName(child, name);
+            result.insert(result.end(), nested.begin(), nested.end());
+        }
+    }
+    return result;
+}
+```
+This is simple and doesn't rely on XPath.
+
+Let's stick to `pugixml` as it's very standard, modern C++, and easy to read.
+Wait, `pugixml` uses `pugi::xml_document` which is usually allocated on the stack, but can be on the heap. In Java, `Document` is an object, so in C++ we can use `std::unique_ptr<pugi::xml_document>` or just a raw pointer if we want to match the Java getter/setter exactly. The Java class sets and gets `Document`. If we use `pugi::xml_document*`, we have to manage memory. Let's use `std::unique_ptr<pugi::xml_document>` or just `pugi::xml_document*` to match Java's nullable reference. Since the Java class has `setDocument(Document document)`, passing ownership can be tricky. Let's just use `pugi::xml_document*` and handle deletion in destructor.
+
+Wait, is there any standard C++ XML library? No.
+If I use `tinyxml2`, it's a single header, very popular.
+Let's use `tinyxml2` as it's widely recognized and easy.
+Wait, `tinyxml2` doesn't have `getElementsByTagName` either.
+I'll write a helper function for `tinyxml2`:
+```cpp
+#include <tinyxml2.h>
+#include <string>
+#include <vector>
+#include <iostream>
+#include <algorithm>
+#include <cctype>
+
+class XMLProcessor {
+private:
+    std::string fileName;
+    tinyxml2::XMLDocument* document;
+
+    void getElementsByTagNameHelper(tinyxml2::XMLElement* root, const std::string& elementName, std::vector<tinyxml2::XMLElement*>& elements) {
+        if (root == nullptr) return;
+        if (root->Name() != nullptr && std::string(root->Name()) == elementName) {
+            elements.push_back(root);
+        }
+        for (tinyxml2::XMLElement* child = root->FirstChildElement(); child != nullptr; child = child->NextSiblingElement()) {
+            getElementsByTagNameHelper(child, elementName, elements);
+        }
+    }
+
+public:
+    XMLProcessor(const std::string& fileName) : fileName(fileName), document(nullptr) {}
+
+    ~XMLProcessor() {
+        delete document;
+    }
+
+    // Prevent copying
+    XMLProcessor(const XMLProcessor&) = delete;
+    XMLProcessor& operator=(const XMLProcessor&) = delete;
+
+    tinyxml2::XMLDocument* readXml() {
+        try {
+            document = new tinyxml2::XMLDocument();
+            if (document->LoadFile(fileName.c_str()) != tinyxml2::XML_SUCCESS) {
+                std::cerr << "Error parsing XML file: " << fileName << std::endl;
+                delete document;
+                document = nullptr;
+                return nullptr;
+            }
+            // normalize() doesn't have a direct equivalent in tinyxml2, but it's usually about merging adjacent text nodes.
+            // tinyxml2 doesn't do this, but it handles text nodes fine.
+            return document;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception: " << e.what() << std::endl;
+            return nullptr;
+        }
+    }
+
+    bool writeXml(const std::string& fileName) {
+        if (fileName.empty()) {
+            return false;
+        }
+        if (document == nullptr) {
+            return false;
+        }
+        if (document->SaveFile(fileName.c_str()) != tinyxml2::XML_SUCCESS) {
+            std::cerr << "Error saving XML file: " << fileName << std::endl;
+            return false;
+        }
+        return true;
+    }
+
+    bool processXmlData(const std::string& fileName) {
+        if (document == nullptr) {
+            return false;
+        }
+
+        std::vector<tinyxml2::XMLElement*> items = findElement("item");
+        for (tinyxml2::XMLElement* element : items) {
+            const char* text = element->GetText();
+            if (text != nullptr) {
+                std::string upperText = text;
+                std::transform(upperText.begin(), upperText.end(), upperText.begin(),
+                               [](unsigned char c){ return std::toupper(c); });
+                element->SetText(upperText.c_str());
+            } else {
+                element->SetText("");
+            }
+        }
+        return writeXml(fileName);
+    }
+
+    std::vector<tinyxml2::XMLElement*> findElement(const std::string& elementName) {
+        std::vector<tinyxml2::XMLElement*> elements;
+        if (document == nullptr) {
+            return elements;
+        }
+
+        tinyxml2::XMLElement* root = document->RootElement();
+        if (root != nullptr) {
+            getElementsByTagNameHelper(root, elementName, elements);
+        }
+        return elements;
+    }
+
+    tinyxml2::XMLDocument* getDocument() {
+        return document;
+    }
+
+    void setDocument(tinyxml2::XMLDocument* document) {
+        // Note: If we already have a document, we should delete it to prevent memory leak,
+        // but since Java doesn't have delete, we'll add it for C++ safety.
+        if (this->document != document) {
+            delete this->document;
+            this->document = document;
+        }
+    }
+};
+```
+
+Wait, `element.setTextContent(element.getTextContent().toUpperCase());`
+In Java, `getTextContent()` on an element returns the text of the element and all its descendants.
+In `tinyxml2`, `GetText()` only returns the text of the first child if it's a text node.
+To perfectly match `getTextContent()`, we would need a recursive function.
+Let's write a `getTextContent` and `setTextContent` helper for `tinyxml2::XMLElement`.
+Wait, `setTextContent` in Java removes all children and replaces them with a single text node.
+If the element had mixed content (text and elements), `getTextContent` concatenates them, and `setTextContent` removes the elements and leaves only text.
+This is a crucial behavioral detail!
+Let's implement `getTextContent` and `setTextContent` properly.
+
+```cpp
+std::string getTextContent(tinyxml2::XMLElement* element) {
+    std::string text;
+    for (tinyxml2::XMLNode* node = element->FirstChild(); node != nullptr; node = node->NextSibling()) {
+        if (node->ToText()) {
+            text += node->Value();
+        } else if (node->ToElement()) {
+            text += getTextContent(node->ToElement());
+        }
+    }
+    return text;
+}
+
+void setTextContent(tinyxml2::XMLElement* element, const std::string& text) {
+    // Remove all children
+    while (element->FirstChild()) {
+        element->DeleteChild(element->FirstChild());
+    }
+    // Add new text node
+    element->SetText(text.c_str());
+}
+```
+Wait, `element->SetText()` in tinyxml2 creates a text node as a child. But if there were children, `DeleteChild` removes them. So this matches `setTextContent` behavior.
+
+Let's refine `processXmlData`:
+```cpp
+bool processXmlData(const std::string& fileName) {
+    if (document == nullptr) {
+        return false;
+    }
+
+    std::vector<tinyxml2::XMLElement*> items = findElement("item");
+    for (tinyxml2::XMLElement* element : items) {
+        std::string text = getTextContent(element);
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c){ return std::toupper(c); });
+        setTextContent(element, text);
+    }
+    return writeXml(fileName);
+}
+```
+
+Wait, `getElementsByTagName` in Java searches the *entire* document, including the root.
+My helper `getElementsByTagNameHelper` starts from `document->RootElement()`. What if the root element itself matches the name?
+```cpp
+    std::vector<tinyxml2::XMLElement*> findElement(const std::string& elementName) {
+        std::vector<tinyxml2::XMLElement*> elements;
+        if (document == nullptr) {
+            return elements;
+        }
+
+        tinyxml2::XMLElement* root = document->RootElement();
+        if (root != nullptr) {
+            getElementsByTagNameHelper(root, elementName, elements);
+        }
+        return elements;
+    }
+```
+If `root->Name()` matches, it will be added. This is correct.
+
+What about `readXml`? The Java code catches `Exception e` and prints stack trace, then returns `null`.
+In C++, `tinyxml2::LoadFile` doesn't throw exceptions, it returns error codes. So I should simulate the Java behavior:
+```cpp
+    tinyxml2::XMLDocument* readXml() {
+        try {
+            document = new tinyxml2::XMLDocument();
+            if (document->LoadFile(fileName.c_str()) != tinyxml2::XML_SUCCESS) {
+                std::cerr << "Error parsing XML: " << document->ErrorStr() << std::endl;
+                delete document;
+                document = nullptr;
+                return nullptr;
+            }
+            return document;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception: " << e.what() << std::endl;
+            if (document) {
+                delete document;
+                document = nullptr;
+            }
+            return nullptr;
+        }
+    }
+```
+
+Wait, `writeXml` in Java catches `TransformerException` and prints stack trace, returning `false`.
+In C++, `SaveFile` returns an error code.
+```cpp
+    bool writeXml(const std::string& fileName) {
+        if (fileName.empty()) {
+            return false;
+        }
+        if (document == nullptr) {
+            return false;
+        }
+        try {
+            if (document->SaveFile(fileName.c_str()) != tinyxml2::XML_SUCCESS) {
+                std::cerr << "Error writing XML: " << document->ErrorStr() << std::endl;
+                return false;
+            }
+            return true;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception: " << e.what() << std::endl;
+            return false;
+        }
+    }
+```
+
+What about `findElement`? Java returns `List<Element>`. In C++, `std::vector<tinyxml2::XMLElement*>` is the equivalent.
+What about `getDocument()` and `setDocument()`? Java uses `Document` which is a reference type. C++ uses pointers. `setDocument` should handle memory properly, but since Java doesn't have memory management, C++ must avoid leaks. I added `delete this->document;` in `setDocument` if it's a different pointer.
+
+Let's double check `getTextContent` and `setTextContent` implementation.
+In Java, `getTextContent()` returns the text content of the node. For an Element, it's the concatenation of the text content of all child nodes.
+For a Text node, it's the data.
+```cpp
+std::string getTextContent(tinyxml2::XMLNode* node) {
+    if (node->ToText()) {
+        return node->Value() ? node->Value() : "";
+    }
+    std::string text;
+    for (tinyxml2::XMLNode* child = node->FirstChild(); child != nullptr; child = child->NextSibling()) {
+        text += getTextContent(child);
+    }
+    return text;
+}
+```
+This is more accurate.
+
+```cpp
+void setTextContent(tinyxml2::XMLElement* element, const std::string& text) {
+    while (element->FirstChild()) {
+        element->DeleteChild(element->FirstChild());
+    }
+    element->SetText(text.c_str());
+}
+```
+This correctly removes all children and sets the text content.
+
+Wait, `tinyxml2::XMLElement::SetText` will add a text node. But if `text` is empty, does it add an empty text node?
+`element->SetText("")` adds an empty text node. In Java, `setTextContent("")` removes all children and sets the text content to empty string. This is consistent.
+
+Wait, are there any issues with `getElementsByTagNameHelper`?
+In Java, `NodeList` is returned. `NodeList.item(i)` returns `Node`. If it's an `Element`, it's cast.
+In my C++ code, `findElement` returns `std::vector<tinyxml2::XMLElement*>`. This perfectly matches `List<Element>` in Java.
+
+What about `document.getDocumentElement().normalize()`?
+`normalize()` in Java merges adjacent Text nodes and removes empty Text nodes.
+`tinyxml2` does not have a `normalize` method. However, usually, parsing an XML file in `tinyxml2` doesn't create adjacent text nodes unless the file has CDATA sections mixed with text, which is rare. For the sake of translation, we can skip it or implement a basic normalize. Given that it doesn't change behavior for typical XMLs, skipping it is acceptable, but I can add a comment.
+
+Let's review the Java code again:
+```java
+    public boolean processXmlData(String fileName) {
+        if (this.document == null) {
+            return false;
+        }
+
+        NodeList items = this.document.getElementsByTagName("item");
+        for (int i = 0; i < items.getLength(); i++) {
+            Node item = items.item(i);
+            if (item.getNodeType() == Node.ELEMENT_NODE) {
+                Element element = (Element) item;
+                element.setTextContent(element.getTextContent().toUpperCase());
+            }
+        }
+        return writeXml(fileName);
+    }
+```
+In my C++ code:
+```cpp
+    bool processXmlData(const std::string& fileName) {
+        if (document == nullptr) {
+            return false;
+        }
+
+        std::vector<tinyxml2::XMLElement*> items = findElement("item");
+        for (tinyxml2::XMLElement* element : items) {
+            std::string text = getTextContent(element);
+            std::transform(text.begin(), text.end(), text.begin(),
+                           [](unsigned char c){ return std::toupper(c); });
+            setTextContent(element, text);
+        }
+        return writeXml(fileName);
+    }
+```
+This is identical in behavior.
+
+Let's review `writeXml`:
+```java
+    public boolean writeXml(String fileName) {
+        if (fileName == null || fileName.isEmpty()) {
+            return false;
+        }
+```
+In C++, `std::string` cannot be null, but it can be empty. If the parameter is passed as `const std::string&`, it's always valid. If we want to strictly check for null, we could use `std::optional<std::string>` or `const char*`, but `const std::string&` is more idiomatic C++ and checking `empty()` covers the `isEmpty()` case. The `null` check in Java is to prevent `NullPointerException`. In C++, passing a null to `std::string` constructor is undefined, but we can just check `fileName.empty()`.
+
+Wait, if `fileName` is passed as `const char*`, we could check for `nullptr`.
+```cpp
+    bool writeXml(const char* fileName) {
+        if (fileName == nullptr || fileName[0] == '\0') {
+            return false;
+        }
+        ...
+    }
+```
+This exactly matches the null and empty checks of Java. Let's use `const std::string&` but check `empty()`. Or `const char*`. `const std::string&` is safer and more idiomatic. I'll use `const std::string&` and check `empty()`. Wait, the Java method takes `String fileName`. In C++, `const std::string&` is the standard equivalent. I'll just check `fileName.empty()`.
+
+Wait, what if `document` is null in `writeXml`?
+```java
+            if (this.document == null) {
+                return false;
+            }
+```
+C++: `if (document == nullptr) return false;`
+
+What about `TransformerException` in `writeXml`?
+```java
+        } catch (TransformerException e) {
+            e.printStackTrace();
+            return false;
+
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <iostream>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+
+#include "tinyxml2.h"
+
+class XMLProcessor {
+private:
+    std::string fileName;
+    tinyxml2::XMLDocument* document;
+
+    std::string getTextContent(tinyxml2::XMLNode* node) {
+        if (node->ToText()) {
+            return node->Value() ? node->Value() : "";
+        }
+        std::string text;
+        for (tinyxml2::XMLNode* child = node->FirstChild(); child != nullptr; child = child->NextSibling()) {
+            text += getTextContent(child);
+        }
+        return text;
+    }
+
+    void setTextContent(tinyxml2::XMLElement* element, const std::string& text) {
+        while (element->FirstChild()) {
+            element->DeleteChild(element->FirstChild());
+        }
+        element->SetText(text.c_str());
+    }
+
+    void getElementsByTagNameHelper(tinyxml2::XMLElement* root, const std::string& elementName, std::vector<tinyxml2::XMLElement*>& elements) {
+        if (root == nullptr) return;
+        if (root->Name() != nullptr && std::string(root->Name()) == elementName) {
+            elements.push_back(root);
+        }
+        for (tinyxml2::XMLElement* child = root->FirstChildElement(); child != nullptr; child = child->NextSiblingElement()) {
+            getElementsByTagNameHelper(child, elementName, elements);
+        }
+    }
+
+public:
+    XMLProcessor(const std::string& fileName) : fileName(fileName), document(nullptr) {}
+
+    ~XMLProcessor() {
+        delete document;
+    }
+
+    XMLProcessor(const XMLProcessor&) = delete;
+    XMLProcessor& operator=(const XMLProcessor&) = delete;
+
+    tinyxml2::XMLDocument* readXml() {
+        try {
+            document = new tinyxml2::XMLDocument();
+            if (document->LoadFile(fileName.c_str()) != tinyxml2::XML_SUCCESS) {
+                std::cerr << "Error parsing XML: " << document->ErrorStr() << std::endl;
+                delete document;
+                document = nullptr;
+                return nullptr;
+            }
+            return document;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception: " << e.what() << std::endl;
+            if (document) {
+                delete document;
+                document = nullptr;
+            }
+            return nullptr;
+        }
+    }
+
+    bool writeXml(const std::string& fileName) {
+        if (fileName.empty()) {
+            return false;
+        }
+        if (document == nullptr) {
+            return false;
+        }
+        try {
+            if (document->SaveFile(fileName.c_str()) != tinyxml2::XML_SUCCESS) {
+                std::cerr << "Error writing XML: " << document->ErrorStr() << std::endl;
+                return false;
+            }
+            return true;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    bool processXmlData(const std::string& fileName) {
+        if (document == nullptr) {
+            return false;
+        }
+
+        std::vector<tinyxml2::XMLElement*> items = findElement("item");
+        for (tinyxml2::XMLElement* element : items) {
+            std::string text = getTextContent(element);
+            std::transform(text.begin(), text.end(), text.begin(),
+                           [](unsigned char c){ return std::toupper(c); });
+            setTextContent(element, text);
+        }
+        return writeXml(fileName);
+    }
+
+    std::vector<tinyxml2::XMLElement*> findElement(const std::string& elementName) {
+        std::vector<tinyxml2::XMLElement*> elements;
+        if (document == nullptr) {
+            return elements;
+        }
+
+        tinyxml2::XMLElement* root = document->RootElement();
+        if (root != nullptr) {
+            getElementsByTagNameHelper(root, elementName, elements);
+        }
+        return elements;
+    }
+
+    tinyxml2::XMLDocument* getDocument() {
+        return document;
+    }
+
+    void setDocument(tinyxml2::XMLDocument* document) {
+        if (this->document != document) {
+            delete this->document;
+            this->document = document;
+        }
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <iostream>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+
+#include "tinyxml2.h"
+
+class XMLProcessor {
+private:
+    std::string fileName;
+    tinyxml2::XMLDocument* document;
+
+    std::string getTextContent(tinyxml2::XMLNode* node) {
+        if (node->ToText()) {
+            return node->Value() ? node->Value() : "";
+        }
+        std::string text;
+        for (tinyxml2::XMLNode* child = node->FirstChild(); child != nullptr; child = child->NextSibling()) {
+            text += getTextContent(child);
+        }
+        return text;
+    }
+
+    void setTextContent(tinyxml2::XMLElement* element, const std::string& text) {
+        while (element->FirstChild()) {
+            element->DeleteChild(element->FirstChild());
+        }
+        element->SetText(text.c_str());
+    }
+
+    void getElementsByTagNameHelper(tinyxml2::XMLElement* root, const std::string& elementName, std::vector<tinyxml2::XMLElement*>& elements) {
+        if (root == nullptr) return;
+        if (root->Name() != nullptr && std::string(root->Name()) == elementName) {
+            elements.push_back(root);
+        }
+        for (tinyxml2::XMLElement* child = root->FirstChildElement(); child != nullptr; child = child->NextSiblingElement()) {
+            getElementsByTagNameHelper(child, elementName, elements);
+        }
+    }
+
+public:
+    XMLProcessor(const std::string& fileName) : fileName(fileName), document(nullptr) {}
+
+    ~XMLProcessor() {
+        delete document;
+    }
+
+    XMLProcessor(const XMLProcessor&) = delete;
+    XMLProcessor& operator=(const XMLProcessor&) = delete;
+
+    tinyxml2::XMLDocument* readXml() {
+        try {
+            document = new tinyxml2::XMLDocument();
+            if (document->LoadFile(fileName.c_str()) != tinyxml2::XML_SUCCESS) {
+                std::cerr << "Error parsing XML: " << document->ErrorStr() << std::endl;
+                delete document;
+                document = nullptr;
+                return nullptr;
+            }
+            return document;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception: " << e.what() << std::endl;
+            if (document) {
+                delete document;
+                document = nullptr;
+            }
+            return nullptr;
+        }
+    }
+
+    bool writeXml(const std::string& fileName) {
+        if (fileName.empty()) {
+            return false;
+        }
+        if (document == nullptr) {
+            return false;
+        }
+        try {
+            if (document->SaveFile(fileName.c_str()) != tinyxml2::XML_SUCCESS) {
+                std::cerr << "Error writing XML: " << document->ErrorStr() << std::endl;
+                return false;
+            }
+            return true;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    bool processXmlData(const std::string& fileName) {
+        if (document == nullptr) {
+            return false;
+        }
+
+        std::vector<tinyxml2::XMLElement*> items = findElement("item");
+        for (tinyxml2::XMLElement* element : items) {
+            std::string text = getTextContent(element);
+            std::transform(text.begin(), text.end(), text.begin(),
+                           [](unsigned char c){ return std::toupper(c); });
+            setTextContent(element, text);
+        }
+        return writeXml(fileName);
+    }
+
+    std::vector<tinyxml2::XMLElement*> findElement(const std::string& elementName) {
+        std::vector<tinyxml2::XMLElement*> elements;
+        if (document == nullptr) {
+            return elements;
+        }
+
+        tinyxml2::XMLElement* root = document->RootElement();
+        if (root != nullptr) {
+            getElementsByTagNameHelper(root, elementName, elements);
+        }
+        return elements;
+    }
+
+    tinyxml2::XMLDocument* getDocument() {
+        return document;
+    }
+
+    void setDocument(tinyxml2::XMLDocument* document) {
+        if (this->document != document) {
+            delete this->document;
+            this->document = document;
+        }
+    }
+};

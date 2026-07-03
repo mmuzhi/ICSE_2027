@@ -1,0 +1,191 @@
+=== SOURCE CODE (cpp) ===
+#include <string>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+#include <time.h>
+
+class TimeUtils {
+public:
+    TimeUtils();
+
+    std::string get_current_time() const;
+    std::string get_current_date() const;
+    std::string add_seconds(int seconds);
+    std::tm string_to_datetime(const std::string& str) const;
+    std::string datetime_to_string(const std::tm& datetime) const;
+    int get_minutes(const std::string& string_time1, const std::string& string_time2) const;
+    std::string get_format_time(int year, int month, int day, int hour, int minute, int second) const;
+
+    std::tm datetime;
+
+};
+
+TimeUtils::TimeUtils() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    datetime = *std::localtime(&time_t_now);
+}
+
+std::string TimeUtils::get_current_time() const {
+    std::stringstream ss;
+    ss << std::put_time(&datetime, "%H:%M:%S");
+    return ss.str();
+}
+
+std::string TimeUtils::get_current_date() const {
+    std::stringstream ss;
+    ss << std::put_time(&datetime, "%Y-%m-%d");
+    return ss.str();
+}
+
+std::string TimeUtils::add_seconds(int seconds) {
+    auto time_t_now = std::mktime(const_cast<std::tm*>(&datetime));
+    time_t_now += seconds;
+    std::tm new_datetime = *std::localtime(&time_t_now);
+    datetime = new_datetime;
+    std::stringstream ss;
+    ss << std::put_time(&new_datetime, "%H:%M:%S");
+    return ss.str();
+}
+
+std::tm TimeUtils::string_to_datetime(const std::string& str) const {
+    std::tm tm = {};
+    std::istringstream ss(str);
+    ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return tm;
+}
+
+std::string TimeUtils::datetime_to_string(const std::tm& datetime) const {
+    std::stringstream ss;
+    ss << std::put_time(&datetime, "%Y-%m-%d %H:%M:%S");
+    return ss.str();
+}
+
+int TimeUtils::get_minutes(const std::string& string_time1, const std::string& string_time2) const {
+    std::tm time1 = string_to_datetime(string_time1);
+    std::tm time2 = string_to_datetime(string_time2);
+
+    auto time_t1 = std::mktime(&time1);
+    auto time_t2 = std::mktime(&time2);
+
+    return std::difftime(time_t2, time_t1) / 60;
+}
+
+std::string TimeUtils::get_format_time(int year, int month, int day, int hour, int minute, int second) const {
+    std::tm tm = {};
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = minute;
+    tm.tm_sec = second;
+
+    std::stringstream ss;
+    ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return ss.str();
+}
+
+
+=== REASONING ===
+<think>
+We need to translate the given C++ class TimeUtils to Python. The class has a member variable `datetime` of type `std::tm` and methods that use it. Python has similar time handling via `datetime` module.
+
+Key points:
+- Constructor: initializes `datetime` to current local time (using std::chrono and localtime). Python: `datetime.now()`.
+- get_current_time: returns string "%H:%M:%S" from stored datetime.
+- get_current_date: returns "%Y-%m-%d".
+- add_seconds(int seconds): modifies stored datetime by adding seconds, returns new time string "%H:%M:%S". Note: modifies the instance state.
+- string_to_datetime: parses string "%Y-%m-%d %H:%M:%S" into a tm-like object (Python datetime). Returns that object (not stored).
+- datetime_to_string: converts a given tm/datetime to string "%Y-%m-%d %H:%M:%S".
+- get_minutes: takes two date-time strings, parses them, returns difference in minutes (time2-time1). Using difftime (which returns seconds) then /60. So float? In C++ difftime returns double, but here they cast to int from division. Actually `return std::difftime(time_t2, time_t1) / 60;` uses integer division? In C++, if both operands are arithmetic, division yields double? Actually `std::difftime` returns double, and then dividing by 60 yields double. Then returning int implicitly converts double to int (truncation). But the function returns int. So it truncates toward zero. We'll replicate: int(math.floor?) Actually implicit conversion truncates toward zero for positive? difftime can be negative if time2 < time1. In C++, converting double to int truncates toward zero (C++ standard). We'll do `int(diff.total_seconds() / 60)` or `int(diff / timedelta(minutes=1))` to mimic truncation. But careful: Python's `//` is floor division, not truncation for negatives. Better use `int(...)` which truncates toward zero. Use `int(diff.total_seconds() / 60)` since total_seconds() returns float, division gives float, int truncates toward zero. That matches C++ behavior? C++ conversion double to int truncates toward zero. Yes. So we can do `int(diff.total_seconds() / 60)`.
+- get_format_time: takes year, month, day, hour, minute, second, constructs a tm, returns formatted string "%Y-%m-%d %H:%M:%S". Similar to datetime_to_string but from components.
+
+Edge cases: 
+- The class uses `std::tm` directly and seems to store a copy in the class. In Python, we'll store a `datetime` object (naive local time). But note: `datetime.now()` returns local time without timezone info. So similar to localtime.
+- In add_seconds: it modifies self.datetime and returns the new time string. We must do that.
+- In string_to_datetime: uses `std::get_time` which is locale-dependent but here format is fixed. Python's `datetime.strptime` with same format.
+- In get_minutes: string_to_datetime returns a tm, then mktime converts to time_t. In Python, parsing yields a datetime, then we can subtract to get timedelta.
+- In get_format_time: similar to constructing a datetime from components.
+
+Important: Keep same behavior, including side effects (mutable state), exceptions? In C++, string_to_datetime might throw if parsing fails? `std::get_time` returns an error state but doesn't throw. In Python, `strptime` raises ValueError on invalid input. That's a difference. C++ code doesn't handle errors; it just returns a possibly zero-initialized tm on failure? Actually `std::get_time` sets failbit, but the returned tm may be unchanged. In Python we'll also raise exception – that changes behavior? The C++ code assumes valid input. Since we need identical behavior, we should mimic: if parsing fails, we should return a default-constructed tm. In C++, `std::tm tm = {};` initializes to zero. Then `ss >> std::get_time` may fail, leaving tm unchanged (all zeros). So we should catch ValueError and return a datetime with all zeros? But Python's datetime can't have all zeros easily. Alternatively, we can simulate by returning a "default" datetime equivalent to epoch? The C++ default tm (all zeros) corresponds to 1900-01-01 00:00:00? Actually tm_year=0 means 1900, tm_mon=0 Jan, tm_mday=0? tm_mday=0 is invalid (1-31). In C++ tm_mday=0 is allowed but meaning? Typically tm_mday starts at 1. So it's not a valid date. But the C++ code doesn't validate. We need to return an object that, when used later, might cause undefined behavior. For simplicity, we could raise an exception same as Python's default behavior; but that would change behavior. To be identical, we must handle failure gracefully and return a tm-like object with zero fields. Python datetime doesn't allow zero day. We could use a namedtuple or custom class? But that's overkill. Since the C++ code is likely used with valid inputs, and the task says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". We should replicate the C++ behavior exactly, including the fact that invalid input leaves the tm unchanged (zeroes). In Python, we could try to parse and on ValueError return a `datetime` with year=1900, month=1, day=1, hour=0, minute=0, second=0? That's not same as all zeros for month and day. Actually the original C++ default tm: year=0 (1900), month=0 (Jan), day=0, hour=0, min=0, sec=0. That's not a valid datetime. Python's datetime min is year=1, but we can create a `datetime` object with day=1? No, days start at 1. So we cannot exactly represent all zeros. This is a tricky edge case. Probably the C++ code expects valid strings. For translation, we can assume valid inputs and not handle errors. But the task says "Keep behavior identical ... exceptions". So we need to decide.
+
+Looking at the code: `string_to_datetime` is used only in `get_minutes`. If parsing fails, it will return a zero-initialized tm, then `mktime` will be called on it. `mktime` can handle out-of-range values by normalizing? Actually `mktime` may return -1 on error (or set errno).
+</think>
+
+=== RAW ANSWER ===
+```
+import datetime
+import time
+
+class TimeUtils:
+    def __init__(self):
+        self.datetime = datetime.datetime.now()
+
+    def get_current_time(self):
+        return self.datetime.strftime("%H:%M:%S")
+
+    def get_current_date(self):
+        return self.datetime.strftime("%Y-%m-%d")
+
+    def add_seconds(self, seconds):
+        self.datetime += datetime.timedelta(seconds=seconds)
+        return self.datetime.strftime("%H:%M:%S")
+
+    def string_to_datetime(self, str_):
+        try:
+            return datetime.datetime.strptime(str_, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return datetime.datetime(1900, 1, 1, 0, 0, 0)
+
+    def datetime_to_string(self, dt):
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    def get_minutes(self, string_time1, string_time2):
+        dt1 = self.string_to_datetime(string_time1)
+        dt2 = self.string_to_datetime(string_time2)
+        diff = dt2 - dt1
+        return int(diff.total_seconds() / 60)
+
+    def get_format_time(self, year, month, day, hour, minute, second):
+        dt = datetime.datetime(year, month, day, hour, minute, second)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+```
+
+=== TRANSLATED CODE (py) ===
+import datetime
+import time
+
+class TimeUtils:
+    def __init__(self):
+        self.datetime = datetime.datetime.now()
+
+    def get_current_time(self):
+        return self.datetime.strftime("%H:%M:%S")
+
+    def get_current_date(self):
+        return self.datetime.strftime("%Y-%m-%d")
+
+    def add_seconds(self, seconds):
+        self.datetime += datetime.timedelta(seconds=seconds)
+        return self.datetime.strftime("%H:%M:%S")
+
+    def string_to_datetime(self, str_):
+        try:
+            return datetime.datetime.strptime(str_, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return datetime.datetime(1900, 1, 1, 0, 0, 0)
+
+    def datetime_to_string(self, dt):
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    def get_minutes(self, string_time1, string_time2):
+        dt1 = self.string_to_datetime(string_time1)
+        dt2 = self.string_to_datetime(string_time2)
+        diff = dt2 - dt1
+        return int(diff.total_seconds() / 60)
+
+    def get_format_time(self, year, month, day, hour, minute, second):
+        dt = datetime.datetime(year, month, day, hour, minute, second)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")

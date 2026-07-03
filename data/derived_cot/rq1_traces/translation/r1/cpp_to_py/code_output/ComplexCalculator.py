@@ -1,0 +1,38 @@
+class ComplexCalculator:
+    @staticmethod
+    def add(c1, c2):
+        real = c1.real + c2.real
+        imag = c1.imag + c2.imag
+        return complex(real, imag)
+    
+    @staticmethod
+    def subtract(c1, c2):
+        real = c1.real - c2.real
+        imag = c1.imag - c2.imag
+        return complex(real, imag)
+    
+    @staticmethod
+    def multiply(c1, c2):
+        real = c1.real * c2.real - c1.imag * c2.imag
+        imag = c1.real * c2.imag + c1.imag * c2.real
+        return complex(real, imag)
+    
+    @staticmethod
+    def divide(c1, c2):
+        denominator = c2.real * c2.real + c2.imag * c2.imag
+        if denominator == 0.0:
+            num_real = c1.real * c2.real + c1.imag * c2.imag
+            num_imag = c1.imag * c2.real - c1.real * c2.imag
+            
+            def compute_part(x):
+                if x == 0.0:
+                    return float('nan')
+                return float('inf') if x > 0.0 else float('-inf')
+            
+            real = compute_part(num_real)
+            imag = compute_part(num_imag)
+            return complex(real, imag)
+        else:
+            real = (c1.real * c2.real + c1.imag * c2.imag) / denominator
+            imag = (c1.imag * c2.real - c1.real * c2.imag) / denominator
+            return complex(real, imag)

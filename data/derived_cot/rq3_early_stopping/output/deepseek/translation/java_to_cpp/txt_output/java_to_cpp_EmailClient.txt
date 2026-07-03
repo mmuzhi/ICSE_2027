@@ -1,0 +1,432 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+
+class EmailClient {
+    private String addr;
+    private double capacity;
+    private List<Map<String, Object>> inbox;
+
+    public EmailClient(String addr, double capacity) {
+        this.addr = addr;
+        this.capacity = capacity;
+        this.inbox = new ArrayList<>();
+    }
+
+    public boolean sendTo(EmailClient recv, String content, double size) {
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            Map<String, Object> email = new HashMap<>();
+            email.put("sender", this.addr);
+            email.put("receiver", recv.addr);
+            email.put("content", content);
+            email.put("size", size);
+            email.put("time", timestamp);
+            email.put("state", "unread");
+            recv.inbox.add(email);
+            return true;
+        }
+        else {
+            this.clearInbox(size);
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size); // Retry sending after clearing
+        }
+    }
+
+    public Map<String, Object> fetch() {
+        if (this.inbox.isEmpty()) {
+            return null;
+        }
+        for (Map<String, Object> email : this.inbox) {
+            if ("unread".equals(email.get("state"))) {
+                email.put("state", "read");
+                return email;
+            }
+        }
+        return null;
+    }
+
+    public boolean isFullWithOneMoreEmail(double size) {
+        double occupiedSize = this.getOccupiedSize();
+        return occupiedSize + size > this.capacity;
+    }
+
+    public double getOccupiedSize() {
+        double occupiedSize = 0;
+        for (Map<String, Object> email : this.inbox) {
+            Object sizeObj = email.get("size");
+            if (sizeObj instanceof Number) {
+                occupiedSize += ((Number) sizeObj).doubleValue();
+            }
+        }
+        return occupiedSize;
+    }
+
+    public void clearInbox(double size) {
+        if (this.addr.isEmpty()) {
+            return;
+        }
+        double freedSpace = 0;
+        while (freedSpace < size && !this.inbox.isEmpty()) {
+            Map<String, Object> email = this.inbox.remove(0);
+            Object sizeObj = email.get("size");
+            if (sizeObj instanceof Number) {
+                freedSpace += ((Number) sizeObj).doubleValue();
+            }
+        }
+    }
+
+    public List<Map<String, Object>> getInbox() {
+        return this.inbox;
+    }
+
+    public void setInbox(List<Map<String, Object>> inbox) {
+        this.inbox = inbox;
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++. The Java code defines an EmailClient class with fields: addr (String), capacity (double), inbox (List<Map<String, Object>>). Methods: constructor, sendTo, fetch, isFullWithOneMoreEmail, getOccupiedSize, clearInbox, getInbox, setInbox.
+
+Key points:
+- Java uses `List<Map<String, Object>>` for inbox. In C++, we can use `std::vector<std::map<std::string, std::any>>` or similar. However, `std::any` is C++17. Alternative: use `std::map<std::string, std::variant<...>>` but we need to handle strings, doubles, etc. Since the code uses `Object` for values, we could use `std::any` or `std::variant<std::string, double, ...>` but simpler: use `std::map<std::string, std::any>` (C++17). We'll assume C++17 is available. Or we could use a custom struct for email. But to keep behavior identical especially with type checks like `instanceof Number`, we need to mimic that. In Java, `sizeObj instanceof Number` returns true for Double, Integer, etc. In C++, we could use `std::any_cast` and try to cast to double, or check type. Simpler: we can store size as double always. In Java, they store size as double (it's passed as double). So we can store as double. Similarly, timestamp and state are strings. So we can define a struct or use map<string, any> but then we need to handle type erasure.
+
+Given the simplicity of the data: sender, receiver, content, size (double), time (string), state (string). So we could define a struct `Email` with those fields. But the Java code uses Map<String, Object> to store them, and uses email.get("size") etc. In C++, if we use a map of string to any, we need to handle retrieving values with any_cast. This is doable but adds complexity.
+
+However, the requirement: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions). Use idiomatic C++ only when it doesn't change behavior." We can choose to implement a struct `Email` that represents the same data, and replace the map with a struct. But then the method signatures that return `Map<String, Object>` would need to change. The `fetch()` method returns a map, `getInbox()` returns list of maps, `clearInbox` and `sendTo` work with maps. So if we change the internal representation, we must ensure that external behavior (return types) remain the same as Java? In Java, the method returns a Map. The translation to C++ should preserve the interface: functions that return map, etc. But in C++, we could return a `std::map<std::string, std::any>`. That would be a direct translation. The user may expect the same interface.
+
+Given that it's a translation from Java to C++, it's reasonable to keep the same structure: a class with a vector of maps. We'll use `std::map<std::string, std::any>`.
+
+But note: Java's `Map<String, Object>` is mutable. In C++, `std::map<std::string, std::any>` is also mutable. So we can mimic the exact behavior.
+
+We need to handle the `sizeObj instanceof Number` check. In C++, we can check if `std::any` holds a double, or if it holds an int, and convert to double. Since size is always passed as double in the code, we know it's double. But to be safe, we'll attempt to get as double; if it's int, we can cast. However, in Java, Number is an abstract class; any numeric wrapper (Integer, Double, etc.) works. In C++, we can use `std::any_cast<double>` and if it throws, try `std::any_cast<int>` and convert to double. Or we could store size always as double.
+
+But in `clearInbox`, they do `Object sizeObj = email.get("size");` and then `if (sizeObj instanceof Number) { freedSpace += ((Number) sizeObj).doubleValue(); }` So we need to handle any numeric type. For simplicity, we can store the size as double in the map (since the input is double). So we can assume it's double. That would be identical behavior for this use case. But to be robust, we can use a helper function to extract numeric value from any (try double, int, float, etc.). However, the Java code is only called with double values for size, so it's fine.
+
+We'll also need `LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))`. In C++, we can use `<chrono>` and `<iomanip>` or `std::put_time`. Example: get current time as `std::time_t`, convert to `std::tm`, then format with `strftime`. Alternatively use C++20 `<format>`, but we'll use C++11/14 compatible: `std::time_t t = std::time(nullptr); std::tm tm = *std::localtime(&t); char buf[20]; std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);` then convert to string.
+
+We'll need to include headers: `<vector>`, `<map>`, `<string>`, `<any>`, `<ctime>`, `<iostream>` (maybe not needed), `<stdexcept>` for any_cast exceptions.
+
+We'll also need to handle the access to `addr` and `recv.addr` from within the class. In C++, we can make `addr` private, and provide getters if needed, but for simplicity we can keep them public or use friend? In Java, they access `this.addr` and `recv.addr` directly because they are in the same class. In C++, private members are accessible within the class, so `recv.addr` is allowed within a member function of the same class. So that's fine.
+
+We'll implement methods similarly.
+
+Edge cases: 
+- `fetch` returns a pointer to the map? In Java, it returns a reference to the map (since Map is an object). In C++, returning a map by value would copy. We should return a `std::map<std::string, std::any>` by value? But the Java code returns the actual map object (mutable reference) and then the caller can modify it? In Java, the map is mutable, and returning a reference means the caller can modify the map inside the inbox. However, in the `fetch` method, they modify the email map by setting state to "read". If we return a copy, changes won't affect the original. So we need to return a reference or pointer. In Java, the method returns `Map<String, Object>`, which is a reference to the actual map object. In C++, we can return a `std::map<std::string, std::any>&` if the map is stored in the inbox vector (since `fetch` returns an email from inbox). So we should return a reference to the map in the vector. But careful: the vector may be resized or invalidated; but within fetch, we are not modifying the vector. Returning a reference is fine. However, the method signature in Java returns `Map<String, Object>`, which is an interface; in C++ we return a reference to std::map. But we need to return a pointer if we want null. In Java, it returns null when inbox is empty or no unread. In C++, we can return `std::optional<std::map<std::string, std::any>&>` or return a pointer (nullptr). Simpler: return a pointer to the map. But then the caller might modify via pointer. Or we can return a reference and throw an exception? No, need to match behavior.
+
+Better to return a pointer to the map (raw pointer). That's similar to Java's null. But in C++, returning a raw pointer is acceptable. So `std::map<std::string, std::any>* fetch()`.
+
+Alternatively, we could return a `std::optional<std::reference_wrapper<std::map<std::string, std::any>>>` but that's heavy. Raw pointer is fine.
+
+But note: in Java, the returned map is the actual object; any modifications (like `email.put("state", "read")`) are seen by the caller because they share the same reference. Using a pointer allows that.
+
+Thus we'll return `std::map<std::string, std::any>*`.
+
+Similarly, `getInbox` returns a reference to the list? In Java, `List<Map<String, Object>> getInbox()` returns a reference to the list. In C++, we can return `std::vector<std::map<std::string, std::any>>&` to avoid copying. That's fine.
+
+`setInbox` takes a `List<Map<String, Object>> inbox`. In Java, it's a reference assignment. In C++, we can take a `const std::vector<std::map<std::string, std::any>>&` and copy it, or take by value. To match Java's behavior (which assigns the reference), we can just assign the member to the parameter (by copy). But in Java, the caller's list is not aliased? Actually, Java passes reference, so the member variable points to the same list object. In C++, if we take by reference and assign, we'd have to store a reference? That's tricky. Better to take by value (copy) or by const reference and then copy. The Java code is: `this.inbox = inbox;` where inbox is a parameter of type `List<Map<String, Object>>`. This assigns the reference. In C++, if we want the same semantics (i.e., the member points to the same underlying vector), we'd use `std::shared_ptr` or something. But that's overkill. The original Java code is likely used in a way that the caller may modify the list after passing to setInbox? Possibly. To be safe, we can store a copy. But behavior might differ if the caller modifies the original list after.
+
+Given typical usage, I'll assume that the setInbox is just a setter, and the passed list is not modified afterwards (or it's okay to copy). However, to exactly match Java's behavior (where the member variable is a reference to the same list object), we would need to use `std::shared_ptr` or a reference member (but references can't be reassigned). The cleanest is to take a vector by value and move it into the member. That is what `std::move` does. In Java, after assignment, the original list variable still points to the same object; if someone modifies the list through the original reference, the change is visible to the EmailClient. In C++, if we copy, that won't happen. That is a behavior difference. To avoid this, we could store a `std::shared_ptr<std::vector<...>>` and have setInbox take a shared_ptr. But that changes the interface.
+
+Given the context is a translation exercise, and the Java code is not using any external modifications, it might be safe to copy. I'll note that we are keeping behavior identical, but copying changes behavior if the caller expects aliasing. However, typical Java code using simple setters does not rely on aliasing. I'll go with copying for simplicity. But we can also implement using a pointer member. I'll think: the C++ code will be used similarly; if the user expects the inbox to be modifiable from outside after setInbox, they'd need to use the returned reference from getInbox. setInbox is just a setter, often used to replace the whole list. So copying is fine.
+
+Given the instructions: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)." So we need to be careful. I'll choose to implement `setInbox` by taking a const reference and copying, and `getInbox` returns a const reference (or non-const). In Java, `getInbox` returns a reference to the list, and the caller can modify it. We can return a non-const reference as well. That is fine.
+
+For `clearInbox`, they remove the first element while freedSpace < size and inbox not empty. In Java, `this.inbox.remove(0)` removes the first. In C++, we can use `this->inbox.erase(this->inbox.begin())` or pop front if we use deque? But we use vector, so erase from front is O(n). That matches Java's ArrayList which is also O(n) due to shifting. So fine.
+
+For `sendTo`, it recursively calls itself after clearing inbox. That's fine.
+
+Now, about `containsKey`? Not used, they use `email.get("size")` and check null? In Java, `Map.get` returns null if key not present. In C++, `std::map::operator[]` inserts a default value if key not present, which is bad. We should use `find()` or `at()`. For checking "unread" state, they use `"unread".equals(email.get("state"))`. In Java, if `email.get("state")` returns null, equals returns false. In C++, we need to handle null/missing key. So we should check if the map contains the key and the value is a string "unread". We'll use `auto it = email.find("state"); if (it != email.end() && std::any_cast<std::string>(&it->second) && std::any_cast<std::string>(it->second) == "unread")` etc.
+
+Similarly for size, we need to extract numeric. We can create a helper function `double getNumericValue(const std::any& val)` that tries to cast to double, int, etc. But again, we can assume double.
+
+Now, include files: `<iostream>`, `<vector>`, `<map>`, `<string>`, `<any>`, `<ctime>`, `<utility>`.
+
+We'll write the class definition in a header or single file. The user asked to translate, so we'll provide the code.
+
+I'll write a C++ file with the class definition and implementation.
+
+One more thing: Java's `LocalDateTime.now()` gives local date/time. We'll use `std::time` and `localtime`. That's fine.
+
+Also, `DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")` is standard.
+
+Now, let's produce the code.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <vector>
+#include <map>
+#include <string>
+#include <any>
+#include <ctime>
+#include <stdexcept>
+#include <cstring>
+
+class EmailClient {
+private:
+    std::string addr;
+    double capacity;
+    std::vector<std::map<std::string, std::any>> inbox;
+
+    // Helper: get numeric value from std::any (handles double and int)
+    static double toDouble(const std::any& val) {
+        if (val.type() == typeid(double)) {
+            return std::any_cast<double>(val);
+        } else if (val.type() == typeid(int)) {
+            return static_cast<double>(std::any_cast<int>(val));
+        } else if (val.type() == typeid(float)) {
+            return static_cast<double>(std::any_cast<float>(val));
+        } else if (val.type() == typeid(long)) {
+            return static_cast<double>(std::any_cast<long>(val));
+        } else {
+            throw std::bad_any_cast();
+        }
+    }
+
+    // Helper: format current time as "yyyy-MM-dd HH:mm:ss"
+    static std::string currentTimestamp() {
+        std::time_t t = std::time(nullptr);
+        std::tm tm = *std::localtime(&t);
+        char buf[20];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+        return std::string(buf);
+    }
+
+public:
+    EmailClient(const std::string& addr, double capacity)
+        : addr(addr), capacity(capacity) {}
+
+    bool sendTo(EmailClient& recv, const std::string& content, double size) {
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            std::map<std::string, std::any> email;
+            email["sender"] = this->addr;
+            email["receiver"] = recv.addr;
+            email["content"] = content;
+            email["size"] = size;
+            email["time"] = currentTimestamp();
+            email["state"] = std::string("unread");
+            recv.inbox.push_back(std::move(email));
+            return true;
+        } else {
+            this->clearInbox(size);
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size); // Retry after clearing
+        }
+    }
+
+    // Returns pointer to the email map, or nullptr if none
+    std::map<std::string, std::any>* fetch() {
+        if (inbox.empty()) {
+            return nullptr;
+        }
+        for (auto& email : inbox) {
+            auto it = email.find("state");
+            if (it != email.end() && it->second.type() == typeid(std::string)) {
+                if (std::any_cast<std::string>(it->second) == "unread") {
+                    it->second = std::string("read");
+                    return &email;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    bool isFullWithOneMoreEmail(double size) const {
+        double occupied = getOccupiedSize();
+        return occupied + size > capacity;
+    }
+
+    double getOccupiedSize() const {
+        double total = 0.0;
+        for (const auto& email : inbox) {
+            auto it = email.find("size");
+            if (it != email.end()) {
+                try {
+                    total += toDouble(it->second);
+                } catch (const std::bad_any_cast&) {
+                    // ignore non-numeric
+                }
+            }
+        }
+        return total;
+    }
+
+    void clearInbox(double size) {
+        if (addr.empty()) {
+            return;
+        }
+        double freed = 0.0;
+        while (freed < size && !inbox.empty()) {
+            auto& email = inbox.front();
+            auto it = email.find("size");
+            if (it != email.end()) {
+                try {
+                    freed += toDouble(it->second);
+                } catch (const std::bad_any_cast&) {
+                    // ignore non-numeric
+                }
+            }
+            inbox.erase(inbox.begin());
+        }
+    }
+
+    // Getter and setter for inbox
+    std::vector<std::map<std::string, std::any>>& getInbox() {
+        return inbox;
+    }
+
+    const std::vector<std::map<std::string, std::any>>& getInbox() const {
+        return inbox;
+    }
+
+    void setInbox(const std::vector<std::map<std::string, std::any>>& newInbox) {
+        inbox = newInbox;
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <vector>
+#include <map>
+#include <string>
+#include <any>
+#include <ctime>
+#include <stdexcept>
+#include <cstring>
+
+class EmailClient {
+private:
+    std::string addr;
+    double capacity;
+    std::vector<std::map<std::string, std::any>> inbox;
+
+    // Helper: get numeric value from std::any (handles double and int)
+    static double toDouble(const std::any& val) {
+        if (val.type() == typeid(double)) {
+            return std::any_cast<double>(val);
+        } else if (val.type() == typeid(int)) {
+            return static_cast<double>(std::any_cast<int>(val));
+        } else if (val.type() == typeid(float)) {
+            return static_cast<double>(std::any_cast<float>(val));
+        } else if (val.type() == typeid(long)) {
+            return static_cast<double>(std::any_cast<long>(val));
+        } else {
+            throw std::bad_any_cast();
+        }
+    }
+
+    // Helper: format current time as "yyyy-MM-dd HH:mm:ss"
+    static std::string currentTimestamp() {
+        std::time_t t = std::time(nullptr);
+        std::tm tm = *std::localtime(&t);
+        char buf[20];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+        return std::string(buf);
+    }
+
+public:
+    EmailClient(const std::string& addr, double capacity)
+        : addr(addr), capacity(capacity) {}
+
+    bool sendTo(EmailClient& recv, const std::string& content, double size) {
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            std::map<std::string, std::any> email;
+            email["sender"] = this->addr;
+            email["receiver"] = recv.addr;
+            email["content"] = content;
+            email["size"] = size;
+            email["time"] = currentTimestamp();
+            email["state"] = std::string("unread");
+            recv.inbox.push_back(std::move(email));
+            return true;
+        } else {
+            this->clearInbox(size);
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size); // Retry after clearing
+        }
+    }
+
+    // Returns pointer to the email map, or nullptr if none
+    std::map<std::string, std::any>* fetch() {
+        if (inbox.empty()) {
+            return nullptr;
+        }
+        for (auto& email : inbox) {
+            auto it = email.find("state");
+            if (it != email.end() && it->second.type() == typeid(std::string)) {
+                if (std::any_cast<std::string>(it->second) == "unread") {
+                    it->second = std::string("read");
+                    return &email;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    bool isFullWithOneMoreEmail(double size) const {
+        double occupied = getOccupiedSize();
+        return occupied + size > capacity;
+    }
+
+    double getOccupiedSize() const {
+        double total = 0.0;
+        for (const auto& email : inbox) {
+            auto it = email.find("size");
+            if (it != email.end()) {
+                try {
+                    total += toDouble(it->second);
+                } catch (const std::bad_any_cast&) {
+                    // ignore non-numeric
+                }
+            }
+        }
+        return total;
+    }
+
+    void clearInbox(double size) {
+        if (addr.empty()) {
+            return;
+        }
+        double freed = 0.0;
+        while (freed < size && !inbox.empty()) {
+            auto& email = inbox.front();
+            auto it = email.find("size");
+            if (it != email.end()) {
+                try {
+                    freed += toDouble(it->second);
+                } catch (const std::bad_any_cast&) {
+                    // ignore non-numeric
+                }
+            }
+            inbox.erase(inbox.begin());
+        }
+    }
+
+    // Getter and setter for inbox
+    std::vector<std::map<std::string, std::any>>& getInbox() {
+        return inbox;
+    }
+
+    const std::vector<std::map<std::string, std::any>>& getInbox() const {
+        return inbox;
+    }
+
+    void setInbox(const std::vector<std::map<std::string, std::any>>& newInbox) {
+        inbox = newInbox;
+    }
+};

@@ -1,0 +1,54 @@
+class ShoppingCart:
+    class Item:
+        def __init__(self, price, quantity):
+            self.price = price
+            self.quantity = quantity
+
+        def getPrice(self):
+            return self.price
+
+        def setPrice(self, price):
+            self.price = price
+
+        def getQuantity(self):
+            return self.quantity
+
+        def setQuantity(self, quantity):
+            self.quantity = quantity
+
+        def __eq__(self, other):
+            if not isinstance(other, ShoppingCart.Item):
+                return False
+            return self.price == other.price and self.quantity == other.quantity
+
+        def __hash__(self):
+            return hash((self.price, self.quantity))
+
+    def __init__(self):
+        self.items = {}
+
+    def addItem(self, item, price, quantity):
+        if item in self.items:
+            existing_item = self.items[item]
+            existing_item.setPrice(price)
+            existing_item.setQuantity(existing_item.getQuantity() + quantity)
+        else:
+            self.items[item] = ShoppingCart.Item(price, quantity)
+
+    def removeItem(self, item, quantity):
+        if item in self.items:
+            existing_item = self.items[item]
+            new_quantity = existing_item.getQuantity() - quantity
+            if new_quantity <= 0:
+                del self.items[item]
+            else:
+                existing_item.setQuantity(new_quantity)
+
+    def viewItems(self):
+        return dict(self.items)
+
+    def totalPrice(self):
+        total = 0.0
+        for item in self.items.values():
+            total += item.getPrice() * item.getQuantity()
+        return total

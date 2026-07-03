@@ -1,0 +1,602 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+
+public class MovieTicketDB {
+    private Connection connection;
+
+    public MovieTicketDB(String dbName) {
+        try {
+            connection = DriverManager.getConnection("jdbc:sqlite:" + dbName);
+            createTable();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void createTable() {
+        String sql = "CREATE TABLE IF NOT EXISTS tickets (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "movie_name TEXT, " +
+                "theater_name TEXT, " +
+                "seat_number TEXT, " +
+                "customer_name TEXT)";
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute(sql);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void insertTicket(String movieName, String theaterName, String seatNumber, String customerName) {
+        String sql = "INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name) VALUES (?, ?, ?, ?)";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setString(1, movieName);
+            pstmt.setString(2, theaterName);
+            pstmt.setString(3, seatNumber);
+            pstmt.setString(4, customerName);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public List<Ticket> searchTicketsByCustomer(String customerName) {
+        String sql = "SELECT * FROM tickets WHERE customer_name = ?";
+        List<Ticket> tickets = new ArrayList<>();
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setString(1, customerName);
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                Ticket ticket = new Ticket(
+                        rs.getInt("id"),
+                        rs.getString("movie_name"),
+                        rs.getString("theater_name"),
+                        rs.getString("seat_number"),
+                        rs.getString("customer_name")
+                );
+                tickets.add(ticket);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return tickets;
+    }
+
+    public void deleteTicket(int ticketId) {
+        String sql = "DELETE FROM tickets WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setInt(1, ticketId);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void close() {
+        try {
+            if (connection != null && !connection.isClosed()) {
+                connection.close();
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static class Ticket {
+        private int id;
+        private String movieName;
+        private String theaterName;
+        private String seatNumber;
+        private String customerName;
+
+        public Ticket(int id, String movieName, String theaterName, String seatNumber, String customerName) {
+            this.id = id;
+            this.movieName = movieName;
+            this.theaterName = theaterName;
+            this.seatNumber = seatNumber;
+            this.customerName = customerName;
+        }
+
+        public int getId() {
+            return id;
+        }
+
+        public String getMovieName() {
+            return movieName;
+        }
+
+        public String getTheaterName() {
+            return theaterName;
+        }
+
+        public String getSeatNumber() {
+            return seatNumber;
+        }
+
+        public String getCustomerName() {
+            return customerName;
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+The user wants me to translate a Java class that uses SQLite (via JDBC) to C++. I need to use the SQLite C/C++ API to replicate the behavior.
+
+Let me analyze the Java code:
+
+1. `MovieTicketDB` class with a `Connection` field
+2. Constructor takes a dbName, connects to SQLite, creates a table
+3. `createTable()` - creates the tickets table if not exists
+4. `insertTicket()` - inserts a ticket using PreparedStatement
+5. `searchTicketsByCustomer()` - searches tickets by customer name, returns List<Ticket>
+6. `deleteTicket()` - deletes a ticket by id
+7. `close()` - closes the connection
+8. Inner static class `Ticket` with fields and getters
+
+For C++, I'll use:
+- `sqlite3.h` for SQLite access
+- `std::vector` for the list
+- A `Ticket` struct/class
+- Error handling via `std::cerr` (equivalent to `e.printStackTrace()`)
+
+Let me write the C++ code:
+
+```cpp
+#ifndef MOVIE_TICKET_DB_H
+#define MOVIE_TICKET_DB_H
+
+#include <sqlite3.h>
+#include <string>
+#include <vector>
+#include <iostream>
+
+class MovieTicketDB {
+public:
+    class Ticket {
+    public:
+        int id;
+        std::string movieName;
+        std::string theaterName;
+        std::string seatNumber;
+        std::string customerName;
+
+        Ticket(int id, const std::string& movieName, const std::string& theaterName,
+               const std::string& seatNumber, const std::string& customerName)
+            : id(id), movieName(movieName), theaterName(theaterName),
+              seatNumber(seatNumber), customerName(customerName) {}
+
+        int getId() const { return id; }
+        const std::string& getMovieName() const { return movieName; }
+        const std::string& getTheaterName() const { return theaterName; }
+        const std::string& getSeatNumber() const { return seatNumber; }
+        const std::string& getCustomerName() const { return customerName; }
+    };
+
+    MovieTicketDB(const std::string& dbName);
+    ~MovieTicketDB();
+    void insertTicket(const std::string& movieName, const std::string& theaterName,
+                      const std::string& seatNumber, const std::string& customerName);
+    std::vector<Ticket> searchTicketsByCustomer(const std::string& customerName);
+    void deleteTicket(int ticketId);
+    void close();
+
+private:
+    sqlite3* connection;
+    void createTable();
+};
+
+#endif
+```
+
+Now the implementation:
+
+```cpp
+#include "MovieTicketDB.h"
+
+MovieTicketDB::MovieTicketDB(const std::string& dbName) : connection(nullptr) {
+    int rc = sqlite3_open(dbName.c_str(), &connection);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        sqlite3_close(connection);
+        connection = nullptr;
+        return;
+    }
+    createTable();
+}
+
+MovieTicketDB::~MovieTicketDB() {
+    close();
+}
+
+void MovieTicketDB::createTable() {
+    const char* sql = "CREATE TABLE IF NOT EXISTS tickets ("
+                      "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                      "movie_name TEXT, "
+                      "theater_name TEXT, "
+                      "seat_number TEXT, "
+                      "customer_name TEXT)";
+    char* errMsg = nullptr;
+    int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &errMsg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << errMsg << std::endl;
+        sqlite3_free(errMsg);
+    }
+}
+
+void MovieTicketDB::insertTicket(const std::string& movieName, const std::string& theaterName,
+                                  const std::string& seatNumber, const std::string& customerName) {
+    const char* sql = "INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name) VALUES (?, ?, ?, ?)";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, movieName.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, theaterName.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, seatNumber.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, customerName.c_str(), -1, SQLITE_TRANSIENT);
+    
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+}
+
+std::vector<MovieTicketDB::Ticket> MovieTicketDB::searchTicketsByCustomer(const std::string& customerName) {
+    const char* sql = "SELECT * FROM tickets WHERE customer_name = ?";
+    std::vector<Ticket> tickets;
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        return tickets;
+    }
+    sqlite3_bind_text(stmt, 1, customerName.c_str(), -1, SQLITE_TRANSIENT);
+    
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        int id = sqlite3_column_int(stmt, 0);
+        std::string movieName = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        std::string theaterName = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        std::string seatNumber = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        std::string customerNameVal = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        tickets.emplace_back(id, movieName, theaterName, seatNumber, customerNameVal);
+    }
+    
+    if (rc != SQLITE_DONE) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+    return tickets;
+}
+
+void MovieTicketDB::deleteTicket(int ticketId) {
+    const char* sql = "DELETE FROM tickets WHERE id = ?";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        return;
+    }
+    sqlite3_bind_int(stmt, 1, ticketId);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+}
+
+void MovieTicketDB::close() {
+    if (connection != nullptr) {
+        sqlite3_close(connection);
+        connection = nullptr;
+    }
+}
+```
+
+Wait, I need to think about whether to put this all in one file or separate header/implementation. The Java code is a single file, so I'll put it all together with the class definition and implementation in one file, but I'll separate header and source for idiomatic C++. Actually, let me just do a single file with everything since the Java is a single file.
+
+Actually, let me reconsider. The Java code has everything in one file. I'll provide a header and implementation file since that's the idiomatic C++ way, but I could also do a single file. Let me do a single header file with inline definitions to keep it simple and comparable to the single Java file.
+
+Hmm, actually, let me think about this more carefully. The user said "Use idiomatic C++ only when it doesn't change behavior." So I should use idiomatic C++ patterns. Let me provide a header + implementation split.
+
+Actually, for simplicity and to match the single-file nature of the Java code, I'll put it all in one header file with the implementation inline. Or I could do a .h and .cpp pair. Let me just do a single file approach.
+
+Let me also consider: the Java code's `close()` checks `connection != null && !connection.isClosed()`. In C++ with sqlite3, I just need to check if the pointer is non-null. There's no "isClosed" concept in the C API - you just call sqlite3_close.
+
+Also, I should consider that the destructor should call close(), which is idiomatic C++ (RAII).
+
+Let me also handle the case where sqlite3_column_text returns nullptr (for NULL values in the database). The Java code uses getString which would return null, but in C++ we'd get a nullptr. Let me handle that by checking for nullptr and using an empty string instead, or just letting it be UB... Actually, to match Java behavior more closely, I should handle null columns. But the Java code doesn't really handle nulls either - it would just get null strings. In C++, constructing a std::string from nullptr is undefined behavior. Let me add a safety check.
+
+Actually, looking at the Java code more carefully, the table schema doesn't have NOT NULL constraints, so columns could be NULL. In Java, `rs.getString()` on a NULL column returns `null`. In C++, we need to handle this. Let me add a helper.
+
+Let me write the final version:
+
+I'll provide a header file and an implementation file.
+
+
+</think>
+
+=== RAW ANSWER ===
+```cpp
+// MovieTicketDB.h
+#ifndef MOVIE_TICKET_DB_H
+#define MOVIE_TICKET_DB_H
+
+#include <sqlite3.h>
+#include <string>
+#include <vector>
+#include <iostream>
+
+class MovieTicketDB {
+public:
+    class Ticket {
+    private:
+        int id;
+        std::string movieName;
+        std::string theaterName;
+        std::string seatNumber;
+        std::string customerName;
+
+    public:
+        Ticket(int id, const std::string& movieName, const std::string& theaterName,
+               const std::string& seatNumber, const std::string& customerName)
+            : id(id), movieName(movieName), theaterName(theaterName),
+              seatNumber(seatNumber), customerName(customerName) {}
+
+        int getId() const { return id; }
+        const std::string& getMovieName() const { return movieName; }
+        const std::string& getTheaterName() const { return theaterName; }
+        const std::string& getSeatNumber() const { return seatNumber; }
+        const std::string& getCustomerName() const { return customerName; }
+    };
+
+    MovieTicketDB(const std::string& dbName);
+    ~MovieTicketDB();
+
+    void insertTicket(const std::string& movieName, const std::string& theaterName,
+                      const std::string& seatNumber, const std::string& customerName);
+    std::vector<Ticket> searchTicketsByCustomer(const std::string& customerName);
+    void deleteTicket(int ticketId);
+    void close();
+
+private:
+    sqlite3* connection;
+    void createTable();
+};
+
+#endif
+```
+
+```cpp
+// MovieTicketDB.cpp
+#include "MovieTicketDB.h"
+
+MovieTicketDB::MovieTicketDB(const std::string& dbName) : connection(nullptr) {
+    int rc = sqlite3_open(dbName.c_str(), &connection);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        sqlite3_close(connection);
+        connection = nullptr;
+        return;
+    }
+    createTable();
+}
+
+MovieTicketDB::~MovieTicketDB() {
+    close();
+}
+
+void MovieTicketDB::createTable() {
+    const char* sql = "CREATE TABLE IF NOT EXISTS tickets ("
+                      "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                      "movie_name TEXT, "
+                      "theater_name TEXT, "
+                      "seat_number TEXT, "
+                      "customer_name TEXT)";
+    char* errMsg = nullptr;
+    int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &errMsg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << errMsg << std::endl;
+        sqlite3_free(errMsg);
+    }
+}
+
+void MovieTicketDB::insertTicket(const std::string& movieName, const std::string& theaterName,
+                                  const std::string& seatNumber, const std::string& customerName) {
+    const char* sql = "INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name) VALUES (?, ?, ?, ?)";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, movieName.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, theaterName.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, seatNumber.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, customerName.c_str(), -1, SQLITE_TRANSIENT);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+}
+
+std::vector<MovieTicketDB::Ticket> MovieTicketDB::searchTicketsByCustomer(const std::string& customerName) {
+    const char* sql = "SELECT * FROM tickets WHERE customer_name = ?";
+    std::vector<Ticket> tickets;
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        return tickets;
+    }
+    sqlite3_bind_text(stmt, 1, customerName.c_str(), -1, SQLITE_TRANSIENT);
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        int id = sqlite3_column_int(stmt, 0);
+        const char* movieNamePtr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        const char* theaterNamePtr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        const char* seatNumberPtr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        const char* customerNamePtr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        std::string movieNameVal = movieNamePtr ? movieNamePtr : "";
+        std::string theaterNameVal = theaterNamePtr ? theaterNamePtr : "";
+        std::string seatNumberVal = seatNumberPtr ? seatNumberPtr : "";
+        std::string customerNameVal = customerNamePtr ? customerNamePtr : "";
+        tickets.emplace_back(id, movieNameVal, theaterNameVal, seatNumberVal, customerNameVal);
+    }
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+    return tickets;
+}
+
+void MovieTicketDB::deleteTicket(int ticketId) {
+    const char* sql = "DELETE FROM tickets WHERE id = ?";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        return;
+    }
+    sqlite3_bind_int(stmt, 1, ticketId);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+}
+
+void MovieTicketDB::close() {
+    if (connection != nullptr) {
+        sqlite3_close(connection);
+        connection = nullptr;
+    }
+}
+```
+
+=== TRANSLATED CODE (cpp) ===
+// MovieTicketDB.cpp
+#include "MovieTicketDB.h"
+
+MovieTicketDB::MovieTicketDB(const std::string& dbName) : connection(nullptr) {
+    int rc = sqlite3_open(dbName.c_str(), &connection);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        sqlite3_close(connection);
+        connection = nullptr;
+        return;
+    }
+    createTable();
+}
+
+MovieTicketDB::~MovieTicketDB() {
+    close();
+}
+
+void MovieTicketDB::createTable() {
+    const char* sql = "CREATE TABLE IF NOT EXISTS tickets ("
+                      "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                      "movie_name TEXT, "
+                      "theater_name TEXT, "
+                      "seat_number TEXT, "
+                      "customer_name TEXT)";
+    char* errMsg = nullptr;
+    int rc = sqlite3_exec(connection, sql, nullptr, nullptr, &errMsg);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << errMsg << std::endl;
+        sqlite3_free(errMsg);
+    }
+}
+
+void MovieTicketDB::insertTicket(const std::string& movieName, const std::string& theaterName,
+                                  const std::string& seatNumber, const std::string& customerName) {
+    const char* sql = "INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name) VALUES (?, ?, ?, ?)";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, movieName.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, theaterName.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, seatNumber.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, customerName.c_str(), -1, SQLITE_TRANSIENT);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+}
+
+std::vector<MovieTicketDB::Ticket> MovieTicketDB::searchTicketsByCustomer(const std::string& customerName) {
+    const char* sql = "SELECT * FROM tickets WHERE customer_name = ?";
+    std::vector<Ticket> tickets;
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        return tickets;
+    }
+    sqlite3_bind_text(stmt, 1, customerName.c_str(), -1, SQLITE_TRANSIENT);
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        int id = sqlite3_column_int(stmt, 0);
+        const char* movieNamePtr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        const char* theaterNamePtr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        const char* seatNumberPtr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        const char* customerNamePtr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        std::string movieNameVal = movieNamePtr ? movieNamePtr : "";
+        std::string theaterNameVal = theaterNamePtr ? theaterNamePtr : "";
+        std::string seatNumberVal = seatNumberPtr ? seatNumberPtr : "";
+        std::string customerNameVal = customerNamePtr ? customerNamePtr : "";
+        tickets.emplace_back(id, movieNameVal, theaterNameVal, seatNumberVal, customerNameVal);
+    }
+
+    if (rc != SQLITE_DONE) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+    return tickets;
+}
+
+void MovieTicketDB::deleteTicket(int ticketId) {
+    const char* sql = "DELETE FROM tickets WHERE id = ?";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+        return;
+    }
+    sqlite3_bind_int(stmt, 1, ticketId);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        std::cerr << "SQL error: " << sqlite3_errmsg(connection) << std::endl;
+    }
+    sqlite3_finalize(stmt);
+}
+
+void MovieTicketDB::close() {
+    if (connection != nullptr) {
+        sqlite3_close(connection);
+        connection = nullptr;
+    }
+}

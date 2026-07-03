@@ -1,0 +1,34 @@
+from collections import deque
+
+class Solution:
+    def slidingPuzzle(self, board: List[List[int]]) -> int:
+        def get_neighbors(board):
+            neighbors = []
+            r, c = 0, 0
+            for i in range(2):
+                for j in range(3):
+                    if board[i][j] == 0:
+                        r, c = i, j
+            directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+            for dr, dc in directions:
+                new_r, new_c = r + dr, c + dc
+                if 0 <= new_r < 2 and 0 <= new_c < 3:
+                    new_board = [row[:] for row in board]
+                    new_board[r][c], new_board[new_r][new_c] = new_board[new_r][new_c], new_board[r][c]
+                    neighbors.append(new_board)
+            return neighbors
+
+        queue = deque()
+        queue.append((board, 0))
+        seen = set()
+        seen.add(tuple(tuple(row) for row in board))
+
+        while queue:
+            board, moves = queue.popleft()
+            if board == [[1, 2, 3], [4, 5, 0]]:
+                return moves
+            for neighbor in get_neighbors(board):
+                if tuple(tuple(row) for row in neighbor) not in seen:
+                    seen.add(tuple(tuple(row) for row in neighbor))
+                    queue.append((neighbor, moves + 1))
+        return -1

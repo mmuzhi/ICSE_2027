@@ -1,0 +1,327 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+
+public class IpUtil {
+
+    public static boolean isValidIpv4(String ipAddress) {
+        try {
+            InetAddress.getByName(ipAddress);
+            return ipAddress.contains(".") && !ipAddress.contains(":");
+        } catch (UnknownHostException e) {
+            return false;
+        }
+    }
+
+    public static boolean isValidIpv6(String ipAddress) {
+        try {
+            InetAddress.getByName(ipAddress);
+            return ipAddress.contains(":");
+        } catch (UnknownHostException e) {
+            return false;
+        }
+    }
+
+    public static String getHostname(String ipAddress) {
+        try {
+            InetAddress inetAddress = InetAddress.getByName(ipAddress);
+
+            if ("0.0.0.0".equals(ipAddress)) {
+                return InetAddress.getLocalHost().getHostName();
+            }
+
+            String hostname = inetAddress.getCanonicalHostName();
+            if (hostname.equals(ipAddress)) {
+                return null;
+            }
+            return hostname;
+        } catch (UnknownHostException e) {
+            return null;
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate this Java code to Python. Keep behavior identical: inputs/outputs, side effects, edge cases, exceptions.
+
+Java code has three static methods: isValidIpv4, isValidIpv6, getHostname. They use java.net.InetAddress. In Python, we can use socket module (or ipaddress module) for IP validation and hostname resolution.
+
+Important: In Java, InetAddress.getByName throws UnknownHostException if address is invalid or cannot be resolved. Then the methods catch and return false/null. In Python, socket.getaddrinfo or gethostbyname can raise socket.gaierror (or OSError? socket.herror?). We need to catch appropriate exceptions.
+
+For isValidIpv4: 
+- Call InetAddress.getByName(ipAddress). If no exception, then check ipAddress contains "." and does not contain ":". Return boolean.
+- In Python, we can try to resolve using socket.getaddrinfo(ipAddress, None, socket.AF_INET) for IPv4? But Java's InetAddress.getByName accepts both IPv4 and IPv6. So we need to call socket.getaddrinfo without specifying family to get any address, then check the string contains '.' and not ':'. However, IpUtil in Java does not distinguish between IPv4 and IPv6 resolution; they just check string patterns. So we can do: 
+  - Try: socket.getaddrinfo(ipAddress, None) or socket.gethostbyname(ipAddress) but gethostbyname only for IPv4. 
+  - Better: use ipaddress module or directly check if address is valid IP using ipaddress.ip_address() which will raise ValueError if invalid. But Java's InetAddress.getByName does DNS resolution: if you pass a hostname that resolves, it will succeed, and then the method checks if the original string contains '.' (for v4) or ':' (for v6). This means it accepts hostnames that resolve, but the check is on the original string. For example, if you pass "localhost", InetAddress.getByName("localhost") succeeds (returns an InetAddress), and then check: "localhost".contains(".")? No. So isValidIpv4("localhost") returns false. Similarly isValidIpv6("localhost") returns false because no colon. So these functions only validate if the string is a syntactically valid IP address? Actually they depend on resolution and string pattern. In Python, to mimic exactly, we need:
+  - Try to resolve the string using socket.getaddrinfo (or similar) to see if it's a valid address/hostname that can be resolved.
+  - If resolution succeeds, then check the original string for '.' and ':'. If it contains '.' and no ':', return true for v4; if contains ':', return true for v6.
+  - If resolution fails (exception), return false.
+
+But note: In Java, InetAddress.getByName for an IP address like "192.168.1.1" will succeed (no DNS needed). For a hostname like "google.com" it will resolve. So the same in Python: socket.getaddrinfo will resolve hostnames. For IP addresses, it works too.
+
+However, there is nuance: In Java, isValidIpv4("255.255.255.255") returns true; isValidIpv4("::1") returns false because it contains ':' and no '.'? Actually "::1".contains(".") false, and "::1".contains(":") true, so isValidIpv4 calls getByName("::1") which succeeds (since it's valid IPv6), then checks if contains "." and not ":" -> false, returns false. That's correct.
+
+But what about invalid IP like "999.999.999.999"? InetAddress.getByName throws UnknownHostException because it's not a valid IP and can't resolve. So returns false.
+
+So Python translation: need to use socket.getaddrinfo. Also need to handle potential exceptions.
+
+Edge case: In getHostname method, there's special handling for "0.0.0.0": return local hostname. Also, if canonical hostname equals original ipAddress, returns None. Else returns hostname.
+
+In Python: socket.gethostbyaddr() can get hostname from IP. But need to handle exceptions. Also get local hostname: socket.gethostname().
+
+But note: Java's getCanonicalHostName() does reverse DNS lookup; if it fails, it returns the IP address string. So if it equals ipAddress, return None. So we need to try reverse lookup and compare.
+
+Will implement as functions in Python, not a class. Keep naming similar: is_valid_ipv4, is_valid_ipv6, get_hostname.
+
+We'll use socket and possibly ipaddress? But ipaddress.ip_address() does not do DNS resolution, only validates syntax. That's not identical because Java does resolution (though for IP addresses it's essentially same). For hostnames, ipaddress will reject them. But Java accepts hostnames. So we should use socket.
+
+Implementation:
+
+```
+import socket
+
+def is_valid_ipv4(ip_address):
+    try:
+        socket.getaddrinfo(ip_address, None)  # any port, any family? Use 0 for port and family=0 for any?
+        # Actually getaddrinfo requires a port; can use 0.
+        # Returns list of (family, type, proto, canonname, sockaddr)
+        # We don't need the result, just to see if resolution succeeds.
+        # Use family=0 to try both IPv4 and IPv6. Or we can use socket.AF_UNSPEC.
+        # But we need to handle OSError exception if resolution fails.
+        # Use:
+        # socket.getaddrinfo(ip_address, 0, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        # That may throw socket.gaierror (inherits OSError)
+        return '.' in ip_address and ':' not in ip_address
+    except (socket.gaierror, OSError):
+        return False
+```
+
+But careful: In Java, if the address is valid IP but cannot be resolved (like a private IP), getByName still succeeds because it's a valid IP syntax. For "10.0.0.1", InetAddress.getByName returns the address without DNS lookup. In Python, socket.getaddrinfo("10.0.0.1", 0) will succeed as well (returns address info). So that's fine. But what about "localhost"? In Java it resolves and then checks string: "localhost" does not contain '.' -> false. In Python, similar: resolve succeeds, then check '.' -> false. So fine.
+
+However, there is an edge: "127.0.0.1" returns true. Works.
+
+For IPv6: similar.
+
+But we need to mimic the exception handling: catch UnknownHostException. In Python, socket.gaierror or OSError? Actually, socket.gaierror is a subclass of OSError. But we can catch OSError broadly, but better to catch socket.gaierror to be more specific. However, there might be other exceptions like socket.herror? getaddrinfo raises gaierror. So catch socket.gaierror.
+
+But also note: socket.getaddrinfo may raise TypeError if argument not string. Not needed.
+
+Now get_hostname:
+
+```
+def get_hostname(ip_address):
+    try:
+        # Get address info
+        addr_info = socket.getaddrinfo(ip_address, 0, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        # Use first result's sockaddr to get IP string? But Java's getByName returns InetAddress object, then getCanonicalHostName does reverse lookup.
+        # In Python, we can do socket.gethostbyaddr(ip_address) to get hostname.
+        # But we need to simulate canonical hostname: it returns the fully qualified domain name. If reverse lookup fails, it returns the IP address.
+        # socket.gethostbyaddr raises socket.herror if cannot resolve.
+        # However, we first need to handle special case "0.0.0.0" -> return local hostname.
+        if ip_address == "0.0.0.0":
+            return socket.gethostname()
+        hostname = socket.gethostbyaddr(ip_address)[0]
+        if hostname == ip_address:
+            return None
+        return hostname
+    except (socket.gaierror, socket.herror, OSError):
+        return None
+```
+
+But careful: In Java, getHostname first calls InetAddress.getByName(ipAddress) - this can throw UnknownHostException if the string cannot be resolved (including invalid IP). Then if "0.0.0.0", return local hostname. So for "invalid", getByName throws exception, returning null. In Python, we first try to resolve? Actually, in Java, getByName is used to get InetAddress object, then getCanonicalHostName. So we need to ensure that if the ip_address cannot be resolved (i.e., invalid address or hostname that doesn't exist), we return None. In Python, we can combine: try to get hostname via gethostbyaddr, but gethostbyaddr expects an IP address, not a hostname. If ip_address is a hostname, we might need to resolve it first to an IP? But Java's getCanonicalHostName is called on the InetAddress object returned by getByName, which might be a hostname resolution. For a hostname like "google.com", getByName returns an InetAddress representing an IP of google, then getCanonicalHostName does a reverse lookup on that IP, which may yield a different hostname (like "lga15s42-in-f14.1e100.net"). So we need to mimic that: first resolve the input string to an IP address, then do reverse lookup. So step1: resolve to IP. In Python, we can use socket.getaddrinfo to get IP(s). Then for reverse lookup, use socket.gethostbyaddr on that IP. Let's pick first IP (preferably IPv4? But Java may return IPv4 or IPv6 depending on system. We can use the first result. For consistency, use the first address returned by getaddrinfo with AF_UNSPEC. We'll take the sockaddr part.
+
+So algorithm for get_hostname:
+- Try: resolve ip_address to IP using socket.getaddrinfo. If fails, return None.
+- If ip_address == "0.0.0.0": return socket.gethostname() (local hostname).
+- Take first result's sockaddr (which contains IP string). For IPv4 it's ('ip', port), for IPv6 it's ('ip', port, flowinfo, scope_id). Extract IP string.
+- Then use socket.gethostbyaddr(ip_str) to get canonical hostname.
+- If hostname equals original ip_address? Or equals the resolved IP? In Java, they compare canonical hostname to the original ip_address string. In the Java code: String hostname = inetAddress.getCanonicalHostName(); if (hostname.equals(ipAddress)) return null; So it compares the result of reverse lookup to the original input string. That's a bit odd: if you pass an IP, reverse lookup may return the same IP if no PTR record, so returns null. If you pass a hostname, reverse lookup returns something else, so return that something. So we must compare to original ip_address string. So we'll do:
+```
+if hostname == ip_address:
+    return None
+return hostname
+```
+But note: socket.gethostbyaddr returns a tuple (hostname, aliaslist, ipaddrlist). The hostname is the canonical name. So we use that.
+
+Also, need to handle case where reverse lookup returns the IP as hostname (e.g., no PTR record). In Python, gethostbyaddr raises herror if no hostname found? Actually, on Linux, for IPs without reverse DNS, gethostbyaddr may raise socket.herror? Or it may return the IP string as hostname? Behavior is platform-dependent. To mimic Java: In Java, getCanonicalHostName does a reverse lookup; if it fails, it returns the IP address string. So it never throws. So we need to achieve that: catch exceptions from gethostbyaddr and return None? Wait: In Java, if getCanonicalHostName fails (e.g., no PTR), it returns the IP address. Then the code compares to original ipAddress; if equal, returns None. So if the input ipAddress is an IP and reverse fails, getCanonicalHostName returns that IP, compare equal -> returns None. If input is hostname, reverse lookup on resolved IP may give a hostname (maybe different), then return that hostname. So we need to handle this in Python.
+
+If gethostbyaddr raises exception (e.g., host not found), we can assume reverse lookup failed. In that case, we can set hostname = ip_address (the resolved IP) to mimic Java's behavior. But careful: The resolved IP may be different from input if input is hostname. So we need the resolved IP string to compare to the canonical hostname result (which would be that resolved IP if lookup fails). So we should:
+- Resolve input to IP (ip_str). 
+- If ip_address == "0.0.0.0": return local hostname.
+- Try: hostname = socket.gethostbyaddr(ip_str)[0]
+- If exception (socket.herror): hostname = ip_str  # as Java getCanonicalHostName returns IP string.
+- Then if hostname == ip_address: return None else return hostname.
+
+But is it correct to compare to original ip_address? In Java, it compares the canonical hostname to the original input string (ipAddress), not to the resolved IP. So we keep that.
+
+Example: input = "127.0.0.1", resolved IP is "127.0.0.1", reverse lookup may return "localhost". Then hostname = "localhost", not equal to "127.0.0.1", returns "localhost". That matches Java? In Java, InetAddress.getByName("127.0.0.1") returns InetAddress with address 127.0.0.1; getCanonicalHostName() returns "localhost" if PTR record exists; then compare to original ipAddress "127.0.0.1" -> not equal, return "localhost". So fine.
+
+If input = "localhost", resolved IP is e.g., "127.0.0.1", reverse lookup returns "localhost". Then hostname = "localhost", compare to original "localhost" -> equal, returns None. Java: InetAddress.getByName("localhost") returns address for localhost; getCanonicalHostName returns "localhost" (or maybe "localhost.localdomain"?). If it returns "localhost", then compare equals, returns None. That matches.
+
+If input = "google.com", resolved IP e.g., "172.217.14.206", reverse might give "lga15s42-in-f14.1e100.net". Then compare to original "google.com" -> not equal, returns that hostname. Java would do same.
+
+If reverse lookup fails (no PTR), Java returns the IP string, e.g., "172.217.14.206". Then compare to original "google.com" -> not equal, returns "172.217.14.206". That's odd but that's what Java does. In our Python, we set hostname = ip_str (resolved IP) when lookup fails. Then compare to original ip_address if it's "google.com", not equal -> returns the IP string. Good.
+
+But also for input IP like "10.0.0.1", reverse fails, hostname = "10.0.0.1", compare to original "10.0.0.1" equal -> returns None. That matches Java.
+
+So plan: resolve input to IP. For "0.0.0.0" special handling. Then do reverse lookup with error handling. Then compare to original input.
+
+Edge: If resolution fails (invalid input), we return None (like Java's catch UnknownHostException). So we wrap in try-except for getaddrinfo.
+
+Now, let's write code.
+
+Also, note: The Java class is in package org.example, but we'll just have functions.
+
+Will produce a Python module or script.
+
+Will include imports.
+
+Will define functions.
+
+We also need to be careful about Python's socket.getaddrinfo port parameter: it must be an integer or string? Usually 0 is fine. For AF_UNSPEC, SOCK_STREAM. Example: socket.getaddrinfo(ip_address, 0, socket.AF_UNSPEC, socket.SOCK_STREAM).
+
+But note: for IP addresses like "::1", getaddrinfo returns a result for IPv6.
+
+Now, let's write final answer.
+</think>
+
+=== RAW ANSWER ===
+```python
+import socket
+
+
+def is_valid_ipv4(ip_address: str) -> bool:
+    """
+    Mimics Java IpUtil.isValidIpv4:
+    - Uses socket.getaddrinfo to check if the string can be resolved (address or hostname).
+    - Returns True if it can be resolved AND the original string contains '.' and not ':'.
+    - Returns False otherwise (including resolution failure).
+    """
+    try:
+        # Attempt to resolve the string. Any family/type works.
+        socket.getaddrinfo(ip_address, 0, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        return '.' in ip_address and ':' not in ip_address
+    except (socket.gaierror, socket.herror, OSError):
+        return False
+
+
+def is_valid_ipv6(ip_address: str) -> bool:
+    """
+    Mimics Java IpUtil.isValidIpv6:
+    - Uses socket.getaddrinfo to check if the string can be resolved.
+    - Returns True if it can be resolved AND the original string contains ':'.
+    - Returns False otherwise.
+    """
+    try:
+        socket.getaddrinfo(ip_address, 0, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        return ':' in ip_address
+    except (socket.gaierror, socket.herror, OSError):
+        return False
+
+
+def get_hostname(ip_address: str):
+    """
+    Mimics Java IpUtil.getHostname:
+    - Resolves the input to an IP address (using socket.getaddrinfo).
+    - Special case: "0.0.0.0" returns the local hostname.
+    - Performs a reverse DNS lookup on the resolved IP.
+    - Returns:
+        - `None` if the input cannot be resolved (any exception).
+        - `None` if the canonical hostname equals the original input string.
+        - Otherwise, the canonical hostname string.
+    """
+    try:
+        # Step 1: resolve the input to an IP address
+        addrinfo = socket.getaddrinfo(ip_address, 0, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        # Take the first result's sockaddr (contains IP)
+        sockaddr = addrinfo[0][4]
+        resolved_ip = sockaddr[0]  # for both IPv4 and IPv6, the IP is the first element
+
+        # Special case for "0.0.0.0"
+        if ip_address == "0.0.0.0":
+            return socket.gethostname()
+
+        # Step 2: reverse lookup
+        try:
+            canonical = socket.gethostbyaddr(resolved_ip)[0]
+        except (socket.herror, OSError):
+            # Reverse lookup failed -> Java returns the IP string itself
+            canonical = resolved_ip
+
+        # Step 3: compare to original input
+        if canonical == ip_address:
+            return None
+        return canonical
+
+    except (socket.gaierror, socket.herror, OSError):
+        # Resolution of the input failed
+        return None
+
+```
+
+=== TRANSLATED CODE (py) ===
+import socket
+
+
+def is_valid_ipv4(ip_address: str) -> bool:
+    """
+    Mimics Java IpUtil.isValidIpv4:
+    - Uses socket.getaddrinfo to check if the string can be resolved (address or hostname).
+    - Returns True if it can be resolved AND the original string contains '.' and not ':'.
+    - Returns False otherwise (including resolution failure).
+    """
+    try:
+        socket.getaddrinfo(ip_address, 0, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        return '.' in ip_address and ':' not in ip_address
+    except (socket.gaierror, socket.herror, OSError):
+        return False
+
+
+def is_valid_ipv6(ip_address: str) -> bool:
+    """
+    Mimics Java IpUtil.isValidIpv6:
+    - Uses socket.getaddrinfo to check if the string can be resolved.
+    - Returns True if it can be resolved AND the original string contains ':'.
+    - Returns False otherwise.
+    """
+    try:
+        socket.getaddrinfo(ip_address, 0, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        return ':' in ip_address
+    except (socket.gaierror, socket.herror, OSError):
+        return False
+
+
+def get_hostname(ip_address: str):
+    """
+    Mimics Java IpUtil.getHostname:
+    - Resolves the input to an IP address (using socket.getaddrinfo).
+    - Special case: "0.0.0.0" returns the local hostname.
+    - Performs a reverse DNS lookup on the resolved IP.
+    - Returns:
+        - `None` if the input cannot be resolved (any exception).
+        - `None` if the canonical hostname equals the original input string.
+        - Otherwise, the canonical hostname string.
+    """
+    try:
+        addrinfo = socket.getaddrinfo(ip_address, 0, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        sockaddr = addrinfo[0][4]
+        resolved_ip = sockaddr[0]  # for both IPv4 and IPv6, the IP is the first element
+
+        if ip_address == "0.0.0.0":
+            return socket.gethostname()
+
+        try:
+            canonical = socket.gethostbyaddr(resolved_ip)[0]
+        except (socket.herror, OSError):
+            canonical = resolved_ip
+
+        if canonical == ip_address:
+            return None
+        return canonical
+
+    except (socket.gaierror, socket.herror, OSError):
+        return None

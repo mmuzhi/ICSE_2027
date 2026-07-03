@@ -1,0 +1,330 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
+
+public class AccessGatewayFilter {
+
+    public AccessGatewayFilter() {
+    }
+
+    public boolean filter(Map<String, Object> request) {
+        String requestUri = (String) request.get("path");
+        String method = (String) request.get("method");
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            Map<String, Object> token = getJwtUser(request);
+            Map<String, Object> user = (Map<String, Object>) token.get("user");
+            if ((int) user.get("level") > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        return false;
+    }
+
+    public boolean isStartWith(String requestUri) {
+        String[] startWith = {"/api", "/login"};
+        for (String s : startWith) {
+            if (requestUri.startsWith(s)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public Map<String, Object> getJwtUser(Map<String, Object> request) {
+        Map<String, Object> token = (Map<String, Object>) ((Map<String, Object>) request.get("headers")).get("Authorization");
+        Map<String, Object> user = (Map<String, Object>) token.get("user");
+        String jwt = (String) token.get("jwt");
+
+        if (jwt.startsWith((String) user.get("name"))) {
+            String jwtStrDate = jwt.substring(((String) user.get("name")).length());
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+            LocalDate jwtDate = LocalDate.parse(jwtStrDate, formatter);
+            if (LocalDate.now().minusDays(3).isAfter(jwtDate)) {
+                return null;
+            }
+        }
+        return token;
+    }
+
+    public void setCurrentUserInfoAndLog(Map<String, Object> user) {
+        String host = (String) user.get("address");
+        String message = user.get("name") + host + LocalDate.now();
+        System.out.println(message);
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++. The Java code has methods: constructor, filter, isStartWith, getJwtUser, setCurrentUserInfoAndLog. It uses java.time, Map, etc. Need to map to C++ equivalents. Use std::map, std::string, date libraries (maybe <chrono> or use string parsing). Since behavior must be identical, need to handle exceptions similarly. Use try-catch. Also handle type casts: Java casts like (Map<String,Object>), (int), etc. In C++, we need to store values as std::any or variant, but for simplicity, we can assume maps have types as specified (strings, ints, maps). Better to use std::map<std::string, std::any> or std::map<std::string, std::variant>. To keep behavior, we need to handle casting errors like bad_cast. But Java's Map<String,Object> can hold any object; in C++ we need to simulate that with std::any and std::any_cast. We'll need to include <any>, <map>, <string>, <iostream>, <stdexcept>, etc. Also date: use <ctime> or C++20 <chrono> with date parsing? But Java uses LocalDate.parse with pattern "yyyy-MM-dd". We can implement using std::chrono::year_month_day from C++20, but to be safe, we can parse date string manually or use a library. Since no external libs, we'll parse manually: split by '-', convert to ints, and then compute days difference. Java's LocalDate.now().minusDays(3).isAfter(jwtDate) checks if now - 3 days is after jwtDate (i.e., jwtDate is before now - 3 days). Equivalent: if (now - 3days > jwtDate) => jwtDate < now - 3days. We'll need to compute day difference.
+
+We also need to replicate NullPointerException? In Java, if token.get("user") returns null, then accessing (Map<String,Object>) gives NullPointerException, which is caught. In C++, we need to check for null (empty any) and throw something like std::runtime_error. We'll catch exceptions in filter method.
+
+Edge cases: jwt string must start with user name; substring after name length. We need to compute date string from jwt substring. Need to ensure lengths are valid.
+
+Also setCurrentUserInfoAndLog prints to stdout. We'll use std::cout.
+
+Also note: Java's filter method returns boolean; C++ should return bool.
+
+We'll define a class AccessGatewayFilter with public methods. For simplicity, use typedef std::map<std::string, std::any> AnyMap; But <any> is C++17. We'll assume C++17. Use std::any_cast.
+
+Now write code. Include necessary headers.
+
+Potential issues:
+- Java's getJwtUser returns null if condition fails. In C++, we can return empty optional or nullptr. Return std::any? But return type is Map<String,Object>. In Java, returns null. In C++, we can return a std::optional<AnyMap> or return empty map and check. But to match behavior, we should return a pointer or something. However, the catch in filter expects exception if token null? Actually getJwtUser returns null, and filter does Map<String,Object> token = getJwtUser(request); then Map<String,Object> user = (Map<String,Object>) token.get("user"); if token is null, token.get("user") throws NullPointerException. So we need to replicate that. In C++, if we return nullptr (say std::shared_ptr or raw pointer), we can have token->at("user") cause exception. But we need to manage memory. Simpler: return a std::optional<AnyMap> and then throw an exception when trying to access if not present. But original code relies on null pointer exception. To mimic, we can return std::any containing a map or null. But null is not representable in std::any. So we can return a pointer to map or nullptr. We'll define getJwtUser as returning std::unique_ptr<AnyMap>? But then need to handle ownership. Another approach: return std::any that could be a map or empty. But checking if it's empty (has_value) and then accessing. However, filter does: Map<String,Object> token = getJwtUser(request); if token is null, then token.get("user") throws NullPointerException. So we can simulate by: after getJwtUser, if token is null (empty), then dereferencing leads to crash. But we can instead wrap in a try-catch for bad_any_cast or runtime_error. Simpler: make getJwtUser return std::any, and if it should return null, we return std::any() (empty). Then in filter, we attempt to get the map from that any; if empty, any_cast will throw bad_any_cast, which we catch. Proper behavior: the Java code catches Exception, which includes NullPointerException, ClassCastException, etc. In C++, we can catch std::exception and also std::bad_any_cast. So we catch std::exception. That's fine.
+
+Thus, procedure:
+- filter: call getJwtUser(request) returns std::any.
+- Attempt std::any_cast<AnyMap>(token) to get map. But need to get "user" from that map. Actually token itself is a map in Java. In our C++, getJwtUser returns the token map or empty. So we need to cast token to AnyMap. If token empty, any_cast throws. Then get "user" from that map, which is another map, cast to AnyMap. Then get "level" which is int, cast to int. Then compare >2. If any exception, return false.
+
+- Also need to handle the case where token exists but "user" key not present, etc.
+
+For date parsing and comparison, we'll implement a helper function to parse "yyyy-MM-dd" string to a struct {year, month, day} and compute days since epoch. Then compute current date - 3 days and compare.
+
+We need to handle potential format exceptions? In Java, LocalDate.parse throws DateTimeParseException, which extends RuntimeException and gets caught. In C++, we can throw std::invalid_argument if parsing fails, catch it.
+
+Implementation details:
+
+Use std::chrono::system_clock::now() to get current time, then convert to days since epoch. But need to subtract 3 days. Use std::chrono::days.
+
+Alternatively, manually compute: get current year, month, day using std::chrono::year_month_day (C++20). Since target is C++17, we'll have to manually compute using time_t and localtime. Safer: use <ctime> to get current date struct tm, then subtract 3 days (by modifying tm_mday and normalizing with mktime). Then compare with parsed date. But need to convert parsed date to time_t? We can compute day count from epoch for both and compare.
+
+Simpler: convert both dates to number of days since a common epoch (like 1970-01-01) using a function. Precompute days for parsed date and current date. Then compare.
+
+Write function dateToDays(int year, int month, int day) using algorithm (e.g., from known formula). Then compute current date from system clock. Use std::chrono::system_clock::to_time_t and localtime to get year, month, day.
+
+Also need to handle months and days correctly (0-index vs 1-index).
+
+Now, isStartWith: simple.
+
+setCurrentUserInfoAndLog: prints name + host + LocalDate.now() (no formatting, just LocalDate.toString() which is "yyyy-MM-dd"). So in C++, we need current date string "yyyy-MM-dd".
+</think>
+
+=== RAW ANSWER ===
+```
+#include <any>
+#include <chrono>
+#include <ctime>
+#include <iostream>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+class AccessGatewayFilter {
+public:
+    using AnyMap = std::map<std::string, std::any>;
+
+    bool filter(AnyMap& request) {
+        std::string requestUri = std::any_cast<std::string>(request.at("path"));
+        std::string method = std::any_cast<std::string>(request.at("method"));
+        (void)method; // unused in original but kept for parity
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            std::any tokenAny = getJwtUser(request);
+            // If tokenAny is empty, any_cast throws bad_any_cast
+            AnyMap token = std::any_cast<AnyMap>(tokenAny);
+            AnyMap user = std::any_cast<AnyMap>(token.at("user"));
+            int level = std::any_cast<int>(user.at("level"));
+            if (level > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (const std::exception&) {
+            return false;
+        }
+        return false;
+    }
+
+    bool isStartWith(const std::string& requestUri) {
+        std::vector<std::string> startWith = {"/api", "/login"};
+        for (const auto& s : startWith) {
+            if (requestUri.rfind(s, 0) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::any getJwtUser(AnyMap& request) {
+        AnyMap headers = std::any_cast<AnyMap>(request.at("headers"));
+        AnyMap token = std::any_cast<AnyMap>(headers.at("Authorization"));
+        AnyMap user = std::any_cast<AnyMap>(token.at("user"));
+        std::string jwt = std::any_cast<std::string>(token.at("jwt"));
+        std::string userName = std::any_cast<std::string>(user.at("name"));
+
+        if (jwt.rfind(userName, 0) == 0) {
+            std::string jwtStrDate = jwt.substr(userName.length());
+            // Parse date "yyyy-MM-dd"
+            if (jwtStrDate.length() != 10) {
+                return std::any(); // mimic null
+            }
+            int year = std::stoi(jwtStrDate.substr(0, 4));
+            int month = std::stoi(jwtStrDate.substr(5, 2));
+            int day = std::stoi(jwtStrDate.substr(8, 2));
+
+            // current date - 3 days
+            auto now = std::chrono::system_clock::now();
+            std::time_t t = std::chrono::system_clock::to_time_t(now);
+            struct tm* local = std::localtime(&t);
+            local->tm_mday -= 3;
+            std::mktime(local);
+            int curYear = local->tm_year + 1900;
+            int curMonth = local->tm_mon + 1;
+            int curDay = local->tm_mday;
+
+            // days since epoch for comparison
+            auto daysFromEpoch = [](int y, int m, int d) -> long long {
+                if (m <= 2) { y--; m += 12; }
+                return 365LL * y + y/4 - y/100 + y/400 + (153LL*m - 457)/5 + d - 306;
+            };
+
+            long long jwtDays = daysFromEpoch(year, month, day);
+            long long curDays = daysFromEpoch(curYear, curMonth, curDay);
+
+            if (curDays > jwtDays) { // 3 days before now is after jwtDate? Actually: now.minusDays(3).isAfter(jwtDate)
+                // Equivalent to jwtDays < curDays
+                return std::any(); // return null
+            }
+        }
+        return std::any(token);
+    }
+
+    void setCurrentUserInfoAndLog(AnyMap& user) {
+        std::string host = std::any_cast<std::string>(user.at("address"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        struct tm* local = std::localtime(&t);
+        char buf[11];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d", local);
+        std::string today(buf);
+
+        std::cout << name << host << today << std::endl;
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <any>
+#include <chrono>
+#include <ctime>
+#include <iostream>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+class AccessGatewayFilter {
+public:
+    using AnyMap = std::map<std::string, std::any>;
+
+    bool filter(AnyMap& request) {
+        std::string requestUri = std::any_cast<std::string>(request.at("path"));
+        std::string method = std::any_cast<std::string>(request.at("method"));
+        (void)method; // unused in original but kept for parity
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            std::any tokenAny = getJwtUser(request);
+            // If tokenAny is empty, any_cast throws bad_any_cast
+            AnyMap token = std::any_cast<AnyMap>(tokenAny);
+            AnyMap user = std::any_cast<AnyMap>(token.at("user"));
+            int level = std::any_cast<int>(user.at("level"));
+            if (level > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (const std::exception&) {
+            return false;
+        }
+        return false;
+    }
+
+    bool isStartWith(const std::string& requestUri) {
+        std::vector<std::string> startWith = {"/api", "/login"};
+        for (const auto& s : startWith) {
+            if (requestUri.rfind(s, 0) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::any getJwtUser(AnyMap& request) {
+        AnyMap headers = std::any_cast<AnyMap>(request.at("headers"));
+        AnyMap token = std::any_cast<AnyMap>(headers.at("Authorization"));
+        AnyMap user = std::any_cast<AnyMap>(token.at("user"));
+        std::string jwt = std::any_cast<std::string>(token.at("jwt"));
+        std::string userName = std::any_cast<std::string>(user.at("name"));
+
+        if (jwt.rfind(userName, 0) == 0) {
+            std::string jwtStrDate = jwt.substr(userName.length());
+            // Parse date "yyyy-MM-dd"
+            if (jwtStrDate.length() != 10) {
+                return std::any(); // mimic null
+            }
+            int year = std::stoi(jwtStrDate.substr(0, 4));
+            int month = std::stoi(jwtStrDate.substr(5, 2));
+            int day = std::stoi(jwtStrDate.substr(8, 2));
+
+            // current date - 3 days
+            auto now = std::chrono::system_clock::now();
+            std::time_t t = std::chrono::system_clock::to_time_t(now);
+            struct tm* local = std::localtime(&t);
+            local->tm_mday -= 3;
+            std::mktime(local);
+            int curYear = local->tm_year + 1900;
+            int curMonth = local->tm_mon + 1;
+            int curDay = local->tm_mday;
+
+            // days since epoch for comparison
+            auto daysFromEpoch = [](int y, int m, int d) -> long long {
+                if (m <= 2) { y--; m += 12; }
+                return 365LL * y + y/4 - y/100 + y/400 + (153LL*m - 457)/5 + d - 306;
+            };
+
+            long long jwtDays = daysFromEpoch(year, month, day);
+            long long curDays = daysFromEpoch(curYear, curMonth, curDay);
+
+            if (curDays > jwtDays) { // 3 days before now is after jwtDate? Actually: now.minusDays(3).isAfter(jwtDate)
+                // Equivalent to jwtDays < curDays
+                return std::any(); // return null
+            }
+        }
+        return std::any(token);
+    }
+
+    void setCurrentUserInfoAndLog(AnyMap& user) {
+        std::string host = std::any_cast<std::string>(user.at("address"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        struct tm* local = std::localtime(&t);
+        char buf[11];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d", local);
+        std::string today(buf);
+
+        std::cout << name << host << today << std::endl;
+    }
+};

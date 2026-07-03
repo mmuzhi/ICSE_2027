@@ -1,0 +1,377 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class DiscountStrategy {
+    public static final Promotion FIDELITY_PROMO = order ->
+            order.customer.getFidelity() >= 1000 ? order.total() * 0.05 : 0;
+
+    public static final Promotion BULK_ITEM_PROMO = order -> {
+        double discount = 0;
+        for (Product item : order.cart.getProducts()) {
+            if (item.getQuantity() >= 20) {
+                discount += item.getQuantity() * item.getPrice() * 0.1;
+            }
+        }
+        return discount;
+    };
+
+    public static final Promotion LARGE_ORDER_PROMO = order ->
+            order.cart.getProducts().size() >= 10 ? order.total() * 0.07 : 0;
+
+    private Customer customer;
+    private Cart cart;
+    private Promotion promotion;
+    private double total;
+
+    public DiscountStrategy(Customer customer, Cart cart, Promotion promotion) {
+        this.customer = customer;
+        this.cart = cart;
+        this.promotion = promotion;
+        this.total = total();
+    }
+
+    public double total() {
+        total = cart.getProducts().stream()
+                .mapToDouble(p -> p.getQuantity() * p.getPrice())
+                .sum();
+        return total;
+    }
+
+    public double due() {
+        double discount = (promotion == null) ? 0 : promotion.apply(this);
+        return total - discount;
+    }
+
+    public double promotion(DiscountStrategy order) {
+        return promotion == null ? 0 : promotion.apply(this);
+    }
+
+    @FunctionalInterface
+    public interface Promotion {
+        double apply(DiscountStrategy order);
+    }
+
+    public static class Customer {
+        private String name;
+        private int fidelity;
+
+        public Customer(String name, int fidelity) {
+            this.name = name;
+            this.fidelity = fidelity;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getFidelity() {
+            return fidelity;
+        }
+    }
+
+    public static class Cart {
+        private List<Product> products;
+
+        public Cart(Product... products) {
+            this.products = new ArrayList<>();
+            for (Product product : products) {
+                this.products.add(product);
+            }
+        }
+
+        public void addProduct(Product product) {
+            this.products.add(product);
+        }
+
+        public List<Product> getProducts() {
+            return products;
+        }
+    }
+
+    public static class Product {
+        private String name;
+        private int quantity;
+        private double price;
+
+        public Product(String name, int quantity, double price) {
+            this.name = name;
+            this.quantity = quantity;
+            this.price = price;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getQuantity() {
+            return quantity;
+        }
+
+        public double getPrice() {
+            return price;
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+Let me translate this Java code to C++ carefully, keeping behavior identical.
+
+Key things to note:
+1. The `Promotion` functional interface - in C++, I'll use `std::function<double(DiscountStrategy*)>`
+2. Static final Promotion fields - these are static lambda instances
+3. The nested classes Customer, Cart, Product
+4. The stream operations need to be converted to loops
+5. The varargs constructor for Cart
+6. The `total` field is set in the constructor via `total()` method call
+
+Let me think about the design carefully:
+
+- `DiscountStrategy` has a `Promotion promotion` field which is a function taking a `DiscountStrategy` (or reference/pointer) and returning double.
+- The static `FIDELITY_PROMO`, `BULK_ITEM_PROMO`, `LARGE_ORDER_PROMO` are lambdas that take an `order` (DiscountStrategy) and compute discounts.
+- In the lambdas, they access `order.customer`, `order.cart`, etc. - so they need access to the DiscountStrategy's fields.
+
+In C++, I need to be careful about:
+1. Forward declarations - `Promotion` uses `DiscountStrategy`, and `DiscountStrategy` uses `Promotion`
+2. The lambdas access `order.customer`, `order.cart` - these need to be public or the lambdas need friend access
+
+Let me think about the structure:
+
+Since `Promotion` is `std::function<double(DiscountStrategy&)>` and `DiscountStrategy` contains a `Promotion`, there's a circular dependency. I can use `std::function<double(DiscountStrategy&)>` which doesn't require `DiscountStrategy` to be complete at the point of declaration... actually, `std::function` uses type erasure, so it should work as long as the type is declared.
+
+Wait, actually `std::function<double(DiscountStrategy&)>` needs `DiscountStrategy` to be a complete type at the point where the function is called, not at declaration. But at the point of `std::function`'s template instantiation, it might need it. Let me think...
+
+Actually, `std::function<double(DiscountStrategy&)>` should work even if `DiscountStrategy` is forward-declared, because `std::function` only stores a type-erased callable. The actual call happens later when `DiscountStrategy` is complete.
+
+Hmm, but actually I'm not 100% sure about this. Let me think of an alternative approach.
+
+Actually, the standard says that `std::function`'s template parameter is the signature, and the parameters and return type need to be complete types when the function call operator is invoked, not at the point of `std::function` instantiation. But some implementations might require it. To be safe, I could use `std::function<double(const DiscountStrategy&)>` and forward-declare `DiscountStrategy`.
+
+Actually, let me reconsider. In practice, `std::function<double(DiscountStrategy&)>` with a forward-declared `DiscountStrategy` should compile fine in most implementations. The signature is just used for the call signature, and the actual invocation happens later.
+
+Let me structure the code:
+
+```cpp
+#include <functional>
+#include <vector>
+#include <string>
+#include <numeric>
+
+class DiscountStrategy;
+
+using Promotion = std::function<double(DiscountStrategy&)>;
+```
+
+Wait, but in Java, the Promotion interface is nested inside DiscountStrategy. Let me keep it as a nested type or just use a typedef/using.
+
+Actually, in Java, `Promotion` is a nested interface inside `DiscountStrategy`. In C++, I can make it a standalone type alias or keep it nested. Let me keep it as a standalone for simplicity, since we need forward declarations.
+
+Let me also think about the static Promotion fields. In Java, they're `static final` fields of `DiscountStrategy`. In C++, I'll make them static members.
+
+But there's a problem: the static Promotion fields are lambdas that access `order.customer` and `order.cart`. These are private fields in Java too, but in Java, the lambdas are defined inside the class, so they have access. In C++, I'll need to make the fields public or use friend declarations.
+
+Wait, in Java, the fields `customer`, `cart`, `promotion`, `total` are package-private (no access modifier = default/package-private). Since the lambdas are in the same class, they can access them. In C++, I'll make them public to match the accessibility.
+
+Actually, looking more carefully at the Java code, the fields have no access modifier, which means package-private. The lambdas are defined as static fields in the same class, so they can access the package-private fields. In C++, the equivalent would be to make them public or use friend. Let me make them public for simplicity.
+
+Now, the lambdas access `order.customer.getFidelity()`, `order.cart.getProducts()`, etc. In C++, these would be `order.customer.getFidelity()`, `order.cart.getProducts()`, etc. if customer and cart are public.
+
+Let me also think about the `total()` method. In Java, it uses streams. In C++, I'll use a loop.
+
+Let me also think about the `Cart` constructor with varargs. In C++, I can use `std::initializer_list<Product>` or a variadic template. Let me use `std::initializer_list` for simplicity.
+
+Actually, looking at the Java code more carefully:
+
+```java
+public Cart(Product... products) {
+    this.products = new ArrayList<>();
+
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <functional>
+#include <vector>
+#include <string>
+
+class DiscountStrategy {
+public:
+    class Customer {
+    private:
+        std::string name;
+        int fidelity;
+    public:
+        Customer(std::string name, int fidelity) : name(std::move(name)), fidelity(fidelity) {}
+        std::string getName() const { return name; }
+        int getFidelity() const { return fidelity; }
+    };
+
+    class Product {
+    private:
+        std::string name;
+        int quantity;
+        double price;
+    public:
+        Product(std::string name, int quantity, double price) : name(std::move(name)), quantity(quantity), price(price) {}
+        std::string getName() const { return name; }
+        int getQuantity() const { return quantity; }
+        double getPrice() const { return price; }
+    };
+
+    class Cart {
+    private:
+        std::vector<Product> products;
+    public:
+        Cart() = default;
+        Cart(std::initializer_list<Product> prods) : products(prods) {}
+        void addProduct(const Product& product) { products.push_back(product); }
+        std::vector<Product>& getProducts() { return products; }
+    };
+
+    using Promotion = std::function<double(DiscountStrategy&)>;
+
+    static Promotion FIDELITY_PROMO;
+    static Promotion BULK_ITEM_PROMO;
+    static Promotion LARGE_ORDER_PROMO;
+
+    Customer customer;
+    Cart cart;
+    Promotion promotion_;
+    double total;
+
+    DiscountStrategy(Customer customer, Cart cart, Promotion promotion)
+        : customer(std::move(customer)), cart(std::move(cart)), promotion_(std::move(promotion)), total(0) {
+        this->total = total();
+    }
+
+    double total() {
+        total = 0;
+        for (const auto& p : cart.getProducts()) {
+            total += p.getQuantity() * p.getPrice();
+        }
+        return total;
+    }
+
+    double due() {
+        double discount = promotion_ ? promotion_(*this) : 0;
+        return total - discount;
+    }
+
+    double promotion(DiscountStrategy& order) {
+        return promotion_ ? promotion_(*this) : 0;
+    }
+};
+
+DiscountStrategy::Promotion DiscountStrategy::FIDELITY_PROMO = [](DiscountStrategy& order) -> double {
+    return order.customer.getFidelity() >= 1000 ? order.total() * 0.05 : 0;
+};
+
+DiscountStrategy::Promotion DiscountStrategy::BULK_ITEM_PROMO = [](DiscountStrategy& order) -> double {
+    double discount = 0;
+    for (const auto& item : order.cart.getProducts()) {
+        if (item.getQuantity() >= 20) {
+            discount += item.getQuantity() * item.getPrice() * 0.1;
+        }
+    }
+    return discount;
+};
+
+DiscountStrategy::Promotion DiscountStrategy::LARGE_ORDER_PROMO = [](DiscountStrategy& order) -> double {
+    return order.cart.getProducts().size() >= 10 ? order.total() * 0.07 : 0;
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <functional>
+#include <vector>
+#include <string>
+
+class DiscountStrategy {
+public:
+    class Customer {
+    private:
+        std::string name;
+        int fidelity;
+    public:
+        Customer(std::string name, int fidelity) : name(std::move(name)), fidelity(fidelity) {}
+        std::string getName() const { return name; }
+        int getFidelity() const { return fidelity; }
+    };
+
+    class Product {
+    private:
+        std::string name;
+        int quantity;
+        double price;
+    public:
+        Product(std::string name, int quantity, double price) : name(std::move(name)), quantity(quantity), price(price) {}
+        std::string getName() const { return name; }
+        int getQuantity() const { return quantity; }
+        double getPrice() const { return price; }
+    };
+
+    class Cart {
+    private:
+        std::vector<Product> products;
+    public:
+        Cart() = default;
+        Cart(std::initializer_list<Product> prods) : products(prods) {}
+        void addProduct(const Product& product) { products.push_back(product); }
+        std::vector<Product>& getProducts() { return products; }
+    };
+
+    using Promotion = std::function<double(DiscountStrategy&)>;
+
+    static Promotion FIDELITY_PROMO;
+    static Promotion BULK_ITEM_PROMO;
+    static Promotion LARGE_ORDER_PROMO;
+
+    Customer customer;
+    Cart cart;
+    Promotion promotion_;
+    double total;
+
+    DiscountStrategy(Customer customer, Cart cart, Promotion promotion)
+        : customer(std::move(customer)), cart(std::move(cart)), promotion_(std::move(promotion)), total(0) {
+        this->total = total();
+    }
+
+    double total() {
+        total = 0;
+        for (const auto& p : cart.getProducts()) {
+            total += p.getQuantity() * p.getPrice();
+        }
+        return total;
+    }
+
+    double due() {
+        double discount = promotion_ ? promotion_(*this) : 0;
+        return total - discount;
+    }
+
+    double promotion(DiscountStrategy& order) {
+        return promotion_ ? promotion_(*this) : 0;
+    }
+};
+
+DiscountStrategy::Promotion DiscountStrategy::FIDELITY_PROMO = [](DiscountStrategy& order) -> double {
+    return order.customer.getFidelity() >= 1000 ? order.total() * 0.05 : 0;
+};
+
+DiscountStrategy::Promotion DiscountStrategy::BULK_ITEM_PROMO = [](DiscountStrategy& order) -> double {
+    double discount = 0;
+    for (const auto& item : order.cart.getProducts()) {
+        if (item.getQuantity() >= 20) {
+            discount += item.getQuantity() * item.getPrice() * 0.1;
+        }
+    }
+    return discount;
+};
+
+DiscountStrategy::Promotion DiscountStrategy::LARGE_ORDER_PROMO = [](DiscountStrategy& order) -> double {
+    return order.cart.getProducts().size() >= 10 ? order.total() * 0.07 : 0;
+};

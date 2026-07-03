@@ -1,0 +1,302 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class IPAddress {
+    private String ipAddress;
+
+    public IPAddress(String ipAddress) {
+        this.ipAddress = ipAddress;
+    }
+
+    public boolean isValid() {
+        String[] octets = ipAddress.split("\\.");
+        if (octets.length != 4) {
+            return false;
+        }
+        for (String octet : octets) {
+            try {
+                int num = Integer.parseInt(octet);
+                if (num < 0 || num > 255) {
+                    return false;
+                }
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public List<String> getOctets() {
+        List<String> octetsList = new ArrayList<>();
+        if (isValid()) {
+            String[] octets = ipAddress.split("\\.");
+            for (String octet : octets) {
+                octetsList.add(octet);
+            }
+        }
+        return octetsList;
+    }
+
+    public String getBinary() {
+        if (isValid()) {
+            StringBuilder binaryString = new StringBuilder();
+            String[] octets = ipAddress.split("\\.");
+            for (String octet : octets) {
+                int num = Integer.parseInt(octet);
+                String binaryOctet = String.format("%08d", Integer.parseInt(Integer.toBinaryString(num)));
+                binaryString.append(binaryOctet).append(".");
+            }
+            return binaryString.substring(0, binaryString.length() - 1);
+        }
+        return "";
+    }
+}
+
+=== REASONING ===
+<think>
+The user wants to translate a Java class `IPAddress` into C++.
+The class has:
+- A private member `ipAddress` (String).
+- A constructor taking a String.
+- A method `isValid()` returning a boolean.
+- A method `getOctets()` returning a `List<String>`.
+- A method `getBinary()` returning a `String`.
+
+Let's go through the methods:
+
+`isValid()`:
+- Splits the string by ".".
+- If the number of parts is not 4, returns false.
+- For each part, tries to parse it as an integer.
+- If parsing fails (NumberFormatException), returns false.
+- If the integer is < 0 or > 255, returns false.
+- Otherwise returns true.
+
+In C++:
+- `ipAddress` will be a `std::string`.
+- Splitting a string by "." can be done using `std::stringstream` or `std::string::find`.
+- Parsing as integer: `std::stoi`. It throws `std::invalid_argument` or `std::out_of_range`.
+- Wait, Java's `Integer.parseInt` throws `NumberFormatException` for non-numeric strings and strings that exceed the range of `int`.
+- In C++, `std::stoi` throws `std::invalid_argument` if no conversion could be performed, and `std::out_of_range` if the converted value would fall out of the range of `int`. We can catch both or just `std::exception` to match the behavior of returning `false` on any parsing error.
+- Wait, `std::stoi` also parses strings like "123abc" successfully and leaves "abc" unprocessed. Java's `Integer.parseInt("123abc")` throws `NumberFormatException`.
+- To exactly match Java's behavior, we should check if the entire string was consumed by `std::stoi`, or use a custom parsing function, or `std::strtol` and check `endptr`.
+- Let's write a small helper or use `std::strtol`.
+- Actually, since we are checking if the octet is purely digits, we could first check if the string is empty or contains non-digit characters (except maybe leading minus, but negative numbers will be caught by `num < 0` anyway, wait, Java's `Integer.parseInt("-1")` returns -1, which is caught by `num < 0`).
+- Wait, what if `octet` is " 123"? Java's `Integer.parseInt` trims whitespace? No, `Integer.parseInt` does NOT trim whitespace. It throws `NumberFormatException` for " 123".
+- Let's check `std::stoi` behavior: it skips leading whitespace. So we must be careful.
+- Let's just use `std::strtol` or manually check.
+- Actually, using `std::stringstream` for parsing:
+```cpp
+int num;
+std::stringstream ss(octet);
+if (!(ss >> num)) return false;
+// Check if there are remaining chars
+char remaining;
+if (ss >> remaining) return false;
+```
+- Wait, `std::stringstream` also skips whitespace. `ss >> num` will read " 123" and leave nothing, returning 123. Java throws exception for " 123".
+- So we should verify that the string only contains digits (or an optional minus sign, which will fail the `num < 0` check, but wait, "-0" is 0 in Java, and "00" is fine).
+- Wait, Java's `Integer.parseInt` allows leading zeros, e.g., "001" -> 1.
+- Let's just check if the string is empty, or contains non-digit characters. Wait, what if it's "-1"? It contains '-'. If we allow '-', then "-1" parses to -1, which is < 0, so `isValid()` returns false.
+- What if it's "+"? `Integer.parseInt("+1")` throws exception. Wait, no, `Integer.parseInt("+1")` actually throws `NumberFormatException` in Java! Let's verify. Yes, `Integer.parseInt` does not accept '+' sign.
+- So a valid octet string must match `[0-9]+` (or maybe just check if all characters are digits).
+- Wait, what if `octet` is "12345678901234567890"? `Integer.parseInt` throws `NumberFormatException` because it exceeds `int` range. `std::stoi` throws `std::out_of_range`.
+- If we use `std::stoi` and catch exceptions, we need to make sure it doesn't accept whitespace or trailing characters.
+- We can do:
+```cpp
+size_t pos;
+int num;
+try {
+    num = std::stoi(octet, &pos);
+} catch (std::exception& e) {
+    return false;
+}
+if (pos != octet.length()) return false;
+```
+Wait, `std::stoi` skips leading whitespace! If `octet` is " 1", `pos` will be 2, but `octet.length()` is 2, so it will pass! Java's `Integer.parseInt(" 1")` throws exception.
+So we must check if `octet` contains whitespace or if the first char is not a digit.
+Actually, if we just check `octet.empty() || !std::isdigit(octet[0])`, we reject leading whitespace and '+'/'-'.
+Wait, if `octet` is "-1", `!std::isdigit(octet[0])` is true, so we return false. But in Java, `Integer.parseInt("-1")` returns -1, then `num < 0` returns false. Does it matter if we return false early? The result is still `false`.
+What if `octet` is "-0"?
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <string>
+#include <vector>
+#include <sstream>
+#include <cctype>
+#include <stdexcept>
+
+class IPAddress {
+private:
+    std::string ipAddress;
+
+    bool isParsable(const std::string& octet) const {
+        if (octet.empty()) return false;
+        size_t start = 0;
+        if (octet[0] == '-') {
+            start = 1;
+        }
+        if (start == octet.size()) return false;
+        for (size_t i = start; i < octet.size(); ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(octet[i]))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    std::vector<std::string> splitByDot() const {
+        std::vector<std::string> tokens;
+        std::stringstream ss(ipAddress);
+        std::string token;
+        while (std::getline(ss, token, '.')) {
+            tokens.push_back(token);
+        }
+        while (!tokens.empty() && tokens.back().empty()) {
+            tokens.pop_back();
+        }
+        return tokens;
+    }
+
+public:
+    IPAddress(const std::string& ipAddress) : ipAddress(ipAddress) {}
+
+    bool isValid() const {
+        std::vector<std::string> octets = splitByDot();
+        if (octets.size() != 4) {
+            return false;
+        }
+        for (const std::string& octet : octets) {
+            if (!isParsable(octet)) return false;
+            try {
+                int num = std::stoi(octet);
+                if (num < 0 || num > 255) {
+                    return false;
+                }
+            } catch (const std::exception&) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    std::vector<std::string> getOctets() const {
+        std::vector<std::string> octetsList;
+        if (isValid()) {
+            octetsList = splitByDot();
+        }
+        return octetsList;
+    }
+
+    std::string getBinary() const {
+        if (isValid()) {
+            std::string binaryString;
+            std::vector<std::string> octets = splitByDot();
+            for (size_t i = 0; i < octets.size(); ++i) {
+                int num = std::stoi(octets[i]);
+                for (int j = 7; j >= 0; --j) {
+                    binaryString += ((num >> j) & 1) ? '1' : '0';
+                }
+                if (i < octets.size() - 1) {
+                    binaryString += ".";
+                }
+            }
+            return binaryString;
+        }
+        return "";
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <vector>
+#include <sstream>
+#include <cctype>
+#include <stdexcept>
+
+class IPAddress {
+private:
+    std::string ipAddress;
+
+    bool isParsable(const std::string& octet) const {
+        if (octet.empty()) return false;
+        size_t start = 0;
+        if (octet[0] == '-') {
+            start = 1;
+        }
+        if (start == octet.size()) return false;
+        for (size_t i = start; i < octet.size(); ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(octet[i]))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    std::vector<std::string> splitByDot() const {
+        std::vector<std::string> tokens;
+        std::stringstream ss(ipAddress);
+        std::string token;
+        while (std::getline(ss, token, '.')) {
+            tokens.push_back(token);
+        }
+        while (!tokens.empty() && tokens.back().empty()) {
+            tokens.pop_back();
+        }
+        return tokens;
+    }
+
+public:
+    IPAddress(const std::string& ipAddress) : ipAddress(ipAddress) {}
+
+    bool isValid() const {
+        std::vector<std::string> octets = splitByDot();
+        if (octets.size() != 4) {
+            return false;
+        }
+        for (const std::string& octet : octets) {
+            if (!isParsable(octet)) return false;
+            try {
+                int num = std::stoi(octet);
+                if (num < 0 || num > 255) {
+                    return false;
+                }
+            } catch (const std::exception&) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    std::vector<std::string> getOctets() const {
+        std::vector<std::string> octetsList;
+        if (isValid()) {
+            octetsList = splitByDot();
+        }
+        return octetsList;
+    }
+
+    std::string getBinary() const {
+        if (isValid()) {
+            std::string binaryString;
+            std::vector<std::string> octets = splitByDot();
+            for (size_t i = 0; i < octets.size(); ++i) {
+                int num = std::stoi(octets[i]);
+                for (int j = 7; j >= 0; --j) {
+                    binaryString += ((num >> j) & 1) ? '1' : '0';
+                }
+                if (i < octets.size() - 1) {
+                    binaryString += ".";
+                }
+            }
+            return binaryString;
+        }
+        return "";
+    }
+};

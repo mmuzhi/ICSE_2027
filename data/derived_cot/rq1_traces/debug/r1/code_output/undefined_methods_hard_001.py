@@ -1,0 +1,47 @@
+from collections import defaultdict
+
+class Solution:
+    def getMaxRepetitions(self, s1: str, n1: int, s2: str, n2: int) -> int:
+
+        rec, track = [0], defaultdict(int) 
+        ct = start = ptr2 = 0
+
+        if not set(s2).issubset(set(s1)):
+            return 0
+
+        s1 = ''.join(char for char in s1 if char in set(s2))
+        
+        while True:
+            ptr = -1  # To track the last position in s1 after processing s2
+            for char in s2:
+                pos = s1.find(char, start)
+                if pos == -1:
+                    ct += 1
+                    pos = s1.find(char)
+                    if pos == -1:  # Shouldn't happen due to subset check
+                        return 0
+                start = pos + 1
+                ptr = pos  # Update ptr to the last position found
+
+            rec.append(ct + 1)
+
+            if rec[-1] > n1:
+                return (len(rec) - 2) // n2
+
+            if ptr in track:
+                break
+            track[ptr] = len(rec) - 1
+        
+        cycle_start_idx = track[ptr]
+        cycleStart = rec[cycle_start_idx]
+        cycle1 = (ct + 1) - cycleStart
+        cycle2 = (len(rec) - 1) - cycle_start_idx
+        rest = n1 - cycleStart
+
+        rem = cycleStart + (rest % cycle1)
+
+        while ptr2 < len(rec) and rec[ptr2] <= rem:
+            ptr2 += 1
+
+        total = (cycle2 * (rest // cycle1) + (ptr2 - 1))
+        return total // n2

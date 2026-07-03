@@ -1,0 +1,514 @@
+=== PROMPT VARIANT ===
+qwen
+
+=== PROMPT ===
+You will be given a competitive programming problem.
+You are given a sequence A = (A_1, A_2, \dots, A_N) of N non-negative integers, and a positive integer M.
+Find the following value:
+\[
+\sum_{1 \leq l \leq r \leq N} \left( \left(\sum_{l \leq i \leq r} A_i\right) \mathbin{\mathrm{mod}} M \right).
+\]
+Here, X \mathbin{\mathrm{mod}} M denotes the remainder when the non-negative integer X is divided by M.
+
+Input
+
+The input is given from Standard Input in the following format:
+N M
+A_1 A_2 \dots A_N
+
+Output
+
+Print the answer.
+
+Constraints
+
+
+- 1 \leq N \leq 2 \times 10^5
+- 1 \leq M \leq 2 \times 10^5
+- 0 \leq A_i \leq 10^9
+
+Sample Input 1
+
+3 4
+2 5 0
+
+Sample Output 1
+
+10
+
+
+- A_1 \mathbin{\mathrm{mod}} M = 2
+- (A_1+A_2) \mathbin{\mathrm{mod}} M = 3
+- (A_1+A_2+A_3) \mathbin{\mathrm{mod}} M = 3
+- A_2 \mathbin{\mathrm{mod}} M = 1
+- (A_2+A_3) \mathbin{\mathrm{mod}} M = 1
+- A_3 \mathbin{\mathrm{mod}} M = 0
+
+The answer is the sum of these values, 10. Note that the outer sum is not taken modulo M.
+
+Sample Input 2
+
+10 100
+320 578 244 604 145 839 156 857 556 400
+
+Sample Output 2
+
+2736
+
+Use the following starter code to write the final solution.
+```python
+
+```
+
+Reason in a commit-build-close way.
+
+Follow the workflow below strictly. Think like terse contest scratch work, not a tutorial.
+
+A productive rhythm for this task usually looks like this:
+- Use the decisive constraints to narrow to one main candidate early. If two candidates remain, choose the simpler one that still fits the limits instead of keeping both alive.
+- Before coding, run one compact feasibility screen only on that chosen candidate: complexity, core data-structure fit, and the one or two edge cases most likely to break it.
+- Turn that result into a tiny implementation ledger: main state, loop order, invariant, and the one or two local risks to watch while coding.
+- Move into code promptly. Do not paraphrase the problem, replay samples, or explain the algorithm like a tutorial.
+- After coding starts, keep all later reflection attached to the current draft.
+- If something looks wrong, first classify it as a local patch, a small structural adjustment, or a genuine invariant break. Prefer the smallest fix that resolves it.
+- Do not reopen broad planning, redesign, or knowledge recall after a viable draft already exists unless a concrete edge case or contradiction forces it.
+- Once the chosen draft survives the feasibility screen, one key edge-case check, and one draft-level recheck, close rather than compare nearby alternatives again.
+- If a thought does not help choose, code, patch, or verify the current draft, drop it and continue.
+
+Try to avoid patterns like these:
+- tutorial-style explanation, sample replay, or long prose restatement before coding;
+- alternating between redesign, knowledge recall, and reconsideration after coding has already started;
+- drifting from a viable draft back into abstract planning without new evidence;
+- letting one local uncertainty expand into a fresh search cycle when a local patch would do.
+
+Output only the final Python code enclosed in a code block.
+
+=== REASONING ===
+<think>
+We need to compute sum over all subarrays [l,r] of (prefix sum mod M). Let S_i = sum_{1..i} A_i (with S_0 = 0). Then sum_{l<=r} ( (S_r - S_{l-1}) mod M ). This can be expressed as sum_{r=1..N} sum_{l=1..r} ((S_r - S_{l-1}) mod M). We need efficient O(N log N) or O(N) solution given N up to 2e5, M up to 2e5.
+
+Standard technique: For each r, we want sum_{l=1..r} ((S_r - S_{l-1}) mod M). Note that (S_r - S_{l-1}) mod M = (S_r mod M - S_{l-1} mod M + M) mod M. But careful: (a - b) mod M = (a_mod - b_mod + M) mod M. So we need to sum over previous prefix mod values.
+
+Let x = S_r mod M. Then for each previous prefix mod y = S_{l-1} mod M, the contribution is (x - y + M) % M. So sum_{y in set of previous mods} ((x - y + M) % M). This is like: if y <= x, then contribution = x - y; else contribution = x - y + M = (x + M - y). So sum = count_{y <= x} * x - sum_{y <= x} y + count_{y > x} * (x + M) - sum_{y > x} y.
+
+Let total count = r (since l-1 from 0 to r-1, so r previous prefixes). Let total sum of y = sum_{i=0}^{r-1} (S_i mod M). Then sum_{y <= x} and sum_{y > x} can be derived.
+
+We need to maintain a data structure that supports adding a new y (the mod of current prefix) and querying for a given x: sum of (x - y mod M) over all y in the set. Since M up to 2e5, we can use Fenwick tree (BIT) for frequencies and sums of y values (the mod values). But note y values are in [0, M-1]. So we can maintain two BITs: one for count, one for sum of y. Then for each r, we query count of y <= x and sum of y <= x. Then compute contribution as described.
+
+But careful: The set includes S_0 mod M = 0. So we need to start with BIT containing y=0. Then for each r from 1 to N, we compute x = S_r mod M, then compute contribution for this r as sum over l=1..r ((S_r - S_{l-1}) mod M). Then add this contribution to answer. After that, we insert x into BIT (as y for future positions). Actually we need to insert S_r mod M as a y for future r's? For next r+1, the set of previous prefixes includes S_0,...,S_r. So after processing r, we add x to BIT.
+
+Thus algorithm:
+- Initialize BIT_count and BIT_sum of size M (maybe M+2). Insert 0 with count 1, sum 0.
+- total = 0 (prefix sum), ans = 0.
+- For i from 1 to N:
+    total += A_i
+    x = total % M
+    cnt_le = query_count(x)   // number of y <= x
+    sum_le = query_sum(x)     // sum of y <= x
+    cnt_total = i   // because we have i previous prefixes (0..i-1)
+    sum_total = total_sum_mods (we need to keep running sum of all y inserted so far)
+    cnt_gt = cnt_total - cnt_le
+    sum_gt = sum_total - sum_le
+    contribution = cnt_le * x - sum_le + cnt_gt * (x + M) - sum_gt
+    ans += contribution
+    // update BITs with x
+    update_count(x, 1)
+    update_sum(x, x)
+    total_sum_mods += x
+
+But careful: total_sum_mods is sum of all y inserted so far, i.e., sum of S_i mod M for i from 0 to i-1. Initially after inserting 0, total_sum_mods = 0. After each iteration, we add x.
+
+Now complexity O(N log M). M up to 2e5, fine.
+
+But we must check edge cases: x can be 0..M-1. BIT indices: we can use 1-indexed, mapping value v to index v+1 maybe. But we need to query up to x inclusive. So we can use BIT size M (or M+2). Since values are in [0, M-1], we can shift by +1.
+
+Also note that A_i up to 1e9, total sum could be large, but we only need mod M, so we can compute total mod M as we go.
+
+Now test sample 1: N=3, M=4, A=[2,5,0].
+Initialize: BIT has 0: count=1, sum=0, total_sum_mods=0.
+i=1: total=2, x=2. cnt_le = count <=2: includes 0 ->1. sum_le=0. cnt_total=1, sum_total=0. cnt_gt=0, sum_gt=0. contribution = 1*2 -0 +0 =2. ans=2. Insert x=2: count[2]=1, sum[2]=2, total_sum_mods=2.
+i=2: total=2+5=7, x=7%4=3. cnt_le = count <=3: includes 0,2 ->2. sum_le=0+2=2. cnt_total=2, sum_total=2. cnt_gt=0, sum_gt=0. contribution = 2*3 -2 =6-2=4. ans=2+4=6. Insert x=3: count[3]=1, sum[3]=3, total_sum_mods=5.
+i=3: total=7+0=7, x=3. cnt_le = count <=3: includes 0,2,3 ->3. sum_le=0+2+3=5. cnt_total=3, sum_total=5. cnt_gt=0. contribution = 3*3 -5 =9-5=4. ans=6+4=10. matches sample.
+
+Sample 2: we can test later.
+
+But is there any nuance? The sum over subarrays includes each subarray exactly once. Our method sums for each r, the contributions from all l <= r. That's correct.
+
+Now we need to implement BIT. Since M up to 2e5, we can use size M+5. However, note that x can be M-1, so we need index up to M-1+1 = M. So BIT size M+2 is fine.
+
+But we must be careful: The BIT sum of y values may be large (up to N * (M-1) ~ 4e10), but Python int can handle.
+
+Now consider alternative: Could there be a simpler O(N) using two pointers? Probably not because mod operation creates piecewise linear function.
+
+Thus the BIT approach is standard.
+
+But we need to ensure that we handle the case where M=1. Then all mod values are 0. Then x = 0 always. Then for each r, contribution = sum_{l=1..r} ((S_r - S_{l-1}) mod 1) = 0. So answer 0. Our BIT: size M=1, values only 0. For x=0, cnt_le = count <=0 = all previous (since all are 0). sum_le = sum of all y = 0. cnt_total = r, sum_total=0. cnt_gt=0. contribution = r*0 -0 =0. So works. But BIT indexing: we need to map value 0 to index 1. So size = M+2 = 3 is fine. Query up to x inclusive: x=0, we query index 1. Works.
+
+Now complexity O(N log M) ~ 2e5 * log2(2e5) ~ 2e5 * 18 = 3.6e6, fine.
+
+Implementation details:
+
+- Read N, M.
+- Read list A.
+- BIT class with __init__(self, n): self.n = n; self.bit = [0]*(n+1) (1-indexed).
+- add(i, val): while i <= n: bit[i] += val; i += i&-i.
+- sum(i): res=0; while i>0: res+=bit[i]; i-=i&-i; return res.
+- For query prefix up to value v (0-indexed), we need index = v+1 (since v in [0, M-1]). So define function query_count(v): return bit_count.sum(v+1). Similarly query_sum(v): return bit_sum.sum(v+1).
+- For update: update_count(v, 1): bit_count.add(v+1, 1); update_sum(v, v): bit_sum.add(v+1, v).
+
+But careful: v can be M-1, then v+1 = M, which is <= n if n = M (since we set BIT size = M). Actually if we set BIT size = M (since indices 1..M), then v+1 max = M, which is within. So BIT size = M. But we need to handle M maybe 0? M>=1. So BIT size = M is enough. However, we also need to store value 0, which maps to index 1. So BIT size M works because the largest index is M (when v = M-1). So we can set n = M.
+
+But what if M=0? Not possible. So fine.
+
+Edge: When M is large up to 2e5, BIT size 2e5 is fine.
+
+Now we need to keep total_sum_mods as sum of all y inserted so far. Initially after inserting 0, total_sum_mods = 0. Actually we inserted 0, so total_sum_mods should be 0. But we also need to include that in BIT sum. So we need to update BIT with 0 before loop.
+
+Initialize:
+bit_count = BIT(M)
+bit_sum = BIT(M)
+bit_count.add(0+1, 1)   # index 1
+bit_sum.add(0+1, 0)     # sum add 0
+total_sum_mods = 0
+prefix_mod = 0
+ans = 0
+
+Loop for a in A:
+    prefix_mod = (prefix_mod + a) % M   # but careful: we need actual total sum mod M, but we can compute as (prefix_mod + a) % M. However, we also need total sum for later? Not needed. But we need to compute x = (prefix_mod + a) % M? Actually we maintain total sum mod M. Let's keep variable cur_mod = (cur_mod + a) % M.
+    x = cur_mod
+    cnt_le = bit_count.sum(x+1)
+    sum_le = bit_sum.sum(x+1)
+    cnt_total = i+1? Actually after processing i elements, we have i previous prefixes (0..i-1). At start of iteration i (1-indexed), we have inserted i prefixes? Let's define loop index i from 0 to N-1. At iteration i, we have already inserted prefixes for indices 0..i-1 (i prefixes). So cnt_total = i. But we can keep a variable count_inserted = i (starting from 1 after initial insert). So we can maintain a variable inserted = 1 initially (for S0). Then for each new element, before updating, inserted is the number of previous prefixes. So we can compute cnt_total = inserted. Then after computing contribution, we update BIT with x and increment inserted by 1. Also total_sum_mods is sum of all y inserted so far. Initially total_sum_mods = 0. After each update, total_sum_mods += x.
+
+Thus:
+inserted = 1
+total_sum_mods = 0
+for a in A:
+    cur_mod = (cur_mod + a) % M
+    x = cur_mod
+    cnt_le = bit_count.sum(x+1)
+    sum_le = bit_sum.sum(x+1)
+    cnt_total = inserted
+    sum_total = total_sum_mods
+    cnt_gt = cnt_total - cnt_le
+    sum_gt = sum_total - sum_le
+    contrib = cnt_le * x - sum_le + cnt_gt * (x + M) - sum_gt
+    ans += contrib
+    # update
+    bit_count.add(x+1, 1)
+    bit_sum.add(x+1, x)
+    total_sum_mods += x
+    inserted += 1
+
+But careful: The BIT sum queries include the initial 0. At first iteration, inserted=1, total_sum_mods=0, cnt_le = count <= x. Since only 0 present, if x>=0, cnt_le=1, sum_le=0. Works.
+
+Now we need to verify with sample 2? We'll trust.
+
+Potential overflow? Python fine.
+
+Now consider that M could be up to 2e5, but A_i up to 1e9, so cur_mod computed with modulo each step is fine.
+
+Now check if there is any off-by-one: The contribution formula derived: For each y, (x - y mod M) = if y <= x then x-y else x-y+M. So sum = sum_{y<=x} (x-y) + sum_{y>x} (x-y+M) = cnt_le*x - sum_le + cnt_gt*(x+M) - sum_gt. Yes.
+
+But we must ensure that y values are exactly S_{l-1} mod M. Since we inserted S_0 mod M = 0, and then after each r we insert S_r mod M, the set for next r includes all needed.
+
+Now we must also consider that the sum over subarrays is over l<=r, and we are summing contributions for each r. That yields total sum.
+
+Thus algorithm is correct.
+
+Now we need to implement BIT efficiently. Since M up to 2e5, BIT operations O(log M). Could also use sorted list + prefix sums but BIT is fine.
+
+Now potential pitfalls: When M is large and we use BIT of size M, but we only use values that appear. However, we need to query for x which is in [0,M-1], so BIT must cover all indices. That's fine.
+
+Now we should also consider that we might use coordinate compression if M were larger, but M is only 2e5, so no need.
+
+Now code:
+
+class BIT:
+    def __init__(self, n):
+        self.n = n
+        self.bit = [0]*(n+1)
+    def add(self, idx, val):
+        while idx <= self.n:
+            self.bit[idx] += val
+            idx += idx & -idx
+    def sum(self, idx):
+        s = 0
+        while idx > 0:
+            s += self.bit[idx]
+            idx -= idx & -idx
+        return s
+
+But careful: For BIT sum, we need to query up to index inclusive. We'll use 1-indexed.
+
+Now we need to set n = M. Because indices 1..M correspond to values 0..M-1. So n = M.
+
+But if M = 0? Not possible.
+
+Now we need to add initial 0: bit_count.add(1, 1), bit_sum.add(1, 0).
+
+Now loop over A.
+
+But we also need to compute cur_mod. We can maintain cur = 0. For each a: cur = (cur + a) % M.
+
+Now test with sample 1: as above.
+
+Now test with sample 2 manually? Not needed.
+
+Now consider edge case: N=1, M arbitrary. Then we have only one subarray: A1 mod M. Our algorithm: inserted=1, total_sum_mods=0, cur_mod = A1%M = x. cnt_le = count <= x: includes 0 if x>=0 always true, so cnt_le=1, sum_le=0. cnt_total=1, sum_total=0, cnt_gt=0. contribution = 1*x -0 = x. ans = x. That's correct.
+
+Now consider case where M=2, A=[1,1]. Then prefixes: S0=0, S1=1, S2=2%2=0. Subarrays: [1]:1 mod2=1; [2]:1 mod2=1; [1,2]:2 mod2=0; sum=2. Our algorithm: init: inserted=1, total_sum_mods=0.
+i1: cur_mod=1, x=1. cnt_le = count <=1: includes 0 ->1, sum_le=0. cnt_total=1, sum_total=0. cnt_gt=0. contrib=1*1=1. ans=1. Update: add x=1: count[1]++, sum[1]+=1, total_sum_mods=1, inserted=2.
+i2: cur_mod = (1+1)%2=0, x=0. cnt_le = count <=0: includes 0? we have values: 0 and 1. count <=0: only 0? Actually BIT: we have 0 (count1) and 1 (count1). So count <=0 = 1 (value 0). sum_le = 0. cnt_total=2, sum_total=1 (0+1). cnt_gt = 1, sum_gt = 1. contrib = cnt_le*x - sum_le + cnt_gt*(x+M) - sum_gt = 1*0 -0 + 1*(0+2) -1 = 2-1=1. ans=1+1=2. correct.
+
+Now consider M=3, A=[2,2]. Prefixes: S0=0, S1=2, S2=4%3=1. Subarrays: [2]:2; [2,2]: (2+2)%3=1; [2]:2; sum=5. Our algorithm: init: inserted=1, total_sum_mods=0.
+i1: x=2, cnt_le: count <=2: includes 0 ->1, sum_le=0. cnt_total=1, sum_total=0. cnt_gt=0. contrib=2. ans=2. Update: add 2, total_sum_mods=2, inserted=2.
+i2: x=1, cnt_le: count <=1: includes 0 ->1, sum_le=0. cnt_total=2, sum_total=2. cnt_gt=1, sum_gt=2. contrib = 1*1 -0 + 1*(1+3) -2 = 1 +4-2=3. ans=2+3=5. correct.
+
+Now consider M=5, A=[3,4]. Prefixes: S0=0, S1=3, S2=7%5=2. Subarrays: [3]:3; [3,4]:2; [4]:4; sum=9. Our algorithm: init: inserted=1, total_sum_mods=0.
+i1: x=3, cnt_le: count <=3: includes 0 ->1, sum_le=0. cnt_total=1, sum_total=0. cnt_gt=0. contrib=3. ans=3. Update: add 3, total_sum_mods=3, inserted=2.
+i2: x=2, cnt_le: count <=2: includes 0 ->1, sum_le=0. cnt_total=2, sum_total=3. cnt_gt=1, sum_gt=3. contrib = 1*2 -0 + 1*(2+5) -3 =2 +7-3=6. ans=3+6=9. correct.
+
+Now consider M=5, A=[6,7] but A_i can be >M. Prefixes: S0=0, S1=6%5=1, S2=13%5=3. Subarrays: [6]:1; [6,7]:3; [7]:2; sum=6. Our algorithm: init: inserted=1, total_sum_mods=0.
+i1: x=1, cnt_le: count <=1: includes 0 ->1, sum_le=0. cnt_total=1, sum_total=0. cnt_gt=0. contrib=1. ans=1. Update: add 1, total_sum_mods=1, inserted=2.
+i2: x=3, cnt_le: count <=3: includes 0,1 ->2, sum_le=0+1=1. cnt_total=2, sum_total=1. cnt_gt=0, sum_gt=0. contrib = 2*3 -1 =6-1=5. ans=1+5=6. correct.
+
+Now we must ensure that we handle large N and M efficiently.
+
+Potential memory: BIT arrays of size M+1 ~ 200001, fine.
+
+Now we need to output ans as integer (maybe large up to N^2 * M? Actually worst-case sum of mods: each subarray mod M at most M-1, number of subarrays N(N+1)/2 up to ~2e5*2e5/2 = 2e10, times M-1 up to 2e5 gives 4e15, which fits in Python int.
+
+Now we must produce final code.
+
+But wait: There is a nuance: The formula uses sum_{y > x} (x + M - y) = cnt_gt*(x+M) - sum_gt. But is that always correct when y > x? Since y in [0, M-1], and x in [0, M-1], if y > x then x - y is negative, so (x - y) mod M = x - y + M. So yes.
+
+Now check if there is any double counting or missing of subarrays where l=1? That's included because we have S0.
+
+Now consider if we need to handle the case where the sum of A_i could be huge and we compute cur_mod via modulo each step, but we also need the actual total sum? Not needed.
+
+Thus solution is correct.
+
+Now we should implement BIT with methods.
+
+But we can also use array module or list.
+
+Now we need to be careful about reading input: use sys.stdin.read().split().
+
+Now final code:
+
+import sys
+
+def main():
+    import sys
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    M = int(next(it))
+    A = [int(next(it)) for _ in range(N)]
+
+    class BIT:
+        __slots__ = ('n', 'bit')
+        def __init__(self, n):
+            self.n = n
+            self.bit = [0]*(n+1)
+        def add(self, idx, val):
+            n = self.n
+            bit = self.bit
+            while idx <= n:
+                bit[idx] += val
+                idx += idx & -idx
+        def sum(self, idx):
+            s = 0
+            bit = self.bit
+            while idx > 0:
+                s += bit[idx]
+                idx -= idx & -idx
+            return s
+
+    bit_cnt = BIT(M)
+    bit_sum = BIT(M)
+    # insert S0 = 0
+    bit_cnt.add(1, 1)   # index 1 corresponds to value 0
+    bit_sum.add(1, 0)
+    inserted = 1
+    total_sum_mods = 0
+    cur_mod = 0
+    ans = 0
+
+    for a in A:
+        cur_mod = (cur_mod + a) % M
+        x = cur_mod
+        idx = x + 1
+        cnt_le = bit_cnt.sum(idx)
+        sum_le = bit_sum.sum(idx)
+        cnt_total = inserted
+        sum_total = total_sum_mods
+        cnt_gt = cnt_total - cnt_le
+        sum_gt = sum_total - sum_le
+        contrib = cnt_le * x - sum_le + cnt_gt * (x + M) - sum_gt
+        ans += contrib
+        # update
+        bit_cnt.add(idx, 1)
+        bit_sum.add(idx, x)
+        total_sum_mods += x
+        inserted += 1
+
+    print(ans)
+
+if __name__ == "__main__":
+    main()
+
+Now test with sample inputs.
+
+Sample1: N=3 M=4 A=[2,5,0] -> ans 10.
+
+Sample2: We can compute quickly? Not necessary but trust.
+
+Now consider potential bug: When M=1, BIT size = 1. Then we add initial 0 at index 1. For each a, cur_mod = (cur_mod + a) % 1 = 0. x=0, idx=1. cnt_le = bit_cnt.sum(1) = count of all inserted (since only index 1). Initially inserted=1, cnt_le=1, sum_le=0. cnt_total=1, sum_total=0, cnt_gt=0. contrib=1*0-0=0. Then update: add idx=1, cnt+1, sum+0. So ans stays 0. Works.
+
+Now consider M=2, N=2, A=[1,1] we already tested.
+
+Now consider M=200000, N=200000, all A_i=0. Then all prefix mods = 0. Then for each r, x=0. cnt_le = inserted (since all zeros), sum_le=0, cnt_total=inserted, sum_total=0, cnt_gt=0. contrib = inserted*0 -0 =0. ans=0. That's correct because each subarray sum mod M = 0.
+
+Now consider M=200000, A_i all 1. Then prefix mods increase by 1 each step mod M. This will test BIT performance. Should be fine.
+
+Now potential overflow of BIT sum: bit_sum stores sum of y values, which can be up to N * (M-1) ~ 4e10, which fits in Python int.
+
+Now we should ensure that we use fast I/O.
+
+Now final code.
+
+But wait: There is a known alternative using sorting of prefix mods and using two pointers, but BIT is fine.
+
+Now we must output only the final Python code enclosed in a code block. So we will produce that.
+
+But before finalizing, let's double-check the derivation and ensure no off-by-one in inserted count.
+
+At start, we have inserted S0 (index 0). So number of previous prefixes before processing first element is 1 (S0). That matches inserted=1. For r=1, we consider l from 1 to 1, so l-1 from 0 to 0, so one y. So cnt_total = 1. Good.
+
+After processing first element, we insert S1 mod M. Then inserted becomes 2. For r=2, we consider l=1..2, so l-1 from 0..1, two y's. So cnt_total = inserted = 2. Good.
+
+Thus correct.
+
+Now what about the BIT sum query for x? We use idx = x+1. Since BIT indices start at 1, value 0 maps to 1, value M-1 maps to M. So sum(idx) returns sum of all values with index <= idx, i.e., values <= x. Good.
+
+Now one more nuance: When we update bit_sum with value x, we add x to the BIT at index idx. That's correct because we want to store the sum of y values. However, note that BIT sum query returns sum of values stored at indices up to idx. Since we add x at index idx, it's included when querying <= x. Good.
+
+Now we need to be careful that we do not exceed BIT size when idx = M (if x = M-1). Since BIT size n = M, idx = M is valid. So BIT.add must handle idx <= n. Good.
+
+Now test with M=2, x=1: idx=2, n=2, add works.
+
+Now test with M=1, x=0: idx=1, n=1, add works.
+
+Now we should consider that we might need to use faster BIT implementation with local variables for speed, but not necessary.
+
+Now we should also consider using array of ints? Not needed.
+
+Now finalize.
+
+But wait: There is a potential improvement: Since M is up to 2e5, we could also use a Fenwick tree with size M. However, we must note that the values we insert are only prefix mods, which are in [0, M-1]. So it's fine.
+
+Now I'll produce final answer.
+
+But the instruction says: "Use the following starter code to write the final solution." The starter code is empty: ```python
+
+```. So we just output our code in a code block.
+
+Thus final output.
+
+But before final, I'll think about any alternative pitfalls: The sum of contributions for each r includes the subarray where l=r, i.e., single element. That's included because we have y = S_{r-1} mod M, and x = S_r mod M, and (x - y) mod M = A_r mod M. Our method includes that because we consider all y including S_{r-1}. Yes.
+
+Now what about subarray where l=1? y=S0=0, included.
+
+Thus correct.
+
+Now we should also consider that we are using Python's default recursion? No recursion.
+
+Now we can finalize.
+
+But wait: There is a known trick: The sum over subarrays of (prefix sum mod M) can be computed by counting pairs of prefix sums with certain conditions. Actually we can compute total sum = sum_{i=0}^{N} sum_{j=0}^{i-1} ((S_i - S_j) mod M). That's exactly what we are doing.
+
+Now we might also compute using the fact that sum_{j < i} ((S_i - S_j) mod M) = i * S_i mod M - sum_{j < i} S_j mod M + M * (number of j with S_j mod M > S_i mod M). Which is what we have.
+
+Now we have implemented.
+
+Now we can produce final code.
+
+But we need to ensure that we use sys.setrecursionlimit? Not needed.
+
+Now final answer.
+
+I'll output the code.
+</think>
+
+=== ANSWER ===
+```python
+import sys
+
+def main():
+    data = sys.stdin.read().split()
+    it = iter(data)
+    N = int(next(it))
+    M = int(next(it))
+    A = [int(next(it)) for _ in range(N)]
+
+    class BIT:
+        __slots__ = ('n', 'bit')
+        def __init__(self, n):
+            self.n = n
+            self.bit = [0] * (n + 1)
+        def add(self, idx, val):
+            n = self.n
+            bit = self.bit
+            while idx <= n:
+                bit[idx] += val
+                idx += idx & -idx
+        def sum(self, idx):
+            s = 0
+            bit = self.bit
+            while idx > 0:
+                s += bit[idx]
+                idx -= idx & -idx
+            return s
+
+    bit_cnt = BIT(M)
+    bit_sum = BIT(M)
+
+    # insert S0 = 0
+    bit_cnt.add(1, 1)   # index 1 corresponds to value 0
+    bit_sum.add(1, 0)
+
+    inserted = 1          # number of prefix sums already in BIT
+    total_sum_mods = 0    # sum of all inserted prefix mods
+    cur_mod = 0
+    ans = 0
+
+    for a in A:
+        cur_mod = (cur_mod + a) % M
+        x = cur_mod
+        idx = x + 1
+
+        cnt_le = bit_cnt.sum(idx)
+        sum_le = bit_sum.sum(idx)
+
+        cnt_total = inserted
+        sum_total = total_sum_mods
+
+        cnt_gt = cnt_total - cnt_le
+        sum_gt = sum_total - sum_le
+
+        contrib = cnt_le * x - sum_le + cnt_gt * (x + M) - sum_gt
+        ans += contrib
+
+        # add current prefix mod to BIT for future positions
+        bit_cnt.add(idx, 1)
+        bit_sum.add(idx, x)
+        total_sum_mods += x
+        inserted += 1
+
+    print(ans)
+
+if __name__ == "__main__":
+    main()
+```

@@ -1,0 +1,614 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.sql.*;
+import java.util.*;
+
+public class DatabaseProcessor {
+    private String databaseName;
+
+    static {
+        try {
+            Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public DatabaseProcessor(String databaseName) {
+        this.databaseName = databaseName;
+    }
+
+    public void createTable(String tableName, String key1, String key2) {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + databaseName);
+             Statement stmt = conn.createStatement()) {
+            String createTableQuery = String.format(
+                    "CREATE TABLE IF NOT EXISTS %s (id INTEGER PRIMARY KEY, %s TEXT, %s INTEGER)",
+                    tableName, key1, key2);
+            stmt.execute(createTableQuery);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void insertIntoDatabase(String tableName, List<Map<String, Object>> data) {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + databaseName);
+             Statement stmt = conn.createStatement()) {
+            for (Map<String, Object> item : data) {
+                String insertQuery = String.format(
+                        "INSERT INTO %s (name, age) VALUES ('%s', %d)",
+                        tableName, item.get("name"), (int) item.get("age"));
+                stmt.execute(insertQuery);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public List<Map<String, Object>> searchDatabase(String tableName, String name) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + databaseName);
+             Statement stmt = conn.createStatement()) {
+            String selectQuery = String.format("SELECT * FROM %s WHERE name = '%s'", tableName, name);
+            ResultSet rs = stmt.executeQuery(selectQuery);
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                row.put("id", rs.getInt("id"));
+                row.put("name", rs.getString("name"));
+                row.put("age", rs.getInt("age"));
+                result.add(row);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return result.isEmpty() ? null : result;
+    }
+
+    public void deleteFromDatabase(String tableName, String name) {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + databaseName);
+             Statement stmt = conn.createStatement()) {
+            String deleteQuery = String.format("DELETE FROM %s WHERE name = '%s'", tableName, name);
+            stmt.execute(deleteQuery);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to translate the Java code to Python step by step.
+ Important: We must maintain the same behavior, including handling of exceptions and side effects.
+
+ Steps:
+ 1. We don't have static initializers in Python. We can load the driver when the module is imported.
+    However, note that in Java, the static block runs when the class is loaded. We can do the equivalent in Python by
+    importing the necessary module at the top. But note that the Java code uses SQLite, and in Python we use sqlite3.
+
+ 2. We'll create a class `DatabaseProcessor` with similar methods.
+
+ 3. We note that the Java code uses JDBC, but in Python we use the built-in `sqlite3` module.
+
+ 4. The methods:
+    - `__init__`: constructor that takes a database name.
+    - `createTable`: creates a table with the given table name and two keys (which are column names). The table has three columns: id (primary key), and two others (one TEXT and one INTEGER).
+    - `insertIntoDatabase`: takes a table name and a list of maps (dictionaries). Each map has keys "name" and "age". We insert each item.
+    - `searchDatabase`: takes a table name and a name (string) to search for. Returns a list of maps (each representing a row) or null if none found. Note: the Java code returns null when the result list is empty.
+    - `deleteFromDatabase`: deletes rows where the name column matches the given name.
+
+ 5. Exception handling: The Java code catches SQLException and prints the stack trace. We'll do the same in Python by catching `sqlite3.Error` and printing the error.
+
+ 6. We must note that the Java code uses string formatting to build SQL queries. This is vulnerable to SQL injection. 
+    However, since the requirement is to keep behavior identical, we will do the same. But note: in production, using parameterized queries is recommended.
+
+ 7. The `createTable` method uses two keys: `key1` and `key2`. The first key is used as a TEXT column and the second as INTEGER.
+    In the Java code, the table creation query is:
+        "CREATE TABLE IF NOT EXISTS %s (id INTEGER PRIMARY KEY, %s TEXT, %s INTEGER)"
+
+ 8. The `insertIntoDatabase` method expects each map in the list to have keys "name" and "age". It uses:
+        "INSERT INTO %s (name, age) VALUES ('%s', %d)"
+
+ 9. The `searchDatabase` method returns a list of maps. Each map has keys: "id", "name", "age". If no rows are found, it returns null.
+
+ 10. We'll use the `sqlite3` module to interact with the SQLite database.
+
+ Implementation:
+
+ Let's write the code accordingly.
+
+ Note: We are not using any ORM or advanced Python features to keep the behavior identical.
+
+ However, note that the Java code uses try-with-resources. In Python, we can use context managers (the `with` statement) for connections and cursors.
+
+ Steps for each method:
+   - Open a connection to the database (using the filename provided in the constructor).
+   - Create a cursor (in Python, we use cursor to execute statements).
+   - Execute the query.
+   - For search, we fetch the results and build the list of dictionaries.
+   - Close the cursor and connection automatically by using the context manager.
+
+ But note: in Java, the try-with-resources closes the connection and statement automatically. Similarly, in Python the connection context manager will commit or rollback, but note that by default it does not close the connection? Actually, the `sqlite3` connection can be used as a context manager that commits on exit and does not close by default. However, we want to close the connection? The Java code closes the connection at the end of the try block.
+
+ Let's look at the Python `sqlite3` connection: 
+   - We can use `with sqlite3.connect(...) as conn:` which will commit on successful exit and rollback on exception, but it does not close the connection? Actually, the connection is closed when exiting the `with` block? According to the documentation: "The connection object can be used as a context manager that automatically commits or rolls back open transactions when leaving the body of the context manager." It doesn't say it closes the connection. However, we can also close the connection explicitly? But note that the Java code closes the connection at the end of the try block.
+
+ Actually, in Python, the connection is closed when we exit the `with` block? Let me check: 
+   - The `sqlite3.connect` returns a connection and when used in a `with` statement, it will commit on exit and then close the connection? 
+
+ According to the docs: 
+   - "When a connection is used as a context manager, it automatically commits any pending transaction if the body of the context manager completes without exceptions. If an exception occurs, the transaction is rolled back; but the connection remains open."
+
+   - But note: it does not automatically close the connection. So if we want to close the connection, we must explicitly call `close`? However, the Java code closes the connection. 
+
+   - Alternatively, we can use the connection without a context manager and then close it. But note that the Java code uses a try-with-resources which closes the connection. We want the same behavior.
+
+   - We can do:
+
+        conn = sqlite3.connect(self.databaseName)
+        try:
+            # do work
+        finally:
+            conn.close()
+
+   - Or we can use the context manager for the connection and then also use a context manager for the cursor? Actually, the cursor doesn't have a context manager in the standard library? 
+
+   - Alternatively, we can use:
+
+        with sqlite3.connect(self.databaseName) as conn:
+            cursor = conn.cursor()
+            # execute statements with cursor
+            # then cursor doesn't need a context manager? But we should close the cursor? Actually, the cursor is closed when the connection is closed? 
+
+   - However, the Java code also closes the statement (which is like the cursor). So we can do:
+
+        with sqlite3.connect(self.databaseName) as conn:
+            cursor = conn.cursor()
+            ... use cursor ...
+            # we don't explicitly close the cursor? But when the connection exits the block, the cursor is closed.
+
+   - But note: the connection context manager does not close the connection? Actually, the documentation says: "The connection object can be used as a context manager that automatically commits or rolls back open transactions." It does not say it closes the connection. However, in the `sqlite3` module, the `__exit__` method does not close the connection? 
+
+   - We can see that the connection remains open until explicitly closed. But the Java code closes the connection. We want the same.
+
+   - How about we do:
+
+        conn = sqlite3.connect(self.databaseName)
+        try:
+            cursor = conn.cursor()
+            ... 
+        finally:
+            conn.close()
+
+   - This ensures the connection is closed.
+
+   - Alternatively, we can use the context manager and then rely on the fact that the connection will be closed when the reference count drops? But we want deterministic closing.
+
+   - Since the Java code closes the connection at the end of the try block, we will do the same: explicitly close the connection in a finally block.
+
+   - However, note that the Java code uses try-with-resources which automatically closes the connection and the statement. We can mimic that by:
+
+        conn = sqlite3.connect(self.databaseName)
+        try:
+            cursor = conn.cursor()
+            # do work
+        finally:
+            conn.close()
+
+   - But note: what about the cursor? We should close the cursor too? According to the Python docs, closing the connection will close the cursors. So we don't need to.
+
+ 11. We'll structure each method as:
+
+        conn = sqlite3.connect(self.databaseName)
+        try:
+            cursor = conn.cursor()
+            # execute the query
+            # for queries that change the database, we commit: but note that by default, sqlite3 commits after every statement? Actually, no: we need to commit explicitly? 
+
+            # The Java code uses auto-commit? Actually, in Java, when we create a Statement, it is auto-commit? In Python, we have to commit? 
+
+            # Actually, when we use `execute` for DDL and DML, sqlite3 commits automatically? 
+
+            # But note: the Java code uses `execute` and then doesn't call commit? Because the connection is in auto-commit mode by default.
+
+            # In Python, the `sqlite3` module operates in auto-commit mode by default? Actually, no: we have to commit explicitly? 
+
+            # The `sqlite3` module has two modes: 
+            #   - implicit: when we create a connection, it starts a transaction. We must commit or rollback.
+            #   - but note: DDL statements (like CREATE TABLE) commit any pending transaction? 
+
+            # Actually, according to the SQLite documentation, DDL statements cause an implicit commit. So it's safe.
+
+            # However, for INSERT, DELETE, etc., we are in a transaction? 
+
+            # The Java code uses auto-commit by default? Actually, the `createStatement` returns a statement that when executed, auto-commits? 
+
+            # In Python, we can set the isolation level to None for auto-commit? Or we can commit after every statement? 
+
+            # Alternatively, we can commit after each statement? But note that the Java code does one statement per method call (except insertIntoDatabase which does multiple). 
+
+            # For multiple inserts, the Java code does multiple `execute` calls and each one is auto-committed? Because the connection is in auto-commit mode.
+
+            # In Python, we can set the connection to auto-commit mode by setting `isolation_level=None`.
+
+            # But note: the Java code does not set auto-commit explicitly? It uses the default which is auto-commit? 
+
+            # Actually, the JDBC driver for SQLite has auto-commit on by default? 
+
+            # So we should set the isolation_level to None in Python? 
+
+            # However, let me check: without setting isolation_level, each `execute` does not commit? We have to commit explicitly? 
+
+            # We can test: without commit, the inserts are not saved? 
+
+            # So to mimic the Java behavior (auto-commit per statement), we set isolation_level=None.
+
+            # Therefore, when connecting, we do: `sqlite3.connect(self.databaseName, isolation_level=None)`
+
+        except sqlite3.Error as e:
+            print(e)
+        finally:
+            conn.close()
+
+ 12. But note: the Java code uses a try-with-resources that closes the connection even if an exception occurs. We are doing the same.
+
+ 13. However, for the `insertIntoDatabase` method: the Java code does multiple inserts in a loop. Each insert is executed as a separate statement and auto-committed. We want the same.
+
+ 14. We'll set the isolation level to None to get auto-commit.
+
+ 15. Alternatively, if we don't set isolation_level, then we are in a transaction and we would have to commit after each insert? But note that the Java code does not commit explicitly. So we set isolation_level=None.
+
+ 16. Also note: the Java code uses `Statement` which is for static SQL statements without parameters. We are building the string dynamically.
+
+ 17. Now, let's write the code accordingly.
+
+ 18. We note that the Java code returns null for an empty search result. We'll return None in that case.
+
+ 19. Steps:
+
+    - Import sqlite3.
+
+    - We don't need a static initializer because we are using the built-in module.
+
+    - Constructor: store the database name.
+
+    - Each method: connect with auto-commit (isolation_level=None), then create a cursor, then execute the queries.
+
+ 20. Let's code accordingly.
+
+ Important: We are using string formatting to build the queries, which is vulnerable to SQL injection. But we are keeping the same behavior as the Java code.
+
+ Implementation:
+
+ We'll write:
+
+    import sqlite3
+
+    class DatabaseProcessor:
+        def __init__(self, database_name):
+            self.database_name = database_name
+
+        def create_table(self, table_name, key1, key2):
+            conn = None
+            try:
+                conn = sqlite3.connect(self.database_name, isolation_level=None)
+                cursor = conn.cursor()
+                create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} (id INTEGER PRIMARY KEY, {key1} TEXT, {key2} INTEGER)"
+                cursor.execute(create_table_query)
+            except sqlite3.Error as e:
+                print(e)
+            finally:
+                if conn:
+                    conn.close()
+
+        def insert_into_database(self, table_name, data):
+            # data: list of dictionaries, each dict has keys "name" and "age"
+            conn = None
+            try:
+                conn = sqlite3.connect(self.database_name, isolation_level=None)
+                cursor = conn.cursor()
+                for item in data:
+                    name = item['name']
+                    age = item['age']
+                    # We must escape any single quotes? The Java code doesn't handle this either. So same vulnerability.
+                    insert_query = f"INSERT INTO {table_name} (name, age) VALUES ('{name}', {age})"
+                    cursor.execute(insert_query)
+            except sqlite3.Error as e:
+                print(e)
+            finally:
+                if conn:
+                    conn.close()
+
+        def search_database(self, table_name, name):
+            conn = None
+            result = []
+            try:
+                conn = sqlite3.connect(self.database_name, isolation_level=None)
+                cursor = conn.cursor()
+                select_query = f"SELECT * FROM {table_name} WHERE name = '{name}'"
+                cursor.execute(select_query)
+                rows = cursor.fetchall()
+                # The rows: each row is a tuple with (id, name, age)
+                # We know the columns: id, name, age? But note: the table has columns: id, then the two keys (which in the insert are called 'name' and 'age')?
+                # However, in the insert, we are inserting into (name, age). So the table has at least three columns: id, name, age.
+                # But the create_table method uses key1 and key2? How do we know the column names? 
+                # In the Java code, when searching, it uses "id", "name", "age". So we assume that the two keys passed to create_table are named 'name' and 'age'? 
+                # Actually, note: the insert method uses hard-coded column names 'name' and 'age'. So the table must have these two columns.
+
+                # Therefore, we can assume the table has columns: id, name, age.
+
+                # But what if the table was created with different key names? Then the insert would fail? 
+
+                # The Java code has an inconsistency: the create_table takes two keys (which are column names) but the insert uses fixed column names 'name' and 'age'. 
+
+                # This means that the two keys passed to create_table must be 'name' and 'age'? 
+
+                # Actually, the Java code does not enforce that. It's a potential bug. We are replicating the same.
+
+                # So we assume that the table has columns: id, name, age.
+
+                for row in rows:
+                    # row[0] = id, row[1] = name, row[2] = age
+                    row_map = {
+                        'id': row[0],
+                        'name': row[1],
+                        'age': row[2]
+                    }
+                    result.append(row_map)
+            except sqlite3.Error as e:
+                print(e)
+            finally:
+                if conn:
+                    conn.close()
+
+            if not result:
+                return None
+            return result
+
+        def delete_from_database(self, table_name, name):
+            conn = None
+            try:
+                conn = sqlite3.connect(self.database_name, isolation_level=None)
+                cursor = conn.cursor()
+                delete_query = f"DELETE FROM {table_name} WHERE name = '{name}'"
+                cursor.execute(delete_query)
+            except sqlite3.Error as e:
+                print(e)
+            finally:
+                if conn:
+                    conn.close()
+
+ 21. However, note that the Java code uses the method names as in camelCase. We are using snake_case for Python. But the requirement says "Use idiomatic Python", and method names in Python are snake_case.
+
+ 22. But the requirement also says: "Keep behavior identical". The method names are part of the public API? However, the problem says "translate the following Java code". We are not required to maintain the same method names? But the problem does not specify the usage context. Since it's a translation and we are to use idiomatic Python, we change the method names to snake_case.
+
+ 23. But note: the problem says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". The method names are not part of the inputs/outputs? They are part of the interface? 
+
+ 24. If we are to use the same method names (camelCase) to be a drop-in replacement for Java code called from Python? That would be unidiomatic. However, the problem says "Use idiomatic Python only when it doesn't change behavior". Changing the method names to snake_case changes the behavior? Only if the code is being called by other code that expects the method names in camelCase? 
+
+ 25. The problem does not specify the calling context. Therefore, we have two options:
+        a) Keep the method names in camelCase to match the Java code's public interface.
+        b) Change to snake_case because that is idiomatic.
+
+ 26. Since the problem says "Use idiomatic Python only when it doesn't change behavior", and changing the method names might break a caller that expects camelCase, we should keep the method names as camelCase? 
+
+ 27. However, the problem does not specify that the class will be used by existing Python code that expects camelCase. It's a translation of a Java class. Therefore, I think we are free to use idiomatic naming.
+
+ 28. But the requirement says "Keep behavior identical". The behavior includes the method names? 
+
+ 29. Let me re-read: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". The method names are not part of the inputs? They are part of the class interface? 
+
+ 30. Since the problem does not specify, and to be safe, we will keep the method names exactly as in Java? 
+
+ 31. However, the problem says: "Translate the following Java code to Python". We are not required to keep the same method names? 
+
+ 32. Given the ambiguity, I'll follow the common practice in such translations: we use the same logical structure and method names are translated to Python conventions. 
+
+ 33. But note: the problem states that we are an expert programmer and we are to translate. We are to use idiomatic Python only when it doesn't change behavior. Changing the method names to snake_case does not change the functional behavior? It only changes the name by which the methods are called. 
+
+ 34. Therefore, I will use snake_case for method names.
+
+ 35. Alternatively, if we want to be very safe, we can keep the method names in camelCase? 
+
+ 36. Let me decide: since the problem says "idiomatic Python", and method names in Python are snake_case, we change the method names to snake_case.
+
+ 37. We'll change:
+        createTable -> create_table
+        insertIntoDatabase -> insert_into_database
+        searchDatabase -> search_database
+        deleteFromDatabase -> delete_from_database
+
+ 38. Now, note: the Java code uses a package `org.example`. We are not required to mimic the package structure? We are writing a single Python module.
+
+ 39. We'll write the class without a package.
+
+ 40. Let's write the complete code.
+
+ 41. One more note: the Java code uses `List<Map<String, Object>>`. In Python, we are using `list` of `dict` with string keys and values that can be int or string (for the row). But note: the `Object` in Java can be any type? We are using int for age and string for name. So in Python, we use the same.
+
+ 42. Also, the Java code returns `null` for an empty search. We return `None`.
+
+ 43. We'll now write the code accordingly.
+
+ 44. Edge: if an exception occurs, we print and then proceed? The Java code prints the stack trace and then continues? We print the exception and then close the connection? Then return? For search, we return an empty list? But then we check if the list is empty and return None? So if an exception occurs, we return an empty list? Then we return None? 
+
+ 45. Actually, in the search method: if an exception occurs, we print and then the `result` remains empty? Then we check `if not result` -> returns None.
+
+ 46. Same as Java: if an exception occurs during search, the method returns null.
+
+ 47. We are good.
+
+ Let's code accordingly.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a Java class that interacts with an SQLite database into Python while maintaining identical behavior. The Java class includes methods to create a table, insert data, search data, and delete data from the database. The Python implementation will use the `sqlite3` module to achieve the same functionality.
+
+### Approach
+1. **Database Connection Handling**: Each method in the Python class will establish a connection to the SQLite database using the provided database name. The connection is configured to use auto-commit mode (`isolation_level=None`) to mimic the default behavior of JDBC in Java.
+2. **Table Creation**: The `create_table` method constructs and executes a SQL query to create a table if it doesn't exist, with columns for an integer primary key and two specified columns (one text and one integer).
+3. **Data Insertion**: The `insert_into_database` method iterates over a list of dictionaries, each representing a row of data, and inserts each row into the specified table using dynamically generated SQL queries.
+4. **Data Search**: The `search_database` method constructs a SQL query to search for rows matching a given name in the specified table. The results are converted into a list of dictionaries representing each row. If no results are found, it returns `None`.
+5. **Data Deletion**: The `delete_from_database` method constructs and executes a SQL query to delete rows matching a given name from the specified table.
+6. **Error Handling**: All database operations are wrapped in try-except blocks to catch and print any SQLite errors, ensuring the program continues execution after an error.
+
+### Solution Code
+```python
+import sqlite3
+
+class DatabaseProcessor:
+    def __init__(self, database_name):
+        self.database_name = database_name
+    
+    def create_table(self, table_name, key1, key2):
+        conn = None
+        try:
+            conn = sqlite3.connect(self.database_name, isolation_level=None)
+            cursor = conn.cursor()
+            create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} (id INTEGER PRIMARY KEY, {key1} TEXT, {key2} INTEGER)"
+            cursor.execute(create_table_query)
+        except sqlite3.Error as e:
+            print(e)
+        finally:
+            if conn:
+                conn.close()
+    
+    def insert_into_database(self, table_name, data):
+        conn = None
+        try:
+            conn = sqlite3.connect(self.database_name, isolation_level=None)
+            cursor = conn.cursor()
+            for item in data:
+                name = item['name']
+                age = item['age']
+                insert_query = f"INSERT INTO {table_name} (name, age) VALUES ('{name}', {age})"
+                cursor.execute(insert_query)
+        except sqlite3.Error as e:
+            print(e)
+        finally:
+            if conn:
+                conn.close()
+    
+    def search_database(self, table_name, name):
+        conn = None
+        result = []
+        try:
+            conn = sqlite3.connect(self.database_name, isolation_level=None)
+            cursor = conn.cursor()
+            select_query = f"SELECT * FROM {table_name} WHERE name = '{name}'"
+            cursor.execute(select_query)
+            rows = cursor.fetchall()
+            for row in rows:
+                row_map = {
+                    'id': row[0],
+                    'name': row[1],
+                    'age': row[2]
+                }
+                result.append(row_map)
+        except sqlite3.Error as e:
+            print(e)
+        finally:
+            if conn:
+                conn.close()
+        if not result:
+            return None
+        return result
+    
+    def delete_from_database(self, table_name, name):
+        conn = None
+        try:
+            conn = sqlite3.connect(self.database_name, isolation_level=None)
+            cursor = conn.cursor()
+            delete_query = f"DELETE FROM {table_name} WHERE name = '{name}'"
+            cursor.execute(delete_query)
+        except sqlite3.Error as e:
+            print(e)
+        finally:
+            if conn:
+                conn.close()
+```
+
+### Explanation
+1. **Initialization**: The `__init__` method initializes the database processor with the name of the SQLite database file.
+2. **Table Creation**: The `create_table` method uses an SQL `CREATE TABLE` statement to create a table with the specified name and columns. The table includes an auto-incrementing primary key (`id`), a text column (`key1`), and an integer column (`key2`).
+3. **Data Insertion**: The `insert_into_database` method inserts each dictionary in the input list into the specified table. Each dictionary must contain keys `name` (text) and `age` (integer).
+4. **Data Search**: The `search_database` method queries the database for rows where the `name` column matches the input string. The results are converted into a list of dictionaries. If no results are found, it returns `None`.
+5. **Data Deletion**: The `delete_from_database` method deletes all rows from the specified table where the `name` column matches the input string.
+6. **Error Handling**: Each method includes error handling to catch and print any SQLite errors, ensuring the program continues running after encountering an exception. The database connection is closed in the `finally` block to prevent resource leaks.
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+
+class DatabaseProcessor:
+    def __init__(self, database_name):
+        self.database_name = database_name
+    
+    def create_table(self, table_name, key1, key2):
+        conn = None
+        try:
+            conn = sqlite3.connect(self.database_name, isolation_level=None)
+            cursor = conn.cursor()
+            create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} (id INTEGER PRIMARY KEY, {key1} TEXT, {key2} INTEGER)"
+            cursor.execute(create_table_query)
+        except sqlite3.Error as e:
+            print(e)
+        finally:
+            if conn:
+                conn.close()
+    
+    def insert_into_database(self, table_name, data):
+        conn = None
+        try:
+            conn = sqlite3.connect(self.database_name, isolation_level=None)
+            cursor = conn.cursor()
+            for item in data:
+                name = item['name']
+                age = item['age']
+                insert_query = f"INSERT INTO {table_name} (name, age) VALUES ('{name}', {age})"
+                cursor.execute(insert_query)
+        except sqlite3.Error as e:
+            print(e)
+        finally:
+            if conn:
+                conn.close()
+    
+    def search_database(self, table_name, name):
+        conn = None
+        result = []
+        try:
+            conn = sqlite3.connect(self.database_name, isolation_level=None)
+            cursor = conn.cursor()
+            select_query = f"SELECT * FROM {table_name} WHERE name = '{name}'"
+            cursor.execute(select_query)
+            rows = cursor.fetchall()
+            for row in rows:
+                row_map = {
+                    'id': row[0],
+                    'name': row[1],
+                    'age': row[2]
+                }
+                result.append(row_map)
+        except sqlite3.Error as e:
+            print(e)
+        finally:
+            if conn:
+                conn.close()
+        if not result:
+            return None
+        return result
+    
+    def delete_from_database(self, table_name, name):
+        conn = None
+        try:
+            conn = sqlite3.connect(self.database_name, isolation_level=None)
+            cursor = conn.cursor()
+            delete_query = f"DELETE FROM {table_name} WHERE name = '{name}'"
+            cursor.execute(delete_query)
+        except sqlite3.Error as e:
+            print(e)
+        finally:
+            if conn:
+                conn.close()

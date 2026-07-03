@@ -1,0 +1,1100 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class DiscountStrategy {
+    public static final Promotion FIDELITY_PROMO = order ->
+            order.customer.getFidelity() >= 1000 ? order.total() * 0.05 : 0;
+
+    public static final Promotion BULK_ITEM_PROMO = order -> {
+        double discount = 0;
+        for (Product item : order.cart.getProducts()) {
+            if (item.getQuantity() >= 20) {
+                discount += item.getQuantity() * item.getPrice() * 0.1;
+            }
+        }
+        return discount;
+    };
+
+    public static final Promotion LARGE_ORDER_PROMO = order ->
+            order.cart.getProducts().size() >= 10 ? order.total() * 0.07 : 0;
+
+    private Customer customer;
+    private Cart cart;
+    private Promotion promotion;
+    private double total;
+
+    public DiscountStrategy(Customer customer, Cart cart, Promotion promotion) {
+        this.customer = customer;
+        this.cart = cart;
+        this.promotion = promotion;
+        this.total = total();
+    }
+
+    public double total() {
+        total = cart.getProducts().stream()
+                .mapToDouble(p -> p.getQuantity() * p.getPrice())
+                .sum();
+        return total;
+    }
+
+    public double due() {
+        double discount = (promotion == null) ? 0 : promotion.apply(this);
+        return total - discount;
+    }
+
+    public double promotion(DiscountStrategy order) {
+        return promotion == null ? 0 : promotion.apply(this);
+    }
+
+    @FunctionalInterface
+    public interface Promotion {
+        double apply(DiscountStrategy order);
+    }
+
+    public static class Customer {
+        private String name;
+        private int fidelity;
+
+        public Customer(String name, int fidelity) {
+            this.name = name;
+            this.fidelity = fidelity;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getFidelity() {
+            return fidelity;
+        }
+    }
+
+    public static class Cart {
+        private List<Product> products;
+
+        public Cart(Product... products) {
+            this.products = new ArrayList<>();
+            for (Product product : products) {
+                this.products.add(product);
+            }
+        }
+
+        public void addProduct(Product product) {
+            this.products.add(product);
+        }
+
+        public List<Product> getProducts() {
+            return products;
+        }
+    }
+
+    public static class Product {
+        private String name;
+        private int quantity;
+        private double price;
+
+        public Product(String name, int quantity, double price) {
+            this.name = name;
+            this.quantity = quantity;
+            this.price = price;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getQuantity() {
+            return quantity;
+        }
+
+        public double getPrice() {
+            return price;
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to translate the Java code to C++.
+ The Java code uses functional interfaces (Promotion) which we can map to function objects (std::function) in C++.
+ We'll create classes for Customer, Cart, Product, and DiscountStrategy.
+ Since the Java code uses inner classes, we can either use nested classes in C++ or separate them (we'll use nested classes for similarity).
+ However, note that in C++ nested classes are not automatically friends of the outer class, so we might need to make them friends or provide accessors.
+ We'll try to keep the structure similar.
+
+ Important: We are not using any Java streams in C++. We'll use loops and standard algorithms where appropriate.
+
+ Steps:
+ 1. Create a class DiscountStrategy.
+ 2. Inside DiscountStrategy, define nested classes: Customer, Cart, Product.
+ 3. The Promotion interface becomes a std::function<double(DiscountStrategy*)> or we can define a type alias for it.
+ 4. We have three static Promotion members (FIDELITY_PROMO, BULK_ITEM_PROMO, LARGE_ORDER_PROMO). In C++, we can define them as static members or as global constants. Since they are public and static, we can define them as static members of DiscountStrategy.
+
+ However, note that in C++ we cannot initialize static members inside the class (unless constexpr). We'll define them in the implementation file.
+
+ Alternatively, we can use inline variables (C++17) to initialize them in the header.
+
+ Since we are translating to C++ and we want to keep the same behavior, we'll use:
+
+   static const std::function<double(DiscountStrategy*)> FIDELITY_PROMO;
+   ... etc.
+
+ But note: the Java code uses lambdas that capture nothing (so they can be converted to function pointers). However, in C++ lambdas without capture are convertible to function pointers, but here we are using std::function to allow any callable.
+
+ Alternatively, we can use function pointers for these specific lambdas since they don't capture. However, to match the Promotion interface which is a functional interface, we'll use std::function.
+
+ 5. The DiscountStrategy class has:
+      Customer customer;
+      Cart cart;
+      Promotion promotion;   // which is std::function<double(DiscountStrategy*)>
+      double total;
+
+ 6. We'll provide a constructor that initializes these members.
+
+ 7. The total() method in Java computes the total by summing the products. We'll do the same in C++.
+
+ 8. The due() method and promotion() method (which is confusingly named) - note: the promotion method in the Java class is:
+        public double promotion(DiscountStrategy order) {
+            return promotion == null ? 0 : promotion.apply(this);
+        }
+    But note: the method due() uses:
+        double discount = (promotion == null) ? 0 : promotion.apply(this);
+
+    And the promotion method above seems to have a parameter that is not used? Actually, it uses `this`. So the method is equivalent to:
+
+        public double promotion() {
+            return promotion == null ? 0 : promotion.apply(this);
+        }
+
+    However, the method is defined with a parameter `DiscountStrategy order` which is not used. This might be a mistake? But we are to keep behavior identical.
+
+    Actually, looking at the interface Promotion:
+
+        public interface Promotion {
+            double apply(DiscountStrategy order);
+        }
+
+    And the method promotion(DiscountStrategy order) is not the same as the one in the interface? Actually, the class DiscountStrategy has a method named promotion that takes a DiscountStrategy argument? That seems odd.
+
+    Let me reexamine: 
+
+        public double promotion(DiscountStrategy order) {
+            return promotion == null ? 0 : promotion.apply(this);
+        }
+
+    This method is using the current object's promotion (the member) and applying it to the current object (this). The parameter `order` is not used. So it's effectively a method that returns the discount amount for the current order using the stored promotion.
+
+    But note: the method due() uses the same calculation.
+
+    Why have two methods? Actually, the due() method returns total - discount, and the promotion method returns the discount.
+
+    So we'll have:
+        double due() { 
+            double discount = (promotion == nullptr) ? 0 : promotion(this); 
+            return total - discount; 
+        }
+
+        double promotion(DiscountStrategy* order) { 
+            // But note: the parameter is unused. We'll ignore it and use `this`.
+            // However, the method signature must match? But the Java code uses a parameter? 
+            // Actually, the Java method doesn't use the parameter. So we can do the same in C++: ignore the parameter.
+            return (promotion == nullptr) ? 0 : promotion(this);
+        }
+
+    But wait: the Java method promotion(DiscountStrategy order) is called with an argument? Actually, in the Java code, it is called in the main? We don't have a main here. But the code provided doesn't have a main.
+
+    Since the requirement is to keep behavior identical, we'll translate the method as is.
+
+    However, note: the DiscountStrategy class has a member `promotion` which is of type Promotion (the functional interface). In C++, we'll represent it as std::function<double(DiscountStrategy*)>. And when we call it, we pass `this`.
+
+ 9. We'll have to define the nested classes: Customer, Cart, Product.
+
+ Implementation:
+
+    class DiscountStrategy {
+    public:
+        // Define nested classes first (if we define them inside, then we have to define them before using)
+        class Customer {
+        private:
+            std::string name;
+            int fidelity;
+        public:
+            Customer(std::string name, int fidelity) : name(name), fidelity(fidelity) {}
+            std::string getName() const { return name; }
+            int getFidelity() const { return fidelity; }
+        };
+
+        class Product {
+        private:
+            std::string name;
+            int quantity;
+            double price;
+        public:
+            Product(std::string name, int quantity, double price) 
+                : name(name), quantity(quantity), price(price) {}
+            std::string getName() const { return name; }
+            int getQuantity() const { return quantity; }
+            double getPrice() const { return price; }
+        };
+
+        class Cart {
+        private:
+            std::vector<Product> products;
+        public:
+            Cart(std::initializer_list<Product> items) : products(items) {}
+            void addProduct(const Product& product) {
+                products.push_back(product);
+            }
+            const std::vector<Product>& getProducts() const { return products; }
+        };
+
+        // Promotion type alias
+        using Promotion = std::function<double(DiscountStrategy*)>;
+
+        // Static promotion objects
+        static Promotion FIDELITY_PROMO;
+        static Promotion BULK_ITEM_PROMO;
+        static Promotion LARGE_ORDER_PROMO;
+
+    private:
+        Customer customer;
+        Cart cart;
+        Promotion promotion;
+        double total;
+
+    public:
+        DiscountStrategy(Customer customer, Cart cart, Promotion promotion)
+            : customer(customer), cart(cart), promotion(promotion) {
+            total = this->total();
+        }
+
+        double total() {
+            double sum = 0.0;
+            for (const Product& p : cart.getProducts()) {
+                sum += p.getQuantity() * p.getPrice();
+            }
+            return sum;
+        }
+
+        double due() {
+            double discount = (promotion == nullptr) ? 0.0 : promotion(this);
+            return total - discount;
+        }
+
+        double promotion(DiscountStrategy* order) {
+            // Note: the parameter is unused? We use the current object (this) to compute the discount.
+            // But the function stored in the member `promotion` expects a DiscountStrategy* (the current object).
+            // So we pass `this`.
+            return (promotion == nullptr) ? 0.0 : promotion(this);
+        }
+    };
+
+    // Now define the static promotions outside the class.
+
+    DiscountStrategy::Promotion DiscountStrategy::FIDELITY_PROMO = [](DiscountStrategy* order) -> double {
+        return (order->customer.getFidelity() >= 1000) ? (order->total * 0.05) : 0.0;
+    };
+
+    DiscountStrategy::Promotion DiscountStrategy::BULK_ITEM_PROMO = [](DiscountStrategy* order) -> double {
+        double discount = 0.0;
+        for (const Product& item : order->cart.getProducts()) {
+            if (item.getQuantity() >= 20) {
+                discount += item.getQuantity() * item.getPrice() * 0.1;
+            }
+        }
+        return discount;
+    };
+
+    DiscountStrategy::Promotion DiscountStrategy::LARGE_ORDER_PROMO = [](DiscountStrategy* order) -> double {
+        return (order->cart.getProducts().size() >= 10) ? (order->total * 0.07) : 0.0;
+    };
+
+ Note: In the Java code, the total is stored as a member and computed in the constructor. Our C++ constructor does the same.
+
+ However, note: the Java method `total()` updates the member `total` and returns it. Our C++ method `total()` does the same? Actually, in the Java code:
+
+        public double total() {
+            total = cart.getProducts().stream()
+                    .mapToDouble(p -> p.getQuantity() * p.getPrice())
+                    .sum();
+            return total;
+        }
+
+    And then in the constructor:
+
+        this.total = total();
+
+    So we do:
+
+        DiscountStrategy(...) : ... {
+            total = this->total();   // which computes and sets total
+
+        }
+
+    But note: the C++ method `total()` does:
+
+        double DiscountStrategy::total() {
+            double sum = 0.0;
+            for (const Product& p : cart.getProducts()) {
+                sum += p.getQuantity() * p.getPrice();
+            }
+            total = sum;   // Wait, we are updating the member total? But the method signature is not const?
+            return total;
+        }
+
+    However, the Java method updates the member. So we do the same.
+
+    Alternatively, we can note that the constructor sets the total by calling total(), and then the total is stored. But if the cart changes, the total becomes invalid. The Java code doesn't change the cart after construction? We assume immutability? But the Cart class has an addProduct method? So it is mutable.
+
+    However, the DiscountStrategy does not provide a way to change the cart after construction? So we are safe.
+
+    But note: the method `due()` uses the stored `total` (the member) and not recompute. So we must update the total in the total() method when called? Actually, the Java code updates the total and returns it.
+
+    So we have two uses of total():
+        - In the constructor: we set the member total by calling total().
+        - If someone calls total() again, it will recompute and update the total.
+
+    We'll do the same.
+
+    However, note: the due() method uses the member total. So if the cart changes (via the Cart's addProduct) and then we call total(), the total will be updated and then due() will use the updated total.
+
+    But the Java code does not change the cart after the DiscountStrategy is constructed? Actually, the constructor of DiscountStrategy takes a Cart and a Customer. The Cart is passed by value? In Java, it's a reference. But we are using the same: we pass by value? Or we should pass by const reference? But we want to avoid copying? 
+
+    However, the requirement is to keep behavior identical. The Java code uses references, so changes to the original Cart would be reflected? Actually, no: because the Cart class is mutable? But the DiscountStrategy holds a reference to the Cart? Actually, no: in Java, when we pass an object to a constructor, we are storing a reference to that object. So if the original cart is modified, then the DiscountStrategy's cart is also modified.
+
+    Therefore, we must use pointers or references to the same cart? But the problem: we are translating and we don't know the usage.
+
+    Since the Java code doesn't specify, we'll assume that the Cart and Customer are passed by value? Actually, the Java code passes references. To mimic that, we can use pointers or references. However, the requirement says to keep behavior identical.
+
+    Alternatively, we can design the Cart to be mutable and the DiscountStrategy to hold a reference to the same cart. But that would require the DiscountStrategy to hold a reference (or pointer) to the cart. However, the Java code does not show any such mutation after the DiscountStrategy is created? And the example does not have a main.
+
+    Let's stick to the design: we pass by value the Customer and Cart? Because in the Java code, the constructor:
+
+        public DiscountStrategy(Customer customer, Cart cart, Promotion promotion)
+
+    stores the customer and cart references. But if the caller modifies the customer or cart, then the DiscountStrategy sees the changes.
+
+    So we must use pointers? Or we can use references? But we cannot reassign references. Alternatively, we can store pointers to the original objects.
+
+    However, the problem does not specify ownership. We are going to assume that the DiscountStrategy does not own the Customer and Cart? But the Java code does not specify.
+
+    But note: the Java code has nested classes and we are passing objects. In Java, objects are always passed by reference. So we must use pointers in C++.
+
+    Alternatively, we can use shared_ptr? But the requirement doesn't specify.
+
+    Given the complexity, and to keep the translation simple and behavior identical, we will store the Customer and Cart by value? Why? Because in the example, the Customer and Cart are constructed in the same context? And the DiscountStrategy is used immediately? 
+
+    However, if the original Customer or Cart changes, the DiscountStrategy should not change? Actually, in Java, if we change the original customer (like changing fidelity) then the DiscountStrategy would see the change? Because it holds a reference to the same object.
+
+    Therefore, we must use pointers. But the Java code does not show mutation of Customer? The Customer class has no setters. Similarly, the Cart has an addProduct method, so it is mutable.
+
+    Since the Customer class is immutable (no setters), we can pass by value? But the Cart is mutable. So we must store a pointer to the Cart? Or a reference? But we want to allow mutation of the Cart from outside? And then the DiscountStrategy would see the changes.
+
+    How about we change the design:
+
+        We store the Customer by value? Because it's immutable? Then any change to the original Customer won't affect the DiscountStrategy? But the original Customer cannot change because it's immutable? So it's safe to copy.
+
+        For Cart: it is mutable. So we must store a reference (or pointer) to the original Cart? So that if the cart is modified from outside, the DiscountStrategy sees the change? But note: the DiscountStrategy constructor computes the total and stores it. Then if the cart changes, the total becomes stale.
+
+        The Java code: the DiscountStrategy has a method total() that recomputes the total from the cart. So if the cart changes, then total() returns the updated total? Actually, yes: because it iterates over the cart's products.
+
+        Therefore, we can store the Cart by reference? But then the DiscountStrategy must outlive the Cart? 
+
+    Alternatively, we can store the Cart by pointer? And require the user to manage the lifetime.
+
+    Since we are translating and the Java code uses references, we'll use pointers in C++. We'll change:
+
+        DiscountStrategy(Customer customer, Cart cart, Promotion promotion)
+
+    to:
+
+        DiscountStrategy(Customer customer, Cart* cart, Promotion promotion)
+
+    And then we store:
+
+        Customer customer;   // by value because immutable? Actually, we don't know if the Customer passed in is the same as the one we store? But in Java, we store the same reference. If we copy, then we lose the connection to the original. But the Customer is immutable? So copying is safe? And if the original changes? It cannot because no setters.
+
+        However, the Customer class in Java has no setters, so it's immutable. So we can store by value.
+
+        For Cart: we must store a pointer because it is mutable and we want to see changes.
+
+    But wait: the Java code also uses the cart in the promotions. The promotions are applied when due() is called, and they use the cart at that time. So if the cart has been changed, then the promotions use the new cart.
+
+    Therefore, we design:
+
+        class DiscountStrategy {
+            Customer customer;   // by value
+            Cart* cart;          // pointer to a cart (mutable)
+            Promotion promotion;
+            double total;        // stored total, but updated only when total() is called or in the constructor
+
+        public:
+            DiscountStrategy(Customer customer, Cart* cart, Promotion promotion)
+                : customer(customer), cart(cart), promotion(promotion) {
+                total = this->total();   // computes from the cart
+            }
+
+            double total() {
+                double sum = 0.0;
+                for (const Product& p : cart->getProducts()) {
+                    sum += p.getQuantity() * p.getPrice();
+                }
+                total = sum;   // update the member
+                return total;
+            }
+
+            ... 
+        };
+
+    But note: the promotions (like FIDELITY_PROMO) use order->total. This total is the stored total. So if the cart changes, the stored total becomes stale until someone calls total().
+
+    How does the Java code behave? In Java, the total is stored and updated only by the total() method. The due() method uses the stored total? Yes: because due() does:
+
+        double discount = ...;
+        return total - discount;
+
+    And the promotions that use order->total are using the stored total? So if the cart changes and we don't call total(), then the stored total is outdated.
+
+    Therefore, we must mimic: the stored total is updated only by the total() method. The constructor updates it once. Then if the cart changes, the stored total remains until total() is called again.
+
+    This is the same behavior as Java.
+
+    However, the promotions (like BULK_ITEM_PROMO) do not use the stored total? They iterate the cart. So they see the current cart. But the FIDELITY_PROMO and LARGE_ORDER_PROMO use the stored total? So they use the last computed total (which might be outdated).
+
+    So we must update: 
+
+        In FIDELITY_PROMO: it uses order->total -> which is the stored total.
+
+        In LARGE_ORDER_PROMO: it uses order->total -> stored total.
+
+        In BULK_ITEM_PROMO: it iterates the cart -> so it uses the current cart.
+
+    This matches the Java code.
+
+    But note: the Java code for BULK_ITEM_PROMO:
+
+        BULK_ITEM_PROMO = order -> {
+            double discount = 0;
+            for (Product item : order.cart.getProducts()) {
+                ... // uses current product
+            }
+            return discount;
+        };
+
+    So it uses the cart at the time of the call.
+
+    Therefore, we must store the cart as a pointer? So that if the cart is modified from outside, then when we access order->cart we see the updated cart.
+
+    Alternatively, we can store the cart by reference? But we cannot reassign references. And we must initialize them. So:
+
+        Cart& cart;
+
+    But then the constructor must take a reference. And we must ensure the cart outlives the DiscountStrategy.
+
+    We'll use a reference for the cart? Or a pointer? Since the Java code uses references, we'll use a reference in C++? But note: the Java reference can be null? Actually, no: the constructor doesn't allow null? We don't see null checks.
+
+    So we can use a reference? But then we cannot have an empty cart? The Java code doesn't allow null? We'll use a reference.
+
+    However, the Java code does not allow null? Because the constructor doesn't check? So we'll assume non-null.
+
+    Alternatively, we can use a pointer and then check for null? But the Java code doesn't.
+
+    Let me decide: we'll use a pointer? Because in C++ we often use pointers for optional and nullable types? But here, the cart is required? Then we can use a reference.
+
+    But note: the Java code: the Cart is passed as a parameter and stored. The DiscountStrategy expects a non-null cart? We'll use a reference.
+
+    Steps for Cart:
+
+        class DiscountStrategy {
+            ...
+            Cart& cart;
+            ...
+            DiscountStrategy(Customer customer, Cart& cart, Promotion promotion)
+                : customer(customer), cart(cart), promotion(promotion) 
+            {
+                total = this->total();
+            }
+        };
+
+    Then in the promotions, we use:
+
+        order->cart   becomes: order->cart (if we use a pointer) or order.cart (if we use reference and pass DiscountStrategy by value?).
+
+    Actually, note: the promotions are functions that take a DiscountStrategy*. So we use:
+
+        order->cart   // if cart is stored as a member and we have a pointer to DiscountStrategy.
+
+    But if we store cart as a reference, then:
+
+        order->cart   is a reference? So we can use:
+
+        order->cart.getProducts()
+
+    How do we initialize the Cart in the DiscountStrategy? We pass a reference.
+
+    But note: the main program must create a Cart and then pass it to DiscountStrategy.
+
+    Also, the static promotions: they are defined outside and they use:
+
+        order->cart.getProducts()
+
+    So we must define the Cart class so that getProducts() returns a const reference? Because we don't want to copy? And we want to see updates?
+
+    Actually, the Cart class in Java returns a List<Product> which is mutable? Because the list is mutable? And the products are mutable? Actually, the Product class has no setters? So Product is immutable? Then the Cart class returns a list of immutable products? But note: the list itself is mutable? We can add products? But the Product objects are immutable? So the only mutation is adding/removing products? 
+
+    The Product class in Java has no setters? So it is immutable. Therefore, we can store the products in a vector and return a const reference? But then we cannot add products? The Cart class has an addProduct method? So we must allow mutation of the vector? 
+
+    We design:
+
+        class Cart {
+        private:
+            std::vector<Product> products;
+        public:
+            Cart(std::initializer_list<Product> items) : products(items) {}
+            void addProduct(const Product& product) {
+                products.push_back(product);
+            }
+            // We return a reference to the vector? But we want to allow the vector to be modified? 
+            // Actually, the DiscountStrategy promotions need to iterate the products? And they don't modify? 
+            // But the Java code: the promotions only read the products? And the main program might add products? 
+            // So we return a non-const reference? Or we return by value? But we want to see updates.
+
+            // We'll return a const reference? But the addProduct method is called from outside? That doesn't require the getProducts to return non-const? 
+            // Actually, the getProducts in Java returns a mutable list? So we must return a non-const reference? 
+
+            // However, the promotions do not modify the products? They only read. So we can provide two methods: 
+            //   const std::vector<Product>& getProducts() const { return products; }
+            //   std::vector<Product>& getProducts() { return products; }
+
+            // But the DiscountStrategy's total() method does not modify the products? So it uses the const version? 
+
+            // But the Java method: 
+            //   public List<Product> getProducts() { return products; }
+            // returns a mutable list? But the Product objects are immutable? So we can return a non-const reference to the vector? 
+
+            // However, if we return a non-const reference, then the caller can change the vector (like remove products)? That's allowed? 
+
+            // We'll provide:
+            std::vector<Product>& getProducts() { return products; }
+
+            // But then the promotions (which are const methods? No) can modify? We don't want that? 
+
+            // Actually, the promotions are defined as lambdas that take DiscountStrategy* and they are not const? They are allowed to modify? But they don't.
+
+            // Alternatively, we can return a non-const reference and trust the user? 
+
+            // Since the Java code returns a mutable list, we'll do the same: return a non-const reference.
+
+        };
+
+    But note: the DiscountStrategy's total() method does not modify the cart? It only reads. So we can call it on a const DiscountStrategy? But we don't have a const method for total()? 
+
+    Actually, the total() method updates the member total? So it cannot be const.
+
+    Therefore, we don't need a const version of getProducts() for the promotions? Because the promotions are called on non-const DiscountStrategy? 
+
+    However, the promotions themselves: they are passed a DiscountStrategy* which is non-const? Because they might update the total? Actually, they don't. They only read.
+
+    But they call:
+
+        order->cart.getProducts()
+
+    which returns a non-const reference? But they don't modify? So it's safe.
+
+    Alternatively, we can return a const reference from a const method? But then we cannot use it in the promotions? Because the promotions are called on non-const DiscountStrategy? 
+
+    We'll provide:
+
+        std::vector<Product>& getProducts() { return products; }
+        const std::vector<Product>& getProducts() const { return products; }
+
+    Then in the promotions, if we have a non-const DiscountStrategy*, we can use the non-const version? 
+
+    But the promotions don't modify? So we can use the const version? But we cannot because we have a non-const pointer? 
+
+    Actually, we can change the parameter of the Promotion to take a const DiscountStrategy*? But the Java code doesn't have const. And the promotions might need to call non-const methods? They call getProducts()? We have a const version? Then we can change the Promotion to:
+
+        using Promotion = std::function<double(const DiscountStrategy*)>;
+
+    Then the promotions would have to be callable with a const pointer? And we would mark the methods that are called by the promotions as const? 
+
+    But note: the total() method is non-const? Because it updates the total member. And the promotions use order->total? Which is a member? We can read the total in a const method? But we cannot update. So:
+
+        We can make the member total mutable? But that would be incorrect? Because the promotions should not change the state? 
+
+    Alternatively, we can note that the promotions only read the stored total? And they don't update? So we can mark the total as const? But we update it in total()? 
+
+    Actually, we cannot mark it const.
+
+    Therefore, we leave the Promotion as taking a non-const DiscountStrategy*. And we mark the methods that are called by the promotions as non-const? Actually, they are: getFidelity() of Customer is const? Because it doesn't change the customer? We can mark it const? 
+
+    We'll mark the getter methods as const.
+
+    Revised:
+
+        class Customer {
+        public:
+            ...
+            int getFidelity() const { return fidelity; }   // const method
+        };
+
+        class Product {
+        public:
+            ...
+            int getQuantity() const { return quantity; }
+            double getPrice() const { return price; }
+        };
+
+        class Cart {
+        public:
+            ...
+            const std::vector<Product>& getProducts() const { return products; }
+            std::vector<Product>& getProducts() { return products; }
+        };
+
+        Then in the promotions, we can use the const version? 
+
+        For FIDELITY_PROMO:
+
+            [](DiscountStrategy* order) -> double {
+                return (order->customer.getFidelity() >= 1000) ? (order->total * 0.05) : 0.0;
+            }
+
+        This is safe? Because it reads the customer and the total? But the total is non-const? Actually, we are reading the total? We can do that? Because we are not changing the order? 
+
+        But the lambda does not mark the order as const? So we can read non-const members? 
+
+        So we don't need to change.
+
+    However, we want to avoid accidental modification? We can change the Promotion to take a const DiscountStrategy*? Then we would have to change:
+
+        using Promotion = std::function<double(const DiscountStrategy*)>;
+
+        And then we must make the method promotion(DiscountStrategy* order) call with a non-const this? 
+
+        But the promotion method:
+
+            double promotion(DiscountStrategy* order) {
+                return (promotion == nullptr) ? 0.0 : promotion(this);
+            }
+
+        Here, we are calling the promotion function with `this` (which is non-const). But if the promotion function expects a const DiscountStrategy*, we cannot pass non-const? 
+
+        We can change:
+
+            double promotion(DiscountStrategy* order) const {   // make this method const? 
+                return (promotion == nullptr) ? 0.0 : promotion(this);
+            }
+
+        But then we cannot call this method on a non-const object? And the promotion member is non-const? Actually, the promotion member is a function that we call? It doesn't change the DiscountStrategy? 
+
+        However, the promotion function might change the DiscountStrategy? But in our case, the static promotions do not change? So we can mark the method as const? 
+
+        But note: the promotion function stored in the member might change the DiscountStrategy? We don't know? So we cannot mark the method as const? 
+
+        Therefore, we leave the Promotion as taking a non-const pointer.
+
+    Given the complexity, we'll stick to non-const pointer for Promotion.
+
+    Now, we have to define the static promotions outside the class? We can do that in the header? But then we might get multiple definitions? So we define them in a source file? Or we can use inline (C++17).
+
+    We'll assume we are using C++17 and define them inline.
+
+    Alternatively, we can define them inside the class? But we cannot define a static member of class type std::function inside the class? We can only declare.
+
+    So we declare in the class and define in a source file? Or we can use inline:
+
+        static inline Promotion FIDELITY_PROMO = ...;
+
+    We'll do inline.
+
+    But note: the lambdas are unique? And inline is allowed for static members since C++17.
+
+    Summary:
+
+        We'll create a header file with the DiscountStrategy class and nested classes.
+
+        We'll use inline for the static promotion members.
+
+    Let me write the entire header.
+
+    Note: We'll use #include <functional>, <vector>, <string>, <initializer_list>.
+
+    We'll write:
+
+        #include <functional>
+        #include <vector>
+        #include <string>
+        #include <initializer_list>
+
+        class DiscountStrategy {
+        public:
+            class Customer {
+            private:
+                std::string name;
+                int fidelity;
+            public:
+                Customer(std::string name, int fidelity) : name(name), fidelity(fidelity) {}
+                std::string getName() const { return name; }
+                int getFidelity() const { return fidelity; }
+            };
+
+            class Product {
+            private:
+                std::string name;
+                int quantity;
+                double price;
+            public:
+                Product(std::string name, int quantity, double price) 
+                    : name(name), quantity(quantity), price(price) {}
+                std::string getName() const { return name; }
+                int getQuantity() const { return quantity; }
+                double getPrice() const { return price; }
+            };
+
+            class Cart {
+            private:
+                std::vector<Product> products;
+            public:
+                Cart(std::initializer_list<Product> items) : products(items) {}
+                void addProduct(const Product& product) {
+                    products.push_back(product);
+                }
+                // We provide both const and non-const versions?
+                const std::vector<Product>& getProducts() const { return products; }
+                std::vector<Product>& getProducts() { return products; }
+            };
+
+            using Promotion = std::function<double(DiscountStrategy*)>;
+
+            static inline Promotion FIDELITY_PROMO = [](DiscountStrategy* order) -> double {
+                return (order->customer.getFidelity() >= 1000) ? (order->total * 0.05) : 0.0;
+            };
+
+            static inline Promotion BULK_ITEM_PROMO = [](DiscountStrategy* order) -> double {
+                double discount = 0.0;
+                for (const Product& item : order->cart.getProducts()) {
+                    if (item.getQuantity() >= 20) {
+                        discount += item.getQuantity() * item.getPrice() * 0.1;
+                    }
+                }
+                return discount;
+            };
+
+            static inline Promotion LARGE_ORDER_PROMO = [](DiscountStrategy* order) -> double {
+                return (order->cart.getProducts().size() >= 10) ? (order->total * 0.07) : 0.0;
+            };
+
+        private:
+            Customer customer;
+            Cart& cart;   // reference to cart (mutable, so we see changes)
+            Promotion promotion;
+            double total;   // stored total, updated only by total()
+
+        public:
+            // We cannot have a constructor that takes a Cart by value? We take a reference.
+            DiscountStrategy(Customer customer, Cart& cart, Promotion promotion)
+                : customer(customer), cart(cart), promotion(promotion) {
+                total = this->total();   // compute initial total
+            }
+
+            double total() {
+                double sum = 0.0;
+                for (const Product& p : cart.getProducts()) {
+                    sum += p.getQuantity() * p.getPrice();
+                }
+                total = sum;   // update the member
+                return total;
+            }
+
+            double due() {
+                double discount = (promotion == nullptr) ? 0.0 : promotion(this);
+                return total - discount;
+            }
+
+            double promotion(DiscountStrategy* order) {
+                // Note: we ignore the parameter 'order'? Actually, we use 'this'
+                return (promotion == nullptr) ? 0.0 : promotion(this);
+            }
+        };
+
+    But wait: the promotion member is of type Promotion (std::function). We can compare to nullptr? Yes, because std::function has an operator bool().
+
+    However, the Java code uses null for the promotion? So we allow promotion to be null? And we pass null in the constructor? 
+
+    We'll allow that.
+
+    But note: the constructor initializes the promotion member with the passed promotion? And if we pass a null std::function, then promotion will be empty? And we check for null.
+
+    So it's the same.
+
+    One more thing: the Java code has a method:
+
+        public double promotion(DiscountStrategy order) { ... }
+
+    We have:
+
+        double promotion(DiscountStrategy* order);
+
+    But the Java method takes an argument of type DiscountStrategy? And we take a DiscountStrategy*? 
+
+    Actually, in the Java code, the method is called on one DiscountStrategy and takes another DiscountStrategy? But the method does not use the passed argument? It uses the current object? 
+
+    So we can change the signature to:
+
+        double promotion(DiscountStrategy* order)   // but we ignore the parameter
+
+    But to match the Java signature, we must keep the parameter? Even though we don't use it.
+
+    Therefore, we keep.
+
+    However, the Java method is called like:
+
+        order1.promotion(order2)
+
+    In our code, we would do:
+
+        order1.promotion(&order2)
+
+    But the method ignores the argument? So it's the same.
+
+    But note: the Java method is public? So we'll make it public.
+
+    This completes the translation.
+
+    However, note: the Java code has a package: org.example. We ignore that? Because we are not translating the package.
+
+    We'll put everything in a header? Or split into header and source? We did inline for the static members? So we can put everything in a header.
+
+    But note: the method definitions are in the class body? So they are inline.
+
+    We'll put the entire class in a header file.
+
+    But note: the Cart is stored by reference? Then the user must ensure the cart outlives the DiscountStrategy.
+
+    We'll document that? But the Java code does the same.
+
+    This is the best we can do.
+
+    Let me write the final code.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate Java code implementing a discount strategy system into equivalent C++ code while maintaining identical behavior, including inputs/outputs, side effects, edge cases, and exceptions. The Java code uses functional interfaces (Promotion) and nested classes (Customer, Cart, Product), which we will map to C++ using `std::function` and nested classes.
+
+### Approach
+1. **Nested Classes**: Translate the nested classes `Customer`, `Cart`, and `Product` from Java to C++. These classes are straightforward with constructors and getter methods.
+2. **Functional Interface**: Replace Java's `Promotion` functional interface with C++'s `std::function<double(DiscountStrategy*)>`.
+3. **Static Promotions**: Define the static promotion strategies (`FIDELITY_PROMO`, `BULK_ITEM_PROMO`, `LARGE_ORDER_PROMO`) as inline `std::function` objects within the `DiscountStrategy` class.
+4. **Reference Handling**: Use references for the `Cart` object to ensure mutations are reflected, similar to Java's reference handling.
+5. **Total Calculation**: Implement the `total()` method to compute the sum of products in the cart, updating the stored total.
+6. **Discount Calculation**: Implement the `due()` method to compute the final amount after applying the promotion discount.
+7. **Promotion Application**: Implement the `promotion()` method to apply the stored promotion to the current object.
+
+### Solution Code
+```cpp
+#include <functional>
+#include <vector>
+#include <string>
+#include <initializer_list>
+
+class DiscountStrategy {
+public:
+    class Customer {
+    private:
+        std::string name;
+        int fidelity;
+    public:
+        Customer(std::string name, int fidelity) : name(name), fidelity(fidelity) {}
+        std::string getName() const { return name; }
+        int getFidelity() const { return fidelity; }
+    };
+
+    class Product {
+    private:
+        std::string name;
+        int quantity;
+        double price;
+    public:
+        Product(std::string name, int quantity, double price) 
+            : name(name), quantity(quantity), price(price) {}
+        std::string getName() const { return name; }
+        int getQuantity() const { return quantity; }
+        double getPrice() const { return price; }
+    };
+
+    class Cart {
+    private:
+        std::vector<Product> products;
+    public:
+        Cart(std::initializer_list<Product> items) : products(items) {}
+        void addProduct(const Product& product) {
+            products.push_back(product);
+        }
+        const std::vector<Product>& getProducts() const { return products; }
+        std::vector<Product>& getProducts() { return products; }
+    };
+
+    using Promotion = std::function<double(DiscountStrategy*)>;
+
+    static inline Promotion FIDELITY_PROMO = [](DiscountStrategy* order) -> double {
+        return (order->customer.getFidelity() >= 1000) ? (order->total * 0.05) : 0.0;
+    };
+
+    static inline Promotion BULK_ITEM_PROMO = [](DiscountStrategy* order) -> double {
+        double discount = 0.0;
+        for (const Product& item : order->cart.getProducts()) {
+            if (item.getQuantity() >= 20) {
+                discount += item.getQuantity() * item.getPrice() * 0.1;
+            }
+        }
+        return discount;
+    };
+
+    static inline Promotion LARGE_ORDER_PROMO = [](DiscountStrategy* order) -> double {
+        return (order->cart.getProducts().size() >= 10) ? (order->total * 0.07) : 0.0;
+    };
+
+private:
+    Customer customer;
+    Cart& cart;
+    Promotion promotion;
+    double total;
+
+public:
+    DiscountStrategy(Customer customer, Cart& cart, Promotion promotion)
+        : customer(customer), cart(cart), promotion(promotion) {
+        this->total = total();
+    }
+
+    double total() {
+        double sum = 0.0;
+        for (const Product& p : cart.getProducts()) {
+            sum += p.getQuantity() * p.getPrice();
+        }
+        total = sum;
+        return total;
+    }
+
+    double due() {
+        double discount = promotion ? promotion(this) : 0.0;
+        return total - discount;
+    }
+
+    double promotion(DiscountStrategy* order) {
+        return promotion ? promotion(this) : 0.0;
+    }
+};
+```
+
+### Explanation
+1. **Nested Classes**: The classes `Customer`, `Product`, and `Cart` are nested within `DiscountStrategy` to mirror the Java structure. Each class includes constructors and getter methods for accessing private members.
+2. **Promotion Interface**: The `Promotion` type alias uses `std::function` to represent a function that takes a `DiscountStrategy*` and returns a `double`, equivalent to Java's functional interface.
+3. **Static Promotions**: The three static promotions (`FIDELITY_PROMO`, `BULK_ITEM_PROMO`, `LARGE_ORDER_PROMO`) are defined as inline lambda functions, capturing the behavior of their Java counterparts.
+4. **Reference Handling**: The `Cart` is stored as a reference to ensure any modifications (like adding products) are reflected in the `DiscountStrategy` object.
+5. **Total Calculation**: The `total()` method computes the sum of all products in the cart (quantity multiplied by price) and updates the stored total.
+6. **Due Calculation**: The `due()` method applies the stored promotion to compute the discount and subtracts it from the total to get the final amount due.
+7. **Promotion Application**: The `promotion()` method applies the stored promotion to the current object, ignoring the passed parameter (as in the Java code), and returns the discount amount.
+
+This translation ensures that the C++ code behaves identically to the original Java code, handling inputs, outputs, side effects, and edge cases in the same manner.
+
+=== TRANSLATED CODE (cpp) ===
+#include <functional>
+#include <vector>
+#include <string>
+#include <initializer_list>
+
+class DiscountStrategy {
+public:
+    class Customer {
+    private:
+        std::string name;
+        int fidelity;
+    public:
+        Customer(std::string name, int fidelity) : name(name), fidelity(fidelity) {}
+        std::string getName() const { return name; }
+        int getFidelity() const { return fidelity; }
+    };
+
+    class Product {
+    private:
+        std::string name;
+        int quantity;
+        double price;
+    public:
+        Product(std::string name, int quantity, double price) 
+            : name(name), quantity(quantity), price(price) {}
+        std::string getName() const { return name; }
+        int getQuantity() const { return quantity; }
+        double getPrice() const { return price; }
+    };
+
+    class Cart {
+    private:
+        std::vector<Product> products;
+    public:
+        Cart(std::initializer_list<Product> items) : products(items) {}
+        void addProduct(const Product& product) {
+            products.push_back(product);
+        }
+        const std::vector<Product>& getProducts() const { return products; }
+        std::vector<Product>& getProducts() { return products; }
+    };
+
+    using Promotion = std::function<double(DiscountStrategy*)>;
+
+    static inline Promotion FIDELITY_PROMO = [](DiscountStrategy* order) -> double {
+        return (order->customer.getFidelity() >= 1000) ? (order->total * 0.05) : 0.0;
+    };
+
+    static inline Promotion BULK_ITEM_PROMO = [](DiscountStrategy* order) -> double {
+        double discount = 0.0;
+        for (const Product& item : order->cart.getProducts()) {
+            if (item.getQuantity() >= 20) {
+                discount += item.getQuantity() * item.getPrice() * 0.1;
+            }
+        }
+        return discount;
+    };
+
+    static inline Promotion LARGE_ORDER_PROMO = [](DiscountStrategy* order) -> double {
+        return (order->cart.getProducts().size() >= 10) ? (order->total * 0.07) : 0.0;
+    };
+
+private:
+    Customer customer;
+    Cart& cart;
+    Promotion promotion;
+    double total;
+
+public:
+    DiscountStrategy(Customer customer, Cart& cart, Promotion promotion)
+        : customer(customer), cart(cart), promotion(promotion) {
+        this->total = total();
+    }
+
+    double total() {
+        double sum = 0.0;
+        for (const Product& p : cart.getProducts()) {
+            sum += p.getQuantity() * p.getPrice();
+        }
+        total = sum;
+        return total;
+    }
+
+    double due() {
+        double discount = promotion ? promotion(this) : 0.0;
+        return total - discount;
+    }
+
+    double promotion(DiscountStrategy* order) {
+        return promotion ? promotion(this) : 0.0;
+    }
+};

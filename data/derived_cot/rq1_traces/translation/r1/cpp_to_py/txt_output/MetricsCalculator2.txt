@@ -1,0 +1,527 @@
+=== SOURCE CODE (cpp) ===
+
+#include <stdexcept>
+#include <algorithm>
+#include <numeric>
+
+#include <vector>
+#include <utility>
+
+class MetricsCalculator2 {
+public:
+    static std::pair<double, std::vector<double>> mrr(const std::vector<std::pair<std::vector<int>, int>>& data);
+    static std::pair<double, std::vector<double>> map(const std::vector<std::pair<std::vector<int>, int>>& data);
+};
+
+namespace {
+    double calculate_mrr(const std::vector<int>& vec, int k) {
+        auto it = std::find(vec.begin(), vec.end(), 1);
+        if (it == vec.end()) return 0.0;
+        return 1.0 / (std::distance(vec.begin(), it) + 1);
+    }
+
+    double calculate_map(const std::vector<int>& vec, int k) {
+        double sum = 0.0;
+        int count = 0;
+        for (int i = 0; i < vec.size(); ++i) {
+            if (vec[i] == 1) {
+                ++count;
+                sum += count / static_cast<double>(i + 1);
+            }
+        }
+        return count ? sum / count : 0.0;
+    }
+}
+
+std::pair<double, std::vector<double>> MetricsCalculator2::mrr(const std::vector<std::pair<std::vector<int>, int>>& data) {
+    if (data.empty()) return { 0.0, std::vector<double>{0.0} };
+
+    double sum_mrr = 0.0;
+    std::vector<double> individual_mrr;
+
+    for (const auto& [vec, k] : data) {
+        if (k <= 0 || vec.empty()) {
+            individual_mrr.push_back(0.0);
+        }
+        else {
+            double mrr = calculate_mrr(vec, k);
+            individual_mrr.push_back(mrr);
+            sum_mrr += mrr;
+        }
+    }
+
+    double average_mrr = data.size() ? sum_mrr / data.size() : 0.0;
+    return { average_mrr, individual_mrr };
+}
+
+std::pair<double, std::vector<double>> MetricsCalculator2::map(const std::vector<std::pair<std::vector<int>, int>>& data) {
+    if (data.empty()) {
+        return { 0.0, {0.0} };
+    }
+
+    std::vector<double> separate_result;
+
+    for (const auto& [sub_list, total_num] : data) {
+        if (total_num == 0) {
+            separate_result.push_back(0.0);
+            continue;
+        }
+
+        size_t len = sub_list.size();
+        std::vector<double> ranking_array(len);
+        std::iota(ranking_array.begin(), ranking_array.end(), 1.0);
+        std::transform(ranking_array.begin(), ranking_array.end(), ranking_array.begin(),
+            [](double i) { return 1.0 / i; });
+
+        std::vector<double> right_ranking_list(len, 0.0);
+        int count = 1;
+
+        for (size_t i = 0; i < len; ++i) {
+            if (sub_list[i] != 0) {
+                right_ranking_list[i] = count++;
+            }
+        }
+
+        double ap = std::inner_product(right_ranking_list.begin(), right_ranking_list.end(),
+            ranking_array.begin(), 0.0) / total_num;
+        separate_result.push_back(ap);
+    }
+
+    double mean_ap = std::accumulate(separate_result.begin(), separate_result.end(), 0.0) / separate_result.size();
+    return { mean_ap, separate_result };
+}
+
+
+=== REASONING ===
+<think>
+
+We are translating a C++ class `MetricsCalculator2` with two static methods: `mrr` and `map`.
+ The input for both is a vector of pairs: each pair is (vector<int>, int). In Python, we'll use a list of tuples (list, int).
+
+ Important: We must maintain the same behavior, including edge cases.
+
+ For `mrr`:
+   - If data is empty, return (0.0, [0.0])
+   - For each pair (vec, k) in data:
+        if k<=0 or vec is empty -> append 0.0 to individual results.
+        else -> calculate_mrr(vec, k) and add to the sum.
+
+   The helper function `calculate_mrr` in C++:
+        double calculate_mrr(const std::vector<int>& vec, int k) {
+            auto it = std::find(vec.begin(), vec.end(), 1);
+            if (it == vec.end()) return 0.0;
+            return 1.0 / (std::distance(vec.begin(), it) + 1);
+        }
+
+   So we look for the first occurrence of 1 in the vector. If found, return 1/(index+1) (index starting at 0). Otherwise 0.
+
+ For `map`:
+   - If data is empty, return (0.0, [0.0])
+   - For each pair (sub_list, total_num) in data:
+        if total_num == 0 -> append 0.0
+        else:
+            We create a vector `ranking_array` of length = len(sub_list) with values [1.0, 2.0, ...] and then transform to [1/1, 1/2, ...]
+            Then create `right_ranking_list` (same length) initialized to 0.0.
+            Then traverse the sub_list: for each position i, if sub_list[i] != 0, set right_ranking_list[i] = count (starting at 1) and then increment count.
+
+            Then compute: 
+                ap = inner_product(right_ranking_list, ranking_array) / total_num
+            and push that ap.
+
+   Then compute the mean of the separate_result.
+
+ However, note: the inner_product in C++ multiplies corresponding elements and sums them. Then divided by total_num.
+
+ But observe: the C++ code for `map` does:
+        std::vector<double> ranking_array(len);
+        std::iota(ranking_array.begin(), ranking_array.end(), 1.0);
+        std::transform(ranking_array.begin(), ranking_array.end(), ranking_array.begin(),
+            [](double i) { return 1.0 / i; });
+
+        Then create right_ranking_list: for each non-zero element in sub_list, we assign an increasing integer starting at 1? But note: the increasing integer is assigned in the order of the vector.
+
+        Example: 
+          sub_list = [1, 0, 1] -> then right_ranking_list becomes [1, 0, 2]?
+          Then inner product: 
+            [1, 0, 2] dot [1/1, 1/2, 1/3] = 1*1 + 0*0.5 + 2*(1/3) = 1 + 0 + 0.666... = 1.666...
+          Then divided by total_num (which is 2) -> 1.666/2 = 0.833...
+
+        But note: the classical MAP formula: 
+          For each relevant document (where sub_list[i]==1) we compute the precision at that rank (which is count of relevant so far / (i+1)).
+          Then average those precisions.
+
+        However, the C++ code does something different: 
+          Instead, it assigns an increasing "count" to each relevant document (so the first relevant gets 1, the second 2, etc.) and then multiplies by the reciprocal rank (1/(i+1))? 
+
+        Actually, let's compare with the helper function `calculate_map` that is defined in the anonymous namespace but not used? 
+
+        Wait! The provided `map` method in the class does not use the `calculate_map` helper! Instead, it has a different implementation.
+
+        There are two `map` methods? Actually, the class method `map` uses a different algorithm.
+
+        Let me read the class method `map`:
+
+          for each (sub_list, total_num):
+            ranking_array = [1.0, 2.0, ..., len]
+            then convert ranking_array to [1/1, 1/2, ..., 1/len]
+            right_ranking_list: same length as sub_list, initialized to 0.0
+            count = 1
+            for i in range(len):
+                if sub_list[i] != 0:
+                    right_ranking_list[i] = count
+                    count += 1
+
+            ap = inner_product(right_ranking_list, ranking_array) / total_num
+
+        Why total_num? total_num is the second element in the pair.
+
+        But note: the inner product multiplies the right_ranking_list element by the corresponding element in ranking_array (which is 1/(i+1)) and then sums.
+
+        Then divides by total_num.
+
+        This is equivalent to: 
+          Sum_{positions i where sub_list[i]!=0} ( (count at that time) * (1/(i+1)) ) / total_num
+
+        But note: the count at the time we see a relevant document is the number of relevant documents encountered so far? Actually, no: it's the order of the relevant document (first, second, etc.) but note that the count is incremented AFTER assigning.
+
+        Example: 
+          sub_list = [1, 0, 1] -> total_num = 2
+          right_ranking_list = [1, 0, 2]   [because at index0: set to 1 and then count becomes 2; at index2: set to 2 and then count becomes 3]
+          ranking_array = [1/1, 1/2, 1/3] = [1, 0.5, 0.333...]
+          inner product = 1*1 + 0*0.5 + 2*(1/3) = 1 + 0 + 0.666... = 1.666...
+          ap = 1.666... / 2 = 0.833...
+
+        Now, the classical AP for a query:
+          Precision at first relevant: 1/1 = 1
+          Precision at second relevant: 2/3 (because we have two relevant and the second is at position 3) -> but wait, the positions are 1-indexed? 
+          Actually, the classical AP is the average of the precisions at each relevant document.
+
+          So: (1 + 2/3) / 2 = (1 + 0.666) / 2 = 1.666/2 = 0.833.
+
+        So it matches.
+
+        However, note the helper function `calculate_map` that is defined in the anonymous namespace is not used at all. So we ignore it.
+
+ Implementation in Python:
+
+   We'll create a module-level class `MetricsCalculator2` (or just functions? but the problem says to translate the class).
+
+   We note: the C++ code returns a pair: (average_metric, vector_of_individual_metrics)
+
+   Steps:
+
+   For MRR:
+
+        if not data: return (0.0, [0.0])
+
+        individual_mrr = []
+        total_mrr = 0.0
+        for each (vec, k) in data:
+            if k<=0 or not vec:
+                individual_mrr.append(0.0)
+            else:
+                # find first occurrence of 1 in vec
+                try:
+                    idx = vec.index(1)
+                    mrr_val = 1.0 / (idx+1)
+                except ValueError: # if 1 is not found
+                    mrr_val = 0.0
+                individual_mrr.append(mrr_val)
+                total_mrr += mrr_val
+
+        average_mrr = total_mrr / len(data) if data else 0.0   # but note: if data is empty we already returned, so safe.
+
+        return (average_mrr, individual_mrr)
+
+   For MAP:
+
+        if not data: return (0.0, [0.0])
+
+        separate_result = []
+        for (sub_list, total_num) in data:
+            if total_num == 0:
+                separate_result.append(0.0)
+                continue
+
+            n = len(sub_list)
+            # ranking_array: [1/1, 1/2, ..., 1/n]
+            ranking_array = [1.0/(i+1) for i in range(n)]
+
+            right_ranking_list = [0.0] * n
+            count = 1
+            for i in range(n):
+                if sub_list[i] != 0:
+                    right_ranking_list[i] = count
+                    count += 1
+
+            # inner product: sum of (right_ranking_list[i] * ranking_array[i] for all i)
+            inner_prod = 0.0
+            for i in range(n):
+                inner_prod += right_ranking_list[i] * ranking_array[i]
+
+            ap = inner_prod / total_num
+            separate_result.append(ap)
+
+        mean_ap = sum(separate_result) / len(separate_result)
+        return (mean_ap, separate_result)
+
+   However, note: the C++ code uses `std::accumulate` which is a sum. Then divides by the size of separate_result.
+
+   We must be cautious: the C++ code uses `double` arithmetic. Python uses float which is similar (but may have slight differences in rounding).
+
+   But the problem says to keep behavior identical.
+
+   Also note: the C++ code for MAP uses `size_t len = sub_list.size();` and then loops with `i` from 0 to len-1.
+
+   We do the same.
+
+   Let's test with the example: [1,0,1] and total_num=2 -> ap= (1*1 + 0*0.5 + 2*(1/3)) / 2 = (1 + 0 + 0.666...)/2 = 0.833...
+
+   We can write:
+
+        inner_prod = 0.0
+        for i in range(len(sub_list)):
+            inner_prod += right_ranking_list[i] * (1.0/(i+1))
+
+   But note: we precomputed ranking_array = [1/(i+1) for i in range(n)]. So we can also use:
+
+        inner_prod = sum(a * b for a, b in zip(right_ranking_list, ranking_array))
+
+   This is acceptable.
+
+   However, note: the C++ code does the inner product in the same order. So we must match.
+
+   We'll do:
+
+        inner_prod = 0.0
+        for i in range(n):
+            inner_prod += right_ranking_list[i] * ranking_array[i]
+
+   or use:
+
+        inner_prod = sum(right_ranking_list[i] * ranking_array[i] for i in range(n))
+
+   Both are equivalent.
+
+   But note: the C++ code uses `std::inner_product` which does exactly the same.
+
+   We'll use a simple loop or list comprehension? Since the vectors are not huge, we can do:
+
+        inner_prod = sum(a * b for a, b in zip(right_ranking_list, ranking_array))
+
+   This is idiomatic and clear.
+
+   However, note: we are building a list for ranking_array. We could avoid building it by computing on the fly? But the C++ code builds it. So we do similarly.
+
+   Alternatively, we can compute without building ranking_array:
+
+        inner_prod = 0.0
+        for i in range(n):
+            inner_prod += right_ranking_list[i] * (1.0/(i+1))
+
+   This saves memory and is efficient.
+
+   But to match the C++ structure, we'll build the array? Actually, the C++ code builds two arrays: ranking_array and right_ranking_list.
+
+   Since the problem says to keep behavior identical, we'll do the same.
+
+   However, note: the C++ code uses `std::iota` and `std::transform` to build ranking_array. Then uses `std::inner_product`. 
+
+   We'll build ranking_array as a list.
+
+   But note: the problem says "Use idiomatic Python only when it doesn't change behavior". So we can use list comprehensions.
+
+   Let's code accordingly.
+
+   One more edge: the C++ code for MAP:
+
+        if (total_num == 0) {
+            separate_result.push_back(0.0);
+            continue;
+        }
+
+   However, what if total_num is negative? The C++ code doesn't check for negative. But note the data: the second element is an int. In the MRR function, we checked k<=0. In MAP, we only check total_num==0.
+
+   We'll mimic: only check for total_num==0.
+
+   But what if total_num is negative? Then we do the same as the C++ code: we proceed and divide the inner product by a negative number? 
+
+   However, the C++ code does not have a check for negative total_num. Therefore, we must not add one.
+
+   But note: the problem says "Keep behavior identical". So if total_num is negative, then we do the computation and return ap = inner_product / total_num (which would be negative). 
+
+   However, the problem context: total_num is the total number of relevant documents? So it should be non-negative. 
+
+   Since the C++ code does not check, we don't check either.
+
+   Similarly, in the MRR function, the C++ code checks k<=0. So we do that.
+
+   Let's write the code accordingly.
+
+   We'll create a class with static methods.
+
+   Note: In Python, we don't have static in the same way, but we can use @staticmethod.
+
+   However, the problem says to translate. We'll do:
+
+        class MetricsCalculator2:
+            @staticmethod
+            def mrr(data):
+                # ... implementation ...
+
+            @staticmethod
+            def map(data):
+                # ... implementation ...
+
+   The input `data` is a list of tuples: each tuple is (list, int).
+
+   We'll assume the input is as described.
+
+   Let's code accordingly.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate two static methods from a C++ class into Python while maintaining identical behavior. The methods, `mrr` and `map`, compute Mean Reciprocal Rank (MRR) and Mean Average Precision (MAP) metrics, respectively, based on input data. 
+
+### Approach
+1. **MRR Calculation**:
+   - For each query, find the first occurrence of a relevant document (indicated by `1` in the list).
+   - The reciprocal rank is `1/(position + 1)` where `position` is the index of the first relevant document.
+   - If no relevant document is found, the reciprocal rank is `0`.
+   - The overall MRR is the average of reciprocal ranks across all queries.
+
+2. **MAP Calculation**:
+   - For each query, compute the average precision (AP) by:
+     - Generating a list of reciprocal ranks (`1/1, 1/2, ..., 1/n`).
+     - Creating a list where each relevant document is assigned an increasing count (starting from 1) at its position.
+     - The inner product of these two lists divided by the total number of relevant documents gives the AP for the query.
+   - The overall MAP is the average of AP values across all queries.
+
+### Solution Code
+```python
+class MetricsCalculator2:
+    @staticmethod
+    def mrr(data):
+        if not data:
+            return (0.0, [0.0])
+        
+        individual_mrr = []
+        total_mrr = 0.0
+        
+        for item in data:
+            vec, k = item
+            if k <= 0 or not vec:
+                individual_mrr.append(0.0)
+            else:
+                try:
+                    idx = vec.index(1)
+                    mrr_val = 1.0 / (idx + 1)
+                except ValueError:
+                    mrr_val = 0.0
+                individual_mrr.append(mrr_val)
+                total_mrr += mrr_val
+        
+        average_mrr = total_mrr / len(data)
+        return (average_mrr, individual_mrr)
+    
+    @staticmethod
+    def map(data):
+        if not data:
+            return (0.0, [0.0])
+        
+        separate_result = []
+        
+        for item in data:
+            sub_list, total_num = item
+            n = len(sub_list)
+            if total_num == 0:
+                separate_result.append(0.0)
+                continue
+            
+            ranking_array = [1.0 / (i + 1) for i in range(n)]
+            right_ranking_list = [0.0] * n
+            count = 1
+            for i in range(n):
+                if sub_list[i] != 0:
+                    right_ranking_list[i] = count
+                    count += 1
+            
+            inner_prod = 0.0
+            for i in range(n):
+                inner_prod += right_ranking_list[i] * ranking_array[i]
+            
+            ap = inner_prod / total_num
+            separate_result.append(ap)
+        
+        mean_ap = sum(separate_result) / len(separate_result)
+        return (mean_ap, separate_result)
+```
+
+### Explanation
+- **MRR Calculation**:
+  - The method processes each query to find the first relevant document (value `1`). If found, it computes the reciprocal rank as `1/(index + 1)`. If not found, it returns `0`. The average MRR is the mean of these reciprocal ranks across all queries.
+  
+- **MAP Calculation**:
+  - For each query, it constructs a list of reciprocal ranks (`ranking_array`). It then marks positions of relevant documents in `right_ranking_list` with increasing counts (starting from 1). The average precision (AP) for each query is the inner product of `right_ranking_list` and `ranking_array` divided by the total number of relevant documents. The overall MAP is the mean of these AP values.
+
+This approach ensures that the Python implementation behaves identically to the original C++ code, handling edge cases such as empty input lists or zero relevant documents appropriately. The solution leverages Python's list comprehensions and loops to replicate the C++ standard library functions like `std::find`, `std::iota`, and `std::inner_product`.
+
+=== TRANSLATED CODE (py) ===
+class MetricsCalculator2:
+    @staticmethod
+    def mrr(data):
+        if not data:
+            return (0.0, [0.0])
+        
+        individual_mrr = []
+        total_mrr = 0.0
+        
+        for item in data:
+            vec, k = item
+            if k <= 0 or not vec:
+                individual_mrr.append(0.0)
+            else:
+                try:
+                    idx = vec.index(1)
+                    mrr_val = 1.0 / (idx + 1)
+                except ValueError:
+                    mrr_val = 0.0
+                individual_mrr.append(mrr_val)
+                total_mrr += mrr_val
+        
+        average_mrr = total_mrr / len(data)
+        return (average_mrr, individual_mrr)
+    
+    @staticmethod
+    def map(data):
+        if not data:
+            return (0.0, [0.0])
+        
+        separate_result = []
+        
+        for item in data:
+            sub_list, total_num = item
+            n = len(sub_list)
+            if total_num == 0:
+                separate_result.append(0.0)
+                continue
+            
+            ranking_array = [1.0 / (i + 1) for i in range(n)]
+            right_ranking_list = [0.0] * n
+            count = 1
+            for i in range(n):
+                if sub_list[i] != 0:
+                    right_ranking_list[i] = count
+                    count += 1
+            
+            inner_prod = 0.0
+            for i in range(n):
+                inner_prod += right_ranking_list[i] * ranking_array[i]
+            
+            ap = inner_prod / total_num
+            separate_result.append(ap)
+        
+        mean_ap = sum(separate_result) / len(separate_result)
+        return (mean_ap, separate_result)

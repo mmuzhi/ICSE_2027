@@ -1,0 +1,507 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+
+public class BookManagementDB {
+
+    Connection connection;
+
+    public BookManagementDB(String dbName) throws SQLException {
+        connection = DriverManager.getConnection("jdbc:sqlite:" + dbName);
+        createTable();
+    }
+
+    void createTable() throws SQLException {
+        String createTableSQL = "CREATE TABLE IF NOT EXISTS books ("
+                + "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                + "title TEXT, "
+                + "author TEXT, "
+                + "available INTEGER"
+                + ")";
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute(createTableSQL);
+        }
+    }
+
+    public void addBook(String title, String author) throws SQLException {
+        String insertSQL = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        try (PreparedStatement pstmt = connection.prepareStatement(insertSQL)) {
+            pstmt.setString(1, title);
+            pstmt.setString(2, author);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public void removeBook(int bookId) throws SQLException {
+        String deleteSQL = "DELETE FROM books WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(deleteSQL)) {
+            pstmt.setInt(1, bookId);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public void borrowBook(int bookId) throws SQLException {
+        String updateSQL = "UPDATE books SET available = 0 WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(updateSQL)) {
+            pstmt.setInt(1, bookId);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public void returnBook(int bookId) throws SQLException {
+        String updateSQL = "UPDATE books SET available = 1 WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(updateSQL)) {
+            pstmt.setInt(1, bookId);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public List<Book> searchBooks() throws SQLException {
+        String selectSQL = "SELECT * FROM books";
+        List<Book> books = new ArrayList<>();
+        try (Statement stmt = connection.createStatement();
+             ResultSet rs = stmt.executeQuery(selectSQL)) {
+            while (rs.next()) {
+                int id = rs.getInt("id");
+                String title = rs.getString("title");
+                String author = rs.getString("author");
+                int available = rs.getInt("available");
+                books.add(new Book(id, title, author, available));
+            }
+        }
+        return books;
+    }
+
+    public static class Book {
+        private int id;
+        private String title;
+        private String author;
+        private int available;
+
+        public Book(int id, String title, String author, int available) {
+            this.id = id;
+            this.title = title;
+            this.author = author;
+            this.available = available;
+        }
+
+        public int getId() { return id; }
+        public String getTitle() { return title; }
+        public String getAuthor() { return author; }
+        public int getAvailable() { return available; }
+
+        @Override
+        public String toString() {
+            return "Book{" +
+                    "id=" + id +
+                    ", title='" + title + '\'' +
+                    ", author='" + author + '\'' +
+                    ", available=" + available +
+                    '}';
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+Let me translate the Java code to Python, keeping the behavior identical.
+
+Key things to handle:
+1. SQLite connection using Python's `sqlite3` module
+2. The `Book` inner class
+3. All the CRUD operations
+4. Exception handling - Java throws `SQLException`, Python's sqlite3 raises `sqlite3.Error`
+5. Auto-increment primary key
+6. The `available` field is stored as INTEGER (0/1) just like in Java
+
+Let me write the Python equivalent:
+
+- `DriverManager.getConnection("jdbc:sqlite:" + dbName)` → `sqlite3.connect(dbName)`
+- `PreparedStatement` with `?` placeholders → cursor with parameterized queries
+- `try-with-resources` → context managers or explicit close
+- `ResultSet` → cursor iteration
+- `SQLException` → `sqlite3.Error`
+
+For the `searchBooks` method, in Java it returns a `List<Book>`. In Python, I'll return a `list` of `Book` objects.
+
+The `available` field is an `int` in Java (0 or 1), and I should keep it as `int` in Python too.
+
+For the `toString` method, I need to match the Java output format exactly: `Book{id=1, title='foo', author='bar', available=0}`
+
+Let me also handle the `throws SQLException` - in Python, I won't declare exceptions, but the sqlite3 errors will naturally propagate.
+
+One thing to note: In Java, `PreparedStatement.executeUpdate()` is used for INSERT/UPDATE/DELETE. In Python, we use `cursor.execute()` for all of these and `connection.commit()` to persist changes. However, by default, Python's sqlite3 module operates in auto-commit mode for some operations... actually, no. Python's sqlite3 module requires explicit commits for DML statements unless you set `isolation_level=None`.
+
+Wait, let me think about this more carefully. In Java with SQLite JDBC, auto-commit is on by default. In Python's sqlite3, the default `isolation_level` is `""` which means it auto-commits before DDL and requires explicit commits for DML... actually, Python's sqlite3 has a somewhat complex auto-commit behavior.
+
+Actually, looking at the Python sqlite3 documentation more carefully:
+- By default, `isolation_level` is `""` which means Python will issue `BEGIN` implicitly before DML statements and you need to call `connection.commit()` to save changes.
+- If `isolation_level` is `None`, auto-commit is enabled.
+
+To match Java's behavior (auto-commit on by default), I should set `isolation_level=None` or call `commit()` after each DML operation.
+
+I think the cleanest approach is to call `connection.commit()` after each write operation, or set `isolation_level=None`. Let me go with calling `commit()` after each DML operation to be explicit, or actually, let me just set `isolation_level=None` to match Java's auto-commit behavior.
+
+Actually, let me reconsider. The Java code uses auto-commit (default for JDBC SQLite), so every `executeUpdate` is immediately committed. To match this in Python, I'll set `isolation_level=None` on the connection.
+
+Wait, but with `isolation_level=None`, every statement is auto-committed immediately, which matches Java's default behavior. Let me use that.
+
+Hmm, but there's a subtlety. With `isolation_level=None`, there's no implicit BEGIN statement, so each statement is its own transaction. This matches Java's auto-commit mode.
+
+Let me write the code:
+
+```python
+import sqlite3
+
+
+class BookManagementDB:
+
+    def __init__(self, db_name):
+        self.connection = sqlite3.connect(db_name, isolation_level=None)
+        self._create_table()
+
+    def _create_table(self):
+        create_table_sql = (
+            "CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT, "
+            "author TEXT, "
+            "available INTEGER"
+            ")"
+        )
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(create_table_sql)
+        finally:
+            cursor.close()
+
+    def add_book(self, title, author):
+        insert_sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(insert_sql, (title, author))
+        finally:
+            cursor.close()
+
+    def remove_book(self, book_id):
+        delete_sql = "DELETE FROM books WHERE id = ?"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(delete_sql, (book_id,))
+        finally:
+            cursor.close()
+
+    def borrow_book(self, book_id):
+        update_sql = "UPDATE books SET available = 0 WHERE id = ?"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(update_sql, (book_id,))
+        finally:
+            cursor.close()
+
+    def return_book(self, book_id):
+        update_sql = "UPDATE books SET available = 1 WHERE id = ?"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(update_sql, (book_id,))
+        finally:
+            cursor.close()
+
+    def search_books(self):
+        select_sql = "SELECT * FROM books"
+        books = []
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(select_sql)
+            for row in cursor.fetchall():
+                book = Book(row[0], row[1], row[2], row[3])
+                books.append(book)
+        finally:
+            cursor.close()
+        return books
+
+
+class Book:
+
+    def __init__(self, id, title, author, available):
+        self.id = id
+        self.title = title
+        self.author = author
+        self.available = available
+
+    def get_id(self):
+        return self.id
+
+    def get_title(self):
+        return self.title
+
+    def get_author(self):
+        return self.author
+
+    def get_available(self):
+        return self.available
+
+    def __str__(self):
+        return (
+            f"Book{{id={self.id}, title='{self.title}', "
+            f"author='{self.author}', available={self.available}}}"
+        )
+```
+
+Wait, I need to think about whether to use `isolation_level=None` or explicit commits. Let me check: in Java JDBC, auto-commit is on by default, meaning each SQL statement is committed immediately. With Python's sqlite3 and `isolation_level=None`, the same behavior occurs.
+
+But actually, there might be a subtle issue. With `isolation_level=None`, there's no transaction management at all - each statement auto-commits. But with the default `isolation_level=""`, Python starts an implicit transaction and you need to call `commit()`. 
+
+To match Java's behavior exactly, I should use `isolation_level=None`.
+
+Actually, let me reconsider the cursor usage. In Python's sqlite3, you can also use the connection as a context manager for transactions, but that changes behavior. I'll keep it simple with `isolation_level=None`.
+
+Also, I should consider: should I close cursors? In the Java code, try-with-resources closes the Statement/PreparedStatement. In Python, closing cursors is good practice but not strictly necessary for sqlite3. I'll include it for parity.
+
+Actually, let me simplify - in Python sqlite3, cursors don't hold resources the same way Java Statements do. But to keep behavior identical, I'll close them. Actually, let me just use context managers where possible... but sqlite3 cursors don't support context managers in all Python versions. Let me use try/finally.
+
+Hmm, actually in modern Python (3.7+), `sqlite3.Cursor` doesn't have `__enter__`/`__exit__`. So try/finally is the way to go.
+
+Let me also reconsider: should I use `isolation_level=None`? The Java code doesn't explicitly set auto-commit, and the default for JDBC is auto-commit=true. So yes, `isolation_level=None` matches.
+
+Wait, actually I just realized something. With `isolation_level=None`, the `CREATE TABLE IF NOT EXISTS` in `_create_table` would also be auto-committed, which is fine. And all the DML operations would be auto-committed too. This matches Java's behavior.
+
+One more thing: the Java code uses `rs.getInt("id")` etc., which accesses columns by name. In Python, I can use `cursor.description` to get column names, or I can just access by index since the SELECT * returns columns in the order they were defined. Let me use index access since the column order is deterministic.
+
+Actually, I could also set `self.connection.row_factory = sqlite3.Row` to access by column name. But using index is simpler and the column order is guaranteed by the CREATE TABLE statement.
+
+Let me finalize the code. I think it looks good. Let me also make sure the `__str__` method matches Java's `toString()` output exactly.
+
+Java: `"Book{id=" + id + ", title='" + title + '\'' + ", author='" + author + '\'' + ", available=" + available + '}'`
+
+So for a book with id=1, title="Test", author="Author", available=1:
+`Book{id=1, title='Test', author='Author', available=1}`
+
+My Python `__str__`:
+`f"Book{{id={self.id}, title='{self.title}', author='{self.author}', available={self.available}}}"`
+
+This would produce: `Book{id=1, title='Test', author='Author', available=1}` ✓
+
+Looks correct.
+
+One more consideration: the Java `SQLException` is a checked exception. In Python, `sqlite3.Error` (and its subclasses like `sqlite3.OperationalError`, `sqlite3.IntegrityError`) are raised. The behavior is the same - exceptions propagate to the caller. I don't need to do anything special here since Python doesn't have checked exceptions.
+
+I think the code is ready. Let me also consider whether I should keep the getter methods. In Java, they're used because of encapsulation. In Python, it's more idiomatic to access attributes directly, but since the instructions say "Use idiomatic Python only when it doesn't change behavior", and having getter methods doesn't change behavior, I could go either way. I'll include them for parity with the Java code, since someone might call `book.get_id()` etc.
+
+Actually, looking at the instructions again: "Use idiomatic Python only when it doesn't change behavior." The getter methods are part of the public API. If someone's using this class, they might call `book.get_id()`. So I should keep them for behavioral compatibility. But I'll also allow direct attribute access since Python doesn't enforce encapsulation.
+
+Let me finalize.
+</think>
+
+=== RAW ANSWER ===
+```python
+import sqlite3
+
+
+class BookManagementDB:
+
+    def __init__(self, db_name):
+        self.connection = sqlite3.connect(db_name, isolation_level=None)
+        self._create_table()
+
+    def _create_table(self):
+        create_table_sql = (
+            "CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT, "
+            "author TEXT, "
+            "available INTEGER"
+            ")"
+        )
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(create_table_sql)
+        finally:
+            cursor.close()
+
+    def add_book(self, title, author):
+        insert_sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(insert_sql, (title, author))
+        finally:
+            cursor.close()
+
+    def remove_book(self, book_id):
+        delete_sql = "DELETE FROM books WHERE id = ?"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(delete_sql, (book_id,))
+        finally:
+            cursor.close()
+
+    def borrow_book(self, book_id):
+        update_sql = "UPDATE books SET available = 0 WHERE id = ?"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(update_sql, (book_id,))
+        finally:
+            cursor.close()
+
+    def return_book(self, book_id):
+        update_sql = "UPDATE books SET available = 1 WHERE id = ?"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(update_sql, (book_id,))
+        finally:
+            cursor.close()
+
+    def search_books(self):
+        select_sql = "SELECT * FROM books"
+        books = []
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(select_sql)
+            for row in cursor.fetchall():
+                books.append(Book(row[0], row[1], row[2], row[3]))
+        finally:
+            cursor.close()
+        return books
+
+
+class Book:
+
+    def __init__(self, id, title, author, available):
+        self.id = id
+        self.title = title
+        self.author = author
+        self.available = available
+
+    def get_id(self):
+        return self.id
+
+    def get_title(self):
+        return self.title
+
+    def get_author(self):
+        return self.author
+
+    def get_available(self):
+        return self.available
+
+    def __str__(self):
+        return (
+            f"Book{{id={self.id}, title='{self.title}', "
+            f"author='{self.author}', available={self.available}}}"
+        )
+```
+
+Key translation decisions:
+
+- **`isolation_level=None`** on `sqlite3.connect()` — matches Java JDBC's default auto-commit mode, where each SQL statement is immediately committed without an explicit `commit()` call.
+- **`try/finally` with `cursor.close()`** — mirrors Java's try-with-resources that closes `Statement`/`PreparedStatement` objects.
+- **Parameterized queries with `?`** — same placeholder style as Java's SQLite JDBC, and both use the same positional binding.
+- **`sqlite3.Error`** (and subclasses) naturally propagate just like Java's `SQLException` — no special handling needed since Python doesn't have checked exceptions.
+- **Getter methods preserved** — maintains the public API contract from the Java class; Python also allows direct attribute access.
+- **`__str__`** — produces identical output to Java's `toString()`, e.g., `Book{id=1, title='Title', author='Author', available=1}`.
+- **`Book` as a top-level class** — Python has no inner class convention; making it a separate class is idiomatic and behaviorally equivalent.
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+
+
+class BookManagementDB:
+
+    def __init__(self, db_name):
+        self.connection = sqlite3.connect(db_name, isolation_level=None)
+        self._create_table()
+
+    def _create_table(self):
+        create_table_sql = (
+            "CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT, "
+            "author TEXT, "
+            "available INTEGER"
+            ")"
+        )
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(create_table_sql)
+        finally:
+            cursor.close()
+
+    def add_book(self, title, author):
+        insert_sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(insert_sql, (title, author))
+        finally:
+            cursor.close()
+
+    def remove_book(self, book_id):
+        delete_sql = "DELETE FROM books WHERE id = ?"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(delete_sql, (book_id,))
+        finally:
+            cursor.close()
+
+    def borrow_book(self, book_id):
+        update_sql = "UPDATE books SET available = 0 WHERE id = ?"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(update_sql, (book_id,))
+        finally:
+            cursor.close()
+
+    def return_book(self, book_id):
+        update_sql = "UPDATE books SET available = 1 WHERE id = ?"
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(update_sql, (book_id,))
+        finally:
+            cursor.close()
+
+    def search_books(self):
+        select_sql = "SELECT * FROM books"
+        books = []
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(select_sql)
+            for row in cursor.fetchall():
+                books.append(Book(row[0], row[1], row[2], row[3]))
+        finally:
+            cursor.close()
+        return books
+
+
+class Book:
+
+    def __init__(self, id, title, author, available):
+        self.id = id
+        self.title = title
+        self.author = author
+        self.available = available
+
+    def get_id(self):
+        return self.id
+
+    def get_title(self):
+        return self.title
+
+    def get_author(self):
+        return self.author
+
+    def get_available(self):
+        return self.available
+
+    def __str__(self):
+        return (
+            f"Book{{id={self.id}, title='{self.title}', "
+            f"author='{self.author}', available={self.available}}}"
+        )

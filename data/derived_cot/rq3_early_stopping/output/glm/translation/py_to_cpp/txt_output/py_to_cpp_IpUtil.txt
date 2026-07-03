@@ -1,0 +1,244 @@
+=== SOURCE CODE (py) ===
+'''
+# This is a class as tool for ip that can be used to obtain the local IP address, validate its validity, and also provides the functionality to retrieve the corresponding hostname.
+
+import socket
+import netifaces
+
+
+class IpUtil:
+
+    @staticmethod
+    def is_valid_ipv4(ip_address):
+        """
+        Check if the given IP address is a valid IPv4 address.
+        :param ip_address: string, the IP address to check
+        :return: bool, True if the IP address is valid, False otherwise
+        >>> IpUtil.is_valid_ipv4('192.168.0.123')
+        True
+        >>> IpUtil.is_valid_ipv4('256.0.0.0')
+        False
+
+        """
+
+    @staticmethod
+    def is_valid_ipv6(ip_address):
+        """
+        Check if the given IP address is a valid IPv6 address.
+        :param ip_address:string, the IP address to check
+        :return:bool, True if the IP address is valid, False otherwise
+        >>> IpUtil.is_valid_ipv6('2001:0db8:85a3:0000:0000:8a2e:0370:7334')
+        True
+        >>> IpUtil.is_valid_ipv6('2001:0db8:85a3:::8a2e:0370:7334')
+        False
+
+        """
+
+
+    @staticmethod
+    def get_hostname(ip_address):
+        """
+        Get the hostname associated with the given IP address.
+        :param ip_address:string, the IP address to get the hostname for
+        :return: string, the hostname associated with the IP address
+        >>> IpUtil.get_hostname('110.242.68.3')
+        'www.baidu.com'
+        >>> IpUtil.get_hostname('10.0.0.1')
+
+        """
+
+
+'''
+
+import socket
+
+
+class IpUtil:
+
+    @staticmethod
+    def is_valid_ipv4(ip_address):
+        try:
+            socket.inet_pton(socket.AF_INET, ip_address)
+            return True
+        except socket.error:
+            return False
+
+    @staticmethod
+    def is_valid_ipv6(ip_address):
+        try:
+            socket.inet_pton(socket.AF_INET6, ip_address)
+            return True
+        except socket.error:
+            return False
+
+    @staticmethod
+    def get_hostname(ip_address):
+        try:
+            hostname = socket.gethostbyaddr(ip_address)[0]
+            return hostname
+        except socket.herror:
+            return None
+
+
+
+
+=== REASONING ===
+<think>
+The user wants me to translate a Python class `IpUtil` to C++.
+The class has three static methods:
+1. `is_valid_ipv4(ip_address)`: Checks if a string is a valid IPv4 address. Returns `True`/`False`.
+2. `is_valid_ipv6(ip_address)`: Checks if a string is a valid IPv6 address. Returns `True`/`False`.
+3. `get_hostname(ip_address)`: Gets the hostname for an IP address. Returns the hostname string or `None` if it fails.
+
+Let's look at the Python implementation:
+- `is_valid_ipv4` uses `socket.inet_pton(socket.AF_INET, ip_address)` and returns `True` if it succeeds, `False` if it raises `socket.error`.
+- `is_valid_ipv6` uses `socket.inet_pton(socket.AF_INET6, ip_address)` and returns `True` if it succeeds, `False` if it raises `socket.error`.
+- `get_hostname` uses `socket.gethostbyaddr(ip_address)[0]` and returns the hostname, or `None` if `socket.herror` is raised.
+
+C++ equivalents:
+- For `is_valid_ipv4` and `is_valid_ipv6`, we can use `inet_pton` from `<arpa/inet.h>` (Linux/macOS) or `<winsock2.h>` (Windows). Since the prompt doesn't specify the OS, standard POSIX headers are typically expected for C++ network code unless Windows is specified. I'll use POSIX headers but maybe add a note or just stick to standard POSIX (`<arpa/inet.h>`, `<netdb.h>`, `<sys/socket.h>`). Wait, standard C++ doesn't have networking until C++26, so POSIX or Winsock is necessary.
+- For `get_hostname`, we can use `gethostbyaddr` (deprecated but matches Python's functionality) or `getnameinfo` (modern POSIX). `gethostbyaddr` takes a `struct in_addr` or `in6_addr`, but wait, Python's `gethostbyaddr` takes a string and does the resolution. In C++, `gethostbyaddr` requires the binary address. `getnameinfo` is better and works with `struct sockaddr`. Or we can use `gethostbyname`? No, `gethostbyaddr` is the reverse lookup.
+Wait, `getaddrinfo` and `getnameinfo` are the modern POSIX way.
+Let's see how to implement `get_hostname` using `getnameinfo`:
+1. Use `getaddrinfo` to resolve the IP string to a `struct addrinfo`.
+2. Use `getnameinfo` on the resulting `sockaddr` to get the hostname.
+Wait, Python's `socket.gethostbyaddr` does exactly this.
+
+Let's refine `is_valid_ipv4`:
+```cpp
+#include <string>
+#include <arpa/inet.h>
+#include <netdb.h>
+
+bool is_valid_ipv4(const std::string& ip_address) {
+    struct in_addr addr;
+    return inet_pton(AF_INET, ip_address.c_str(), &addr) == 1;
+}
+
+bool is_valid_ipv6(const std::string& ip_address) {
+    struct in6_addr addr;
+    return inet_pton(AF_INET6, ip_address.c_str(), &addr) == 1;
+}
+```
+
+Let's refine `get_hostname`:
+```cpp
+#include <optional>
+#include <string>
+
+std::optional<std::string> get_hostname(const std::string& ip_address) {
+    struct addrinfo hints = {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_NUMERICHOST;
+
+    struct addrinfo* res = nullptr;
+    int status = getaddrinfo(ip_address.c_str(), nullptr, &hints, &res);
+    if (status != 0) {
+        return std::nullopt;
+    }
+
+    char host[NI_MAXHOST];
+    status = getnameinfo(res->ai_addr, res->ai_addrlen, host, sizeof(host), nullptr, 0, 0);
+    freeaddrinfo(res);
+
+    if (status != 0) {
+        return std::nullopt;
+    }
+
+    return std::string(host);
+}
+```
+Wait, `AI_NUMERICHOST` prevents DNS resolution in `getaddrinfo`, which is good because we just want to parse the IP address to a `sockaddr`. Then `getnameinfo` does the reverse DNS lookup. This is correct and avoids blocking on invalid IPs in the first step.
+
+Wait, Python's `socket.gethostbyaddr` can take an IP string. If it's an invalid IP, it raises `socket.gaierror` or `socket.herror`.
+In my C++ implementation, `getaddrinfo` with `AI_NUMERICHOST` will return a non-zero status for invalid IPs, so it returns `std::nullopt`. For valid IPs, it does the reverse lookup. If the reverse lookup fails (no PTR record), `getnameinfo` returns the IP address itself or an error depending on the flags. If we pass `0` as flags to `getnameinfo`, it might return the IP address if no hostname is found, or it might return an error.
+Wait, `NI_NAMEREQD` can be used if we want it to fail when there is no reverse DNS. Python's `gethostbyaddr` raises `socket.herror` if the host is not found. So we should use `NI_NAMEREQD` to mimic that behavior.
+Let's check Python docs:
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <string>
+#include <optional>
+#include <arpa/inet.h>
+#include <netdb.h>
+
+class IpUtil {
+public:
+    static bool is_valid_ipv4(const std::string& ip_address) {
+        struct in_addr addr;
+        return inet_pton(AF_INET, ip_address.c_str(), &addr) == 1;
+    }
+
+    static bool is_valid_ipv6(const std::string& ip_address) {
+        struct in6_addr addr;
+        return inet_pton(AF_INET6, ip_address.c_str(), &addr) == 1;
+    }
+
+    static std::optional<std::string> get_hostname(const std::string& ip_address) {
+        struct addrinfo hints = {};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_flags = AI_NUMERICHOST;
+
+        struct addrinfo* res = nullptr;
+        int status = getaddrinfo(ip_address.c_str(), nullptr, &hints, &res);
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        char host[NI_MAXHOST];
+        status = getnameinfo(res->ai_addr, res->ai_addrlen, host, sizeof(host), nullptr, 0, NI_NAMEREQD);
+        freeaddrinfo(res);
+
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        return std::string(host);
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <optional>
+#include <arpa/inet.h>
+#include <netdb.h>
+
+class IpUtil {
+public:
+    static bool is_valid_ipv4(const std::string& ip_address) {
+        struct in_addr addr;
+        return inet_pton(AF_INET, ip_address.c_str(), &addr) == 1;
+    }
+
+    static bool is_valid_ipv6(const std::string& ip_address) {
+        struct in6_addr addr;
+        return inet_pton(AF_INET6, ip_address.c_str(), &addr) == 1;
+    }
+
+    static std::optional<std::string> get_hostname(const std::string& ip_address) {
+        struct addrinfo hints = {};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_flags = AI_NUMERICHOST;
+
+        struct addrinfo* res = nullptr;
+        int status = getaddrinfo(ip_address.c_str(), nullptr, &hints, &res);
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        char host[NI_MAXHOST];
+        status = getnameinfo(res->ai_addr, res->ai_addrlen, host, sizeof(host), nullptr, 0, NI_NAMEREQD);
+        freeaddrinfo(res);
+
+        if (status != 0) {
+            return std::nullopt;
+        }
+
+        return std::string(host);
+    }
+};

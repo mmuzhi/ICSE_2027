@@ -1,0 +1,320 @@
+=== SOURCE CODE (cpp) ===
+
+#include <iostream>
+#include <stdexcept>
+
+#include <winsqlite/winsqlite3.h>
+#include <string>
+#include <vector>
+
+class MovieTicketDB {
+public:
+    MovieTicketDB(const std::string& dbName);
+    ~MovieTicketDB();
+
+    void create_table();
+    void insert_ticket(const std::string& movieName, const std::string& theaterName,
+        const std::string& seatNumber, const std::string& customerName);
+    std::vector<std::vector<std::string>> search_tickets_by_customer(const std::string& customerName);
+    void delete_ticket(const std::string& ticketId);
+    void close_connection();
+
+private:
+    sqlite3* db;
+    std::string dbName;
+};
+
+MovieTicketDB::MovieTicketDB(const std::string& dbName) : dbName(dbName) {
+    if (sqlite3_open(dbName.c_str(), &db) != SQLITE_OK) {
+        throw std::runtime_error("Unable to open database");
+    }
+    create_table();
+}
+
+MovieTicketDB::~MovieTicketDB() {
+    close_connection();
+}
+
+void MovieTicketDB::create_table() {
+    const char* create_tableSQL = R"(
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY,
+            movie_name TEXT,
+            theater_name TEXT,
+            seat_number TEXT,
+            customer_name TEXT
+        )
+    )";
+    char* errMsg = nullptr;
+    if (sqlite3_exec(db, create_tableSQL, nullptr, nullptr, &errMsg) != SQLITE_OK) {
+        throw std::runtime_error("Failed to create table: " + std::string(errMsg));
+    }
+}
+
+void MovieTicketDB::insert_ticket(const std::string& movieName, const std::string& theaterName,
+    const std::string& seatNumber, const std::string& customerName) {
+    const char* insertSQL = R"(
+        INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+        VALUES (?, ?, ?, ?)
+    )";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement");
+    }
+    sqlite3_bind_text(stmt, 1, movieName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, theaterName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, seatNumber.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, customerName.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to insert ticket");
+    }
+    sqlite3_finalize(stmt);
+}
+
+std::vector<std::vector<std::string>> MovieTicketDB::search_tickets_by_customer(const std::string& customerName) {
+    const char* searchSQL = R"(
+        SELECT * FROM tickets WHERE customer_name = ?
+    )";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, searchSQL, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement");
+    }
+    sqlite3_bind_text(stmt, 1, customerName.c_str(), -1, SQLITE_STATIC);
+
+    std::vector<std::vector<std::string>> results;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::vector<std::string> row;
+        for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
+            row.emplace_back(reinterpret_cast<const char*>(sqlite3_column_text(stmt, i)));
+        }
+        results.emplace_back(std::move(row));
+    }
+    sqlite3_finalize(stmt);
+    return results;
+}
+
+void MovieTicketDB::delete_ticket(const std::string& ticketId) {
+    const char* deleteSQL = R"(
+        DELETE FROM tickets WHERE id = ?
+    )";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, deleteSQL, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement");
+    }
+    sqlite3_bind_text(stmt, 1, ticketId.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to delete ticket");
+    }
+    sqlite3_finalize(stmt);
+}
+
+void MovieTicketDB::close_connection() {
+    if (db) {
+        sqlite3_close(db);
+        db = nullptr;
+    }
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to use the built-in sqlite3 module in Python.
+ We'll create a class MovieTicketDB that mirrors the C++ class.
+ We'll use the same method names and similar error handling (raising exceptions).
+
+ Important: The C++ code uses prepared statements and binds parameters. We'll do the same in Python for security.
+
+ Steps:
+ 1. Import sqlite3
+ 2. Define the class MovieTicketDB with the same methods.
+ 3. In the constructor, open the database and create the table.
+ 4. Implement each method with equivalent SQLite operations.
+
+ Note: The C++ code uses a vector of vectors of strings for the search results. We'll return a list of lists of strings in Python.
+
+ We'll handle errors by raising exceptions (like RuntimeError) with appropriate messages.
+
+ The C++ code uses SQLITE_STATIC for binding, which is safe because the strings are not changing during the bind.
+ In Python, we don't need to worry about that because the parameters are passed as a tuple and the module handles it.
+
+ Let's write the code accordingly.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate the given C++ code, which interacts with an SQLite database to manage movie tickets, into Python. The Python implementation should maintain identical behavior in terms of inputs/outputs, side effects, edge cases, and exceptions. We'll use Python's built-in `sqlite3` module to achieve this.
+
+### Approach
+1. **Database Connection**: The Python class `MovieTicketDB` will manage the SQLite database connection similarly to the C++ version. The constructor opens the database and creates the necessary table.
+2. **Table Creation**: The `create_table` method ensures the `tickets` table exists with the required columns.
+3. **Insert Operation**: The `insert_ticket` method uses parameterized queries to safely insert new ticket records.
+4. **Search Operation**: The `search_tickets_by_customer` method retrieves all tickets associated with a given customer name using a parameterized query and returns the results as a list of lists.
+5. **Delete Operation**: The `delete_ticket` method removes a ticket by its ID using a parameterized query.
+6. **Connection Management**: The `close_connection` method closes the database connection, and the destructor ensures this method is called when the object is destroyed.
+
+### Solution Code
+```python
+import sqlite3
+import os
+
+class MovieTicketDB:
+    def __init__(self, dbName):
+        self.dbName = dbName
+        try:
+            self.db = sqlite3.connect(dbName)
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Unable to open database: {str(e)}")
+        self.create_table()
+
+    def __del__(self):
+        self.close_connection()
+
+    def create_table(self):
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY,
+            movie_name TEXT,
+            theater_name TEXT,
+            seat_number TEXT,
+            customer_name TEXT
+        )
+        """
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(create_table_sql)
+            self.db.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to create table: {str(e)}")
+
+    def insert_ticket(self, movieName, theaterName, seatNumber, customerName):
+        insert_sql = """
+        INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+        VALUES (?, ?, ?, ?)
+        """
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(insert_sql, (movieName, theaterName, seatNumber, customerName))
+            self.db.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to insert ticket: {str(e)}")
+
+    def search_tickets_by_customer(self, customerName):
+        search_sql = """
+        SELECT * FROM tickets WHERE customer_name = ?
+        """
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(search_sql, (customerName,))
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append([str(item) for item in row])
+            return results
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to search tickets: {str(e)}")
+
+    def delete_ticket(self, ticketId):
+        delete_sql = """
+        DELETE FROM tickets WHERE id = ?
+        """
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(delete_sql, (ticketId,))
+            self.db.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to delete ticket: {str(e)}")
+
+    def close_connection(self):
+        if hasattr(self, 'db') and self.db:
+            self.db.close()
+            self.db = None
+```
+
+### Explanation
+1. **Initialization**: The `__init__` method opens the database connection and creates the `tickets` table if it doesn't exist. Any errors during this process raise a `RuntimeError`.
+2. **Destructor**: The `__del__` method ensures the database connection is closed when the object is garbage collected.
+3. **Table Creation**: The `create_table` method executes an SQL statement to create the `tickets` table with columns matching the C++ version.
+4. **Insert Ticket**: The `insert_ticket` method uses parameterized SQL to insert a new ticket record, preventing SQL injection.
+5. **Search Tickets**: The `search_tickets_by_customer` method retrieves all tickets for a given customer, returning them as a list of lists where each inner list represents a ticket record.
+6. **Delete Ticket**: The `delete_ticket` method removes a ticket by its ID using a parameterized query.
+7. **Connection Closure**: The `close_connection` method explicitly closes the database connection if it is open.
+
+This implementation ensures that the Python version behaves identically to the original C++ code, maintaining the same error handling and database operations.
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+import os
+
+class MovieTicketDB:
+    def __init__(self, dbName):
+        self.dbName = dbName
+        try:
+            self.db = sqlite3.connect(dbName)
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Unable to open database: {str(e)}")
+        self.create_table()
+
+    def __del__(self):
+        self.close_connection()
+
+    def create_table(self):
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY,
+            movie_name TEXT,
+            theater_name TEXT,
+            seat_number TEXT,
+            customer_name TEXT
+        )
+        """
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(create_table_sql)
+            self.db.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to create table: {str(e)}")
+
+    def insert_ticket(self, movieName, theaterName, seatNumber, customerName):
+        insert_sql = """
+        INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+        VALUES (?, ?, ?, ?)
+        """
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(insert_sql, (movieName, theaterName, seatNumber, customerName))
+            self.db.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to insert ticket: {str(e)}")
+
+    def search_tickets_by_customer(self, customerName):
+        search_sql = """
+        SELECT * FROM tickets WHERE customer_name = ?
+        """
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(search_sql, (customerName,))
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append([str(item) for item in row])
+            return results
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to search tickets: {str(e)}")
+
+    def delete_ticket(self, ticketId):
+        delete_sql = """
+        DELETE FROM tickets WHERE id = ?
+        """
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(delete_sql, (ticketId,))
+            self.db.commit()
+        except sqlite3.Error as e:
+            raise RuntimeError(f"Failed to delete ticket: {str(e)}")
+
+    def close_connection(self):
+        if hasattr(self, 'db') and self.db:
+            self.db.close()
+            self.db = None

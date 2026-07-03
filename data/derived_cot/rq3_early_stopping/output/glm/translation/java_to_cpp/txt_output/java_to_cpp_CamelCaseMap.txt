@@ -1,0 +1,723 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+
+public class CamelCaseMap {
+    private final Map<String, Object> data = new LinkedHashMap<>();
+
+    public Object get(String key) {
+        return data.get(_convertKey(key));
+    }
+
+    public void put(String key, Object value) {
+        data.put(_convertKey(key), value);
+    }
+
+    public void remove(String key) {
+        data.remove(_convertKey(key));
+    }
+
+    String _convertKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        return _toCamelCase(key);
+    }
+
+    static String _toCamelCase(String key) {
+        String[] parts = key.split("_");
+        StringBuilder camelCaseString = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            camelCaseString.append(parts[i].substring(0, 1).toUpperCase()).append(parts[i].substring(1).toLowerCase());
+        }
+        return camelCaseString.toString();
+    }
+
+    public Set<String> keySet() {
+        return data.keySet();
+    }
+
+    public int size() {
+        return data.size();
+    }
+}
+
+
+=== REASONING ===
+<think>
+The user wants to translate a Java class `CamelCaseMap` to C++.
+The Java class uses a `LinkedHashMap<String, Object>` to store data.
+The keys are converted to camelCase before being stored, retrieved, or removed.
+The `_toCamelCase` method splits the key by underscore, makes the first part unchanged, and capitalizes the first letter of subsequent parts while lowercasing the rest.
+The `data` map stores `Object` as values. In C++, `Object` can be translated as `std::any` (since C++17) or `boost::any`. `std::any` is a good fit.
+Wait, since the original code uses `Object`, `std::any` is the closest equivalent in C++.
+The `Map<String, Object>` becomes `std::map<std::string, std::any>` or `std::unordered_map`? The Java code uses `LinkedHashMap`, which preserves insertion order. In C++, `std::map` preserves sorted order, not insertion order. To preserve insertion order, we would need a custom structure or a container like `std::vector<std::pair<std::string, std::any>>` or use a library like Boost.MultiIndex or just `std::map` if order doesn't strictly mean insertion order. However, the prompt says "Keep behavior identical". A `LinkedHashMap` iterates in insertion order. If we use `std::map`, the iteration order will be alphabetical.
+Is there a standard C++ equivalent for `LinkedHashMap`? No.
+If I use `std::map`, the `keySet()` order will be different.
+Let's consider using `std::map` and maybe adding a comment, or implementing a simple linked hash map. Since it's just a translation, maybe `std::map` is acceptable, but strictly speaking, `LinkedHashMap` guarantees insertion order.
+Wait, does `keySet()` return a view that updates with the map? Yes, in Java. In C++, returning a `std::vector<std::string>` or `std::set<std::string>` would be a copy. If we want to match the Java `Set<String>`, we could return a `std::vector<std::string>` (to preserve insertion order) or `std::set<std::string>`.
+Let's look at the Java methods:
+- `get(String key)`: returns `Object` -> `std::any`
+- `put(String key, Object value)`: returns `void` in Java (wait, `Map.put` returns `Object`, but the wrapper method returns `void`).
+- `remove(String key)`: returns `void` in Java.
+- `keySet()`: returns `Set<String>`. In C++, we can return `std::vector<std::string>` to preserve insertion order, or `std::set<std::string>`. Since `LinkedHashMap` preserves insertion order, `std::vector<std::string>` is closer to the iteration order, but `Set` implies uniqueness. Let's return `std::vector<std::string>` and document it, or `std::set<std::string>`.
+Wait, if I just use `std::map`, it's much simpler. But `LinkedHashMap` specifically maintains insertion order.
+Let's implement a simple `LinkedHashMap` using `std::list` and `std::unordered_map`, or just use `std::vector<std::pair<std::string, std::any>>` and `std::unordered_map` for O(1) lookup.
+Actually, wait, the simplest way to mimic `LinkedHashMap` is to use `std::vector<std::pair<std::string, std::any>>` for insertion order, and search linearly if we don't care about O(1) lookup, or `std::map` if we don't care about insertion order.
+Given the prompt "Use idiomatic C++ only when it doesn't change behavior", I should probably preserve the insertion order behavior of `LinkedHashMap`.
+Let's use a combination of `std::list<std::string>` for order and `std::unordered_map<std::string, std::pair<std::any, std::list<std::string>::iterator>>` for O(1) access.
+Or simpler: `std::vector<std::string>` for keys, and `std::unordered_map<std::string, std::any>` for values.
+When `put` is called, if key exists, update value. If not, add to vector and map.
+When `remove` is called, remove from map and vector.
+This gives O(N) remove, but it's simple and correct. Since it's a small translation, maybe `std::vector` + `std::unordered_map` is fine.
+Wait, `std::map` is ordered by key. `LinkedHashMap` is ordered by insertion.
+Let's just use `std::map` and note that the order is different? No, "Keep behavior identical".
+Let's implement a basic `LinkedHashMap` or just use `std::vector<std::pair<std::string, std::any>>` and do linear search for `get` and `remove`. The code doesn't specify performance constraints. Linear search is O(N). `std::map` is O(log N) but changes order. I think preserving order is more important for "identical behavior" than preserving O(1) complexity.
+Wait, another option: `std::map<std::string, std::any>` and just accept the order difference? No, Java's `LinkedHashMap` specifically exists for insertion order. If the Java author wanted sorted order, they would use `TreeMap`. So they want insertion order.
+I will implement a `LinkedHashMap`-like structure using `std::vector<std::pair<std::string, std::any>>` for simplicity, but wait, `get` and `remove` would be O(N).
+Let's use `std::list<std::pair<std::string, std::any>>` and `std::unordered_map<std::string, std::list<std::pair<std::string, std::any>>::iterator>`.
+```cpp
+    std::list<std::pair<std::string, std::any>> order;
+    std::unordered_map<std::string, std::list<std::pair<std::string, std::any>>::iterator> map;
+```
+When `put`:
+```cpp
+    std::string ckey = _convertKey(key);
+    auto it = map.find(ckey);
+    if (it != map.end()) {
+        it->second->second = value;
+    } else {
+        order.emplace_back(ckey, value);
+        map[ckey] = std::prev(order.end());
+    }
+```
+When `get`:
+```cpp
+    std::string ckey = _convertKey(key);
+    auto it = map.find(ckey);
+    if (it != map.end()) {
+        return &(it->second->second); // or return the any object
+    }
+    return nullptr; // or std::nullopt if returning optional
+```
+Wait, Java's `get` returns `Object`, which can be `null`.
+In C++, returning `std::any*` or `std::shared_ptr<std::any>` or `std::optional<std::any>` would make sense. `std::any` itself cannot be null, but it can be empty. However, in Java, `get` returns `null` if the key is not found. In C++, we can return `std::any*` (pointer to the stored any, nullptr if not found) or `std::optional<std::reference_wrapper<std::any>>`. Or maybe just return `std::any` and if not found, return an empty `std::any`. But how does the caller distinguish between a key not found and a key mapped to `null`?
+In Java, you can `put("key", null)`. Then `get("key")` returns `null`. `get("nonexistent")` also returns `null`.
+If we return `std::any`, an empty `std::any` can represent `null`. But then `get("nonexistent")` also returns empty `std::any`. This perfectly matches Java's ambiguity! In Java, `get` returning `null` can mean either the key maps to `null` or the key is absent. So returning `std::any` (empty if not found or mapped to null) is identical behavior.
+Wait, what if we map a key to an empty `std::any`? That's equivalent to mapping to `null`.
+So `get` can return `std::any`.
+Let's see:
+```cpp
+    std::any get(const std::string& key) {
+        std::string ckey = _convertKey(key);
+        auto it = map.find(ckey);
+        if (it != map.end()) {
+            return it->second->second;
+        }
+        return std::any(); // equivalent to null
+    }
+```
+Wait, what about `put`? `void put(const std::string& key, std::any value)`.
+If we pass an empty `std::any`, it's like passing `null`.
+
+Let's refine the data structure.
+```cpp
+#include <string>
+#include <any>
+#include <vector>
+#include <unordered_map>
+#include <list>
+#include <cctype>
+#include <algorithm>
+
+class CamelCaseMap {
+private:
+    std::list<std::pair<std::string, std::any>> order;
+    std::unordered_map<std::string, std::list<std::pair<std::string, std::any>>::iterator> data;
+
+public:
+    std::any get(const std::string& key) {
+        std::string ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            return it->second->second;
+        }
+        return std::any();
+    }
+
+    void put(const std::string& key, std::any value) {
+        std::string ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            it->second->second = std::move(value);
+        } else {
+            order.emplace_back(ckey, std::move(value));
+            data[ckey] = std::prev(order.end());
+        }
+    }
+
+    void remove(const std::string& key) {
+        std::string ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            order.erase(it->second);
+            data.erase(it);
+        }
+    }
+
+    std::string _convertKey(const std::string& key) const {
+        // Wait, Java _convertKey handles null key. C++ string cannot be null.
+        // So we don't need the null check.
+        return _toCamelCase(key);
+    }
+
+    static std::string _toCamelCase(const std::string& key) {
+        std::string result;
+        bool underscore = false;
+        bool firstPart = true;
+        for (size_t i = 0; i < key.length(); ++i) {
+            if (key[i] == '_') {
+                underscore = true;
+            } else {
+                if (firstPart) {
+                    result += key[i];
+                    firstPart = false;
+                } else if (underscore) {
+                    result += static_cast<char>(std::toupper(key[i]));
+                    underscore = false;
+                } else {
+                    result += static_cast<char>(std::tolower(key[i]));
+                }
+            }
+        }
+        return result;
+    }
+```
+Wait, let's trace Java's `_toCamelCase` exactly.
+```java
+    static String _toCamelCase(String key) {
+        String[] parts = key.split("_");
+        StringBuilder camelCaseString = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            camelCaseString.append(parts[i].substring(0, 1).toUpperCase()).append(parts[i].substring(1).toLowerCase());
+        }
+        return camelCaseString.toString();
+    }
+```
+If `key = "a_b_c"`, `parts = ["a", "b", "c"]`. Result: `a` + `B` + `c` = `aBc`.
+If `key = "a__b"`, `parts = ["a", "", "b"]`. Result: `a` + `` + `B` = `aB`.
+If `key = "_a_b"`, `parts = ["", "a", "b"]`. Result: `` + `A` + `b` = `Ab`.
+If `key = "a_b_"`, `parts = ["a", "b"]`. Result: `a` + `B` = `aB`.
+
+Let's trace my C++ implementation:
+`key = "a__b"`:
+i=0: 'a', firstPart=true, result='a', firstPart=false
+i=1: '_', underscore=true
+i=2: '_', underscore=true (wait, if underscore is true and we see another underscore, we should keep underscore true)
+i=3: 'b', underscore=true, result+='B', underscore=false.
+Result: `aB`. Correct.
+
+`key = "_a_b"`:
+i=0: '_', underscore=true
+i=1: 'a', firstPart=true, result+='a', firstPart=false. Wait!
+In Java, `parts[0]` is `""`, so `parts[0]` is appended. Then `parts[1]` is `"a"`, so `"A"` is appended.
+So Java result is `A` + `b` = `Ab`.
+My C++ logic: firstPart is true, so it appends 'a' without uppercasing. Result `a` + `B` = `aB`. This is incorrect!
+
+Let's implement the exact Java logic: split by `_`.
+In C++, we can split by `_` and process the parts.
+```cpp
+    static std::string _toCamelCase(const std::string& key) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char c : key) {
+            if (c == '_') {
+                parts.push_back(current);
+                current.clear();
+            } else {
+                current += c;
+            }
+        }
+        parts.push_back(current);
+
+        if (parts.empty()) {
+            return "";
+        }
+
+        std::string camelCaseString = parts[0];
+        for (size_t i = 1; i < parts.size(); i++) {
+            if (parts[i].empty()) continue; // Wait, Java does not skip empty parts like this!
+            // Let's check Java: parts[i].substring(0,1).toUpperCase() + parts[i].substring(1).toLowerCase()
+            // If parts[i] is empty, parts[i].substring(0,1) throws StringIndexOutOfBoundsException!
+        }
+    }
+```
+Wait! In Java, `"_a__b".split("_")` produces `["", "a", "", "b"]`.
+Then for `i=2`, `parts[2]` is `""`. `"".substring(0, 1)` throws `StringIndexOutOfBoundsException`!
+Let's verify this.
+`"".substring(0,1)` in Java throws `StringIndexOutOfBoundsException`.
+So if `key` contains consecutive underscores, or starts with an underscore followed by another underscore, `_toCamelCase` will throw an exception!
+Wait, `"_a__b".split("_")` gives `["", "a", "", "b"]`.
+Wait, does Java's `split` drop trailing empty strings? Yes, `split("_")` drops trailing empty strings, but keeps internal empty strings.
+Let's trace `key = "a__b"`.
+`"a__b".split("_")` gives `["a", "", "b"]`.
+Then `parts[1]` is `""`. `"".substring(0,1)` throws `StringIndexOutOfBoundsException`.
+So my C++ code must also throw an exception if a part is empty (except possibly the last part, which is dropped by `split`).
+Wait, what if `key = "a_b_"`?
+`"a_b_".split("_")` gives `["a", "b"]`.
+Then `parts[1]` is `"b"`. No exception.
+So trailing underscores are ignored by `split("_")` because it drops trailing empty strings.
+But internal or leading consecutive underscores will create empty parts and throw an exception.
+
+Let's carefully replicate `split("_")` behavior.
+Java's `String.split(regex)` removes trailing empty strings.
+```cpp
+    static std::vector<std::string> split_underscore(const std::string& key) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (size_t i = 0; i < key.length(); ++i) {
+            if (key[i] == '_') {
+                parts.push_back(current);
+                current.clear();
+            } else {
+                current += key[i];
+            }
+        }
+        parts.push_back(current);
+        // Remove trailing empty strings
+        while (!parts.empty() && parts.back().empty()) {
+            parts.pop_back();
+        }
+        return parts;
+    }
+```
+Then:
+```cpp
+    static std::string _toCamelCase(const std::string& key) {
+        std::vector<std::string> parts = split_underscore(key);
+        if (parts.empty()) {
+            return "";
+        }
+        std::string camelCaseString = parts[0];
+        for (size_t i = 1; i < parts.size(); i++) {
+            if (parts[i].empty()) {
+                throw std::out_of_range("Empty part in _toCamelCase"); // mimicking StringIndexOutOfBoundsException
+            }
+            camelCaseString += static_cast<char>(std::toupper(parts[i][0]));
+            for (size_t j = 1; j < parts[i].length(); j++) {
+                camelCaseString += static_cast<char>(std::tolower(parts[i][j]));
+            }
+        }
+        return camelCaseString;
+    }
+```
+Wait, what if `key` is just `"_"`?
+`split_underscore("_")` returns `[]` (empty vector).
+Then `parts.empty()` is true, returns `""`.
+In Java: `"_".split("_")` returns `[]` (empty array).
+Then `parts[0]` throws `ArrayIndexOutOfBoundsException`.
+So if `key` is `"_"`, Java throws exception.
+My C++ code returns `""`. I should throw an exception if `parts.empty()`.
+Wait, if `key` is `""`, `"".split("_")` returns `[""]`.
+`parts[0]` is `""`. `camelCaseString` is `""`. Loop doesn't run. Returns `""`.
+So if `key` is empty, it returns `""`.
+If `key` is `"_"`, `parts` is empty, so accessing `parts[0]` in Java throws `ArrayIndexOutOfBoundsException`.
+So I should throw if `parts.empty()`.
+
+Let's refine `_toCamelCase`:
+```cpp
+    static std::string _toCamelCase(const std::string& key) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char c : key) {
+            if (c == '_') {
+                parts.push_back(current);
+                current.clear();
+            } else {
+                current += c;
+            }
+        }
+        parts.push_back(current);
+        while (!parts.empty() && parts.back().empty()) {
+            parts.pop_back();
+        }
+
+        if (parts.empty()) {
+            throw std::out_of_range("key results in empty parts");
+        }
+
+        std::string camelCaseString = parts[0];
+        for (size_t i = 1; i < parts.size(); i++) {
+            if (parts[i].empty()) {
+                throw std::out_of_range("Empty part between underscores");
+            }
+            camelCaseString += static_cast<char>(std::toupper(parts[i][0]));
+            for (size_t j = 1; j < parts[i].length(); j++) {
+                camelCaseString += static_cast<char>(std::tolower(parts[i][j]));
+            }
+        }
+        return camelCaseString;
+    }
+```
+Wait, in Java, `key.split("_")` on an empty string `""` returns `[""]`.
+So `parts` is not empty, `parts[0]` is `""`. Result is `""`. No exception.
+My code: `parts` is `[""]`, loop doesn't run, returns `""`. Correct.
+If `key` is `"_"`, Java `split` returns `[]`. `parts[0]` throws `ArrayIndexOutOfBoundsException`.
+My code: `parts` becomes `["", ""]`, then trailing empties are popped, becomes `[]`. Throws `std::out_of_range`. Correct.
+If `key` is `"a__b"`, Java `split` returns `["a", "", "b"]`. `parts[1]` is `""`. `"".substring(0,1)` throws `StringIndexOutOfBoundsException`.
+My code: `parts` is `["a", "", "b"]`. Loop hits `parts[1]`, which is empty, throws `std::out_of_range`. Correct.
+
+Wait, is `std::out_of_range` the best exception? It's an `std::exception`. Java throws `StringIndexOutOfBoundsException` which extends `IndexOutOfBoundsException` extends `RuntimeException`. `std::out_of_range` extends `std::logic_error`. It's a good match.
+
+Let's check `keySet()`.
+Java:
+```java
+    public Set<String> keySet() {
+        return data.keySet();
+    }
+```
+In C++, we can return a `std::vector<std::string>` containing the keys in insertion order.
+```cpp
+    std::vector<std::string> keySet() const {
+        std::vector<std::string> keys;
+        for (const auto& pair : order) {
+            keys.push_back(pair.first);
+        }
+        return keys;
+    }
+```
+Wait, Java returns a `Set<String>` which is a view over the map's keys. Changes to the map are reflected in the set, and removing from the set removes from the map.
+Returning a copy `std::vector<std::string>` doesn't behave identically, but C++ doesn't have a standard equivalent of Java's map key set view. Returning `std::vector<std::string>` is the most practical and idiomatic approach for a C++ translation, unless we write a custom iterator class. Given "Use idiomatic C++ only when it doesn't change behavior", a copy of the keys is usually acceptable since C++ containers typically return copies or use iterators. If we want to be closer, we could return a `const std::list<...>&` or provide iterators. But the return type is `Set<String>`. `std::vector<std::string>` is fine.
+
+What about `size()`?
+```cpp
+    int size() const {
+        return data.size();
+    }
+```
+
+Let's review `_convertKey`:
+```java
+    String _convertKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        return _toCamelCase(key);
+    }
+```
+In C++, `std::string` cannot be null. We could take `const std::string*` or `const std::string&`.
+If we take `const std::string&`, we can't pass null. This is idiomatic C++.
+If we take `const std::string*`, we can check for null.
+```cpp
+    std::string _convertKey(const std::string* key) const {
+        if (key == nullptr) {
+            return ""; // or throw, but Java returns null which means string is null
+        }
+        return _toCamelCase(*key);
+    }
+```
+Wait, if Java returns `null` for `_convertKey(null)`, then `data.get(null)` is called.
+`LinkedHashMap` allows one null key. So `data.get(null)` would look for the null key.
+If we return `""` for null, then `data.get("")` is called, which maps null keys to `""` keys. This changes behavior.
+To perfectly mimic Java, we should use `std::optional<std::string>` or allow null keys.
+Wait, `std::unordered_map` does not allow null keys unless we use `std::optional<std::string>` as the key, but `std::optional` doesn't have a default hash.
+If we use `const std::string*` as key? No, that hashes the pointer, not the string.
+If we just use `std::string` and treat empty string as null?
+If `key` is null, `_convertKey` returns null. Then `data.get(null)` is called.
+In C++, if we don't support null strings, we can just take `const std::string&` and throw if it's empty? No, Java supports empty strings AND null strings.
+The most accurate way to support null strings in C++ is to use `std::optional<std::string>`.
+Let's use `std::optional<std::string>` as the key in the map.
+```cpp
+    std::optional<std::string> _convertKey(const std::optional<std::string>& key) const {
+        if (!key.has_value()) {
+            return std::nullopt;
+        }
+        return _toCamelCase(key.value());
+    }
+```
+Then `data` would be:
+```cpp
+    std::list<std::pair<std::optional<std::string>, std::any>> order;
+    std::unordered_map<std::optional<std::string>, std::list<std::pair<std::optional<std::string>, std::any>>::iterator> data;
+```
+Wait, `std::unordered_map` needs a hash for `std::optional<std::string>`. C++ doesn't provide a standard hash for `std::optional<T>` until maybe a proposal, but it's not standard in C++17/20.
+We could provide a custom hash:
+```cpp
+struct OptionalStringHash {
+    std::size_t operator()(const std::optional<std::string>& opt) const {
+        if (!opt.has_value()) return 0;
+        return std::hash<std::string>{}(*opt);
+    }
+};
+```
+And equality is already handled for `std::optional`.
+But is it really necessary to support null keys?
+In C++, passing `null` to a function that expects a string is generally done by passing `std::optional` or a pointer.
+If we change `get`, `put`, `remove` to take `const std::optional<std::string>&`, it supports nulls.
+Let's see:
+```cpp
+    std::any get(const std::optional<std::string>& key) {
+        auto ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            return it->second->second;
+        }
+        return std::any();
+    }
+
+    void put(const std::optional<std::string>& key, std::any value) {
+        auto ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            it->second->second = std::move(value);
+        } else {
+            order.emplace_back(ckey, std::move(value));
+            data[ckey] = std::prev(order.end());
+        }
+    }
+
+    void remove(const std::optional<std::string>& key) {
+        auto ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            order.erase(it->second);
+            data.erase(it);
+        }
+    }
+```
+This perfectly replicates the null key behavior of Java.
+Wait, if `key` is `std::nullopt`, `_toCamelCase` is not called. This matches Java: `_convertKey` checks for `null` and returns `null` without calling `_toCamelCase`.
+If `key` is `""`, `_toCamelCase("")` is called, which returns `""`.
+This is exactly identical behavior.
+
+Let's double check `_toCamelCase` for `""`.
+`"".split("_")` returns `[""]`.
+`parts[0]` is `""`. Result is `""`.
+My C++ code:
+
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <string>
+#include <any>
+#include <vector>
+#include <unordered_map>
+#include <list>
+#include <cctype>
+#include <optional>
+#include <stdexcept>
+
+struct OptionalStringHash {
+    std::size_t operator()(const std::optional<std::string>& opt) const {
+        if (!opt.has_value()) return 0;
+        return std::hash<std::string>{}(*opt);
+    }
+};
+
+class CamelCaseMap {
+private:
+    using ListType = std::list<std::pair<std::optional<std::string>, std::any>>;
+    ListType order;
+    std::unordered_map<std::optional<std::string>, ListType::iterator, OptionalStringHash> data;
+
+    static std::vector<std::string> split_underscore(const std::string& key) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char c : key) {
+            if (c == '_') {
+                parts.push_back(current);
+                current.clear();
+            } else {
+                current += c;
+            }
+        }
+        parts.push_back(current);
+        while (!parts.empty() && parts.back().empty()) {
+            parts.pop_back();
+        }
+        return parts;
+    }
+
+public:
+    std::any get(const std::optional<std::string>& key) {
+        auto ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            return it->second->second;
+        }
+        return std::any();
+    }
+
+    void put(const std::optional<std::string>& key, std::any value) {
+        auto ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            it->second->second = std::move(value);
+        } else {
+            order.emplace_back(ckey, std::move(value));
+            data[ckey] = std::prev(order.end());
+        }
+    }
+
+    void remove(const std::optional<std::string>& key) {
+        auto ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            order.erase(it->second);
+            data.erase(it);
+        }
+    }
+
+    std::optional<std::string> _convertKey(const std::optional<std::string>& key) const {
+        if (!key.has_value()) {
+            return std::nullopt;
+        }
+        return _toCamelCase(key.value());
+    }
+
+    static std::string _toCamelCase(const std::string& key) {
+        std::vector<std::string> parts = split_underscore(key);
+        if (parts.empty()) {
+            throw std::out_of_range("key results in empty parts");
+        }
+
+        std::string camelCaseString = parts[0];
+        for (size_t i = 1; i < parts.size(); i++) {
+            if (parts[i].empty()) {
+                throw std::out_of_range("Empty part between underscores");
+            }
+            camelCaseString += static_cast<char>(std::toupper(static_cast<unsigned char>(parts[i][0])));
+            for (size_t j = 1; j < parts[i].length(); j++) {
+                camelCaseString += static_cast<char>(std::tolower(static_cast<unsigned char>(parts[i][j])));
+            }
+        }
+        return camelCaseString;
+    }
+
+    std::vector<std::optional<std::string>> keySet() const {
+        std::vector<std::optional<std::string>> keys;
+        for (const auto& pair : order) {
+            keys.push_back(pair.first);
+        }
+        return keys;
+    }
+
+    int size() const {
+        return data.size();
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <any>
+#include <vector>
+#include <unordered_map>
+#include <list>
+#include <cctype>
+#include <optional>
+#include <stdexcept>
+
+struct OptionalStringHash {
+    std::size_t operator()(const std::optional<std::string>& opt) const {
+        if (!opt.has_value()) return 0;
+        return std::hash<std::string>{}(*opt);
+    }
+};
+
+class CamelCaseMap {
+private:
+    using ListType = std::list<std::pair<std::optional<std::string>, std::any>>;
+    ListType order;
+    std::unordered_map<std::optional<std::string>, ListType::iterator, OptionalStringHash> data;
+
+    static std::vector<std::string> split_underscore(const std::string& key) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char c : key) {
+            if (c == '_') {
+                parts.push_back(current);
+                current.clear();
+            } else {
+                current += c;
+            }
+        }
+        parts.push_back(current);
+        while (!parts.empty() && parts.back().empty()) {
+            parts.pop_back();
+        }
+        return parts;
+    }
+
+public:
+    std::any get(const std::optional<std::string>& key) {
+        auto ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            return it->second->second;
+        }
+        return std::any();
+    }
+
+    void put(const std::optional<std::string>& key, std::any value) {
+        auto ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            it->second->second = std::move(value);
+        } else {
+            order.emplace_back(ckey, std::move(value));
+            data[ckey] = std::prev(order.end());
+        }
+    }
+
+    void remove(const std::optional<std::string>& key) {
+        auto ckey = _convertKey(key);
+        auto it = data.find(ckey);
+        if (it != data.end()) {
+            order.erase(it->second);
+            data.erase(it);
+        }
+    }
+
+    std::optional<std::string> _convertKey(const std::optional<std::string>& key) const {
+        if (!key.has_value()) {
+            return std::nullopt;
+        }
+        return _toCamelCase(key.value());
+    }
+
+    static std::string _toCamelCase(const std::string& key) {
+        std::vector<std::string> parts = split_underscore(key);
+        if (parts.empty()) {
+            throw std::out_of_range("key results in empty parts");
+        }
+
+        std::string camelCaseString = parts[0];
+        for (size_t i = 1; i < parts.size(); i++) {
+            if (parts[i].empty()) {
+                throw std::out_of_range("Empty part between underscores");
+            }
+            camelCaseString += static_cast<char>(std::toupper(static_cast<unsigned char>(parts[i][0])));
+            for (size_t j = 1; j < parts[i].length(); j++) {
+                camelCaseString += static_cast<char>(std::tolower(static_cast<unsigned char>(parts[i][j])));
+            }
+        }
+        return camelCaseString;
+    }
+
+    std::vector<std::optional<std::string>> keySet() const {
+        std::vector<std::optional<std::string>> keys;
+        for (const auto& pair : order) {
+            keys.push_back(pair.first);
+        }
+        return keys;
+    }
+
+    int size() const {
+        return data.size();
+    }
+};

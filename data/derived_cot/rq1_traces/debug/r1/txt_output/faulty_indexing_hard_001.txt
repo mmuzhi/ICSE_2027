@@ -1,0 +1,972 @@
+=== BUGGY CODE ===
+class Solution:
+    def maxPower(self, stations: List[int], r: int, k: int) -> int:
+        start, end = min(stations), sum(stations) + k
+        while start + 1 < end:
+            mid = (start + end) // 2
+            if self.check(stations, r, k, mid):
+                start = mid
+            else:
+                end = mid
+        if self.check(stations, r, k, end):
+            return end
+        else:
+            return start
+    
+    def check(self, stations, r, k, target):
+            n = len(stations)
+            ans = True
+            newStations = defaultdict(int)
+            power = sum(stations[ : r])
+            for i in range(n + 1):
+                if i + r < n:
+                    power += stations[i + r]
+                if i - r - 1 >= 0:
+                    power -= stations[i - r - 1]
+                if power >= target:
+                    continue
+                elif power + k < target:
+                    ans = False
+                    break
+                else:
+                    diff = target - power
+                    power = target
+                    stations[min(i + r, n - 1)] += diff
+                    k -= diff
+                    newStations[min(i + r, n - 1)] += diff
+            for i in newStations:
+                stations[i] -= newStations[i]
+            return ans
+
+=== REASONING ===
+<think>
+ We are given a list `stations` of power at each station, a radius `r`, and a budget `k` (additional power we can add).
+ We want to find the maximum minimum power we can have in any city after adding at most `k` power.
+
+ The approach uses binary search on the possible minimum power (from min(stations) to sum(stations)+k).
+ For a candidate `mid`, we check if we can make every city have at least `mid` power by adding at most `k`.
+
+ However, the `check` function has several issues:
+
+ 1. It uses a `newStations` dictionary to record the added power so that it can revert the changes? 
+    But the problem does not require reverting because we are only checking for a candidate. 
+    However, note that the `stations` list is passed by reference and we are modifying it. 
+    We must revert the changes if we want to use the original `stations` in the next check? 
+    Actually, the binary search does multiple checks and the same stations array is reused. 
+    Therefore, we must revert the changes we made at the end of the check.
+
+ 2. The way we are reverting is by storing the additions in `newStations` and then subtracting at the end. 
+    But note: we are modifying the `stations` array during the check. If we break out of the loop (when ans becomes False) 
+    we still need to revert the changes we made so far? Actually, the code subtracts at the end even if we break. 
+    However, if we break, we have added some stations and then we subtract them. But note: if we break, we have already 
+    determined that the candidate is not feasible, but we still need to revert the stations to their original state for the next check.
+
+ 3. There is an off-by-one error in the sliding window. The current window is defined for the city at index `i`? 
+    Actually, the power at city `i` is the sum of stations from `i-r` to `i+r` (if they exist). 
+    The current code builds a window that starts at `i` and then considers:
+      - adding station `i+r` (if `i+r < n`) at the beginning of the loop for each `i` (from 0 to n, note: the loop is `for i in range(n+1)`).
+      - subtracting station `i-r-1` (if `i-r-1>=0`).
+
+    This window does not correctly represent the power at city `i`. 
+
+    Let me explain: 
+    For city i, the stations that cover it are from index `max(0, i-r)` to `min(n-1, i+r)`.
+
+    The current code initializes `power` as the sum of stations[0:r] (which is indices 0 to r-1). 
+    Then for i=0, we add stations[r] (if r < n) and then subtract nothing (because i-r-1 = -r-1 which is negative). 
+    Then the power at city0 should be the sum from max(0,0-r) to min(n-1,0+r) -> which is stations[0] to stations[r] (if r < n). 
+    But our initial `power` is stations[0:r] (which is indices 0 to r-1) and then we add stations[r] -> so then we have stations[0] to stations[r]. 
+    That is correct for i=0.
+
+    Then for i=1: 
+      - we add stations[1+r] (if 1+r < n)
+      - we subtract stations[1-r-1] = stations[-r] -> which is not defined. Actually, we subtract stations[0] only when i= r+1? 
+
+    Actually, the window should slide by one. We want to remove the station that is leaving the window and add the new station entering.
+
+    The window for city i-1 was [i-1-r, i-1+r]. The window for city i is [i-r, i+r]. 
+    The difference: we remove station (i-1-r) and add station (i+r).
+
+    However, in the code, we are subtracting `stations[i - r - 1]` which is station (i-r-1). 
+    That would be the station that left the window? Actually, the station that leaves when moving from city i-1 to city i is station (i-1-r). 
+    But note: for city i, the left boundary is i-r, so the station that is leaving is the one at (i-1-r) because now the left boundary is i-r, 
+    so station (i-r-1) is actually not in the window for city i-1? 
+
+    Let me try with r=1 and i=1:
+      For city0: window = [0,1] (if n>=2)
+      For city1: window = [0,1,2] (if n>=3) -> but actually the window for city1 should be [0,1,2] if r=1? 
+        Actually, no: the window for city1 is from 1-1=0 to 1+1=2 -> [0,1,2]. 
+      When moving from city0 to city1, we remove station0? Actually, no: station0 is still in the window (because 0 is between 1-1 and 1+1). 
+      Then why would we remove station0? 
+
+    Actually, the window for city0 is [0,1] and for city1 is [0,1,2] -> we are adding station2 and not removing any station.
+
+    The correct removal should be the station at (i-1-r) when moving from city i-1 to city i? 
+    But note: the window for city i-1: [ (i-1)-r, (i-1)+r ] 
+    The window for city i: [ i-r, i+r ]
+    The station that leaves is the one at (i-1-r) if (i-1-r) is the leftmost station of the previous window? 
+    Actually, the left boundary moves from (i-1-r) to (i-r), so we are removing the station at (i-1-r) and adding the station at (i+r).
+
+    So the code should subtract stations[i-1-r] (if i-1-r >=0) and add stations[i+r] (if i+r < n).
+
+    However, in the code, we subtract `stations[i - r - 1]` which is station (i-r-1). That is not the same as (i-1-r). 
+    For example, i=1: 
+      i-1-r = 0-r = 0-1? -> but i=1, so 1-1-r = 0? 
+      i-r-1 = 1-1-1 = -1 -> which is not the same.
+
+    Correction: we should subtract the station at index (i - r - 1) ??? Actually, let's look at the code:
+
+    The code does:
+      for i in range(n+1):
+        if i + r < n:
+            power += stations[i + r]
+        if i - r - 1 >= 0:
+            power -= stations[i - r - 1]
+
+    This does not match the sliding window we want.
+
+    How about we change the window to be centered at i? We want the power at city i to be the sum of stations from i-r to i+r.
+
+    We can precompute a prefix sum or use a sliding window that we update.
+
+    Alternatively, we can fix the sliding window update:
+
+    We note that the window for city i is [max(0, i-r), min(n-1, i+r)].
+    We can initialize the window for city0 as [0, r] (if we consider indices from 0 to min(r, n-1)).
+
+    Then for city i, we want to remove the station that is at index (i - r - 1) if any? 
+    Actually, the station that is leaving the window when moving from i-1 to i is the station at (i-1-r) because the new window for i has left boundary i-r, 
+    so the station at (i-1-r) is now out (if it was in the window for i-1, which it was because the previous window included from (i-1-r) to (i-1+r)).
+
+    Therefore, we should subtract stations[i-1-r] and add stations[i+r] (if they are in bounds).
+
+    But note: the loop runs for i from 0 to n (inclusive). For i=0, we don't subtract because i-1 is negative. 
+    For i=0, we have already set power = sum(stations[0:r]), then we add stations[r] (if r < n) -> so we have stations[0] to stations[r] -> that's correct.
+
+    Then for i=1, we subtract stations[0] (because i-1-r = 1-1-r = -r? -> no, 1-1=0, then 0-r = -r? -> that's negative. 
+    Actually, we subtract when i-1-r >= 0. For i=1, if r=0 then subtract at i=1: i-1-r = 0, so subtract stations[0]. 
+    But if r>0, then for i=1: i-1-r = 0-r which is negative? 
+
+    This is confusing. 
+
+    Let me try with a small example: 
+      stations = [1,2,3,4,5], r=1, and we want the power for each city.
+
+      City0: stations[0-1] doesn't exist, stations[0] and stations[1] -> 1+2 = 3.
+      City1: stations[0], stations[1], stations[2] -> 1+2+3=6.
+      City2: stations[1], stations[2], stations[3] -> 2+3+4=9.
+      City3: stations[2], stations[3], stations[4] -> 3+4+5=12.
+      City4: stations[3], stations[4] -> 4+5=9.
+
+    How does the sliding window work?
+
+    We start with power = stations[0:r] = stations[0:1] = [1] -> then for i=0:
+        add stations[0+r] = stations[1] -> so power becomes 1+2=3 -> correct for city0.
+
+    Then for i=1:
+        add stations[1+r] = stations[2] = 3 -> power becomes 3+3=6.
+        subtract stations[1-r-1] = stations[1-1-1] = stations[-1] -> which is 5? That's not correct.
+
+    So the current subtraction index is off.
+
+    We should subtract the station that is leaving: when moving from city0 to city1, the window for city0 was [0,1] and for city1 is [0,1,2]. 
+    So no station leaves? Actually, the window expands? 
+
+    But then for city2: 
+        from city1 to city2: the window for city1 is [0,1,2] and for city2 is [1,2,3] -> we remove station0 and add station3.
+
+    So the pattern: 
+      For city i, we add station (i+r) if it exists, and we remove station (i-r-1) if it exists? 
+      But note: the window for city i-1 is [i-1-r, i-1+r] and for city i is [i-r, i+r]. 
+      The station that leaves is the one at (i-1-r) and the station that enters is the one at (i+r).
+
+    Therefore, we should:
+      For i from 0 to n-1 (or n? note: the loop runs for i in range(n+1)):
+
+        When i==0: 
+          We start with window [0, min(r, n-1)] -> but we have already set power = stations[0:r] (which is indices 0 to r-1). 
+          Then we add stations[r] (if exists) -> so we have stations[0] to stations[r] (if r < n).
+
+        Then for i>=1:
+          We subtract stations[i-1-r] if i-1-r >=0, and add stations[i+r] if i+r < n.
+
+    But wait, for i=0, we don't subtract because i-1-r = -1-r <0. Then for i=1, we subtract stations[0] (because i-1-r = 1-1-r = -r? -> no, 0-r? -> actually 1-1=0, then 0-r = -r? -> negative). 
+    So we don't subtract for i=1 either? Then how do we get the window for city1? We have added stations[1] (at i=0) and then at i=1 we add stations[1+r] -> which is stations[2]. 
+    So for city1 we have stations[0] to stations[2] -> that's correct.
+
+    Then for city2 (i=2): 
+        subtract stations[2-1-r] = stations[1-r] -> if r=1, then stations[0] -> subtract stations[0]. Then add stations[2+1]=stations[3] (if exists). 
+        So power becomes 3+2+3 - 1 + 4 = ? 
+
+        Initially, after i=1: power = stations[0]+stations[1]+stations[2] = 1+2+3=6.
+        Then at i=2: subtract stations[0] -> 6-1=5, then add stations[3] -> 5+4=9 -> correct.
+
+    So the subtraction index is actually (i-1-r)? But in the code we are subtracting at index (i - r - 1) which is the same as (i-1-r). 
+
+    Therefore, the subtraction index is correct.
+
+    However, note the loop runs for i from 0 to n (inclusive). The problem is that we are iterating for i in [0, n] but we have n cities (0-indexed to n-1). 
+    The last city is at index n-1. Why run to n?
+
+    Looking at the loop: 
+        for i in range(n+1):
+
+    Then for i=n, we are going to add stations[n+r] (which is out of bounds) and subtract stations[n - r - 1] (if n-r-1>=0). 
+    Then we check if power >= target? But there is no city at index n.
+
+    We should only iterate for i from 0 to n-1.
+
+    Correction: change the loop to `for i in range(n):`.
+
+ 4. But wait, the original code uses `for i in range(n+1)`. Why? 
+    The problem: we have n cities, indexed 0 to n-1. However, note that the window for the last city (n-1) requires stations from n-1-r to n-1+r. 
+    The last station we add is at index (n-1+r) which might be beyond the array? So we have to handle up to n-1.
+
+    However, the loop runs for i from 0 to n (inclusive). That is one too many.
+
+    The code inside the loop for i=n:
+        if i + r < n -> false because i=n, so n+r >= n.
+        if i - r - 1 >= 0 -> true if n-r-1>=0.
+        then subtract stations[n - r - 1]. 
+        Then check if power >= target -> but there is no city at index n.
+
+    This is incorrect.
+
+    We should only iterate for i from 0 to n-1.
+
+ 5. Another issue: the way we add stations. When we find that the current city i has power < target, we add the difference at station min(i+r, n-1). 
+    Why at i+r? And why bounded by n-1? 
+
+    The idea: to cover the current city i, we can add power at stations that cover city i. The furthest station that can cover city i is at i+r. 
+    And adding at i+r will cover the current city i and also the cities from i+r - r = i to i+r + r = i+2r. 
+    This is greedy: we add at the rightmost station that can cover city i so that it can also cover as many cities to the right as possible.
+
+    However, note: if we add at a station j, it covers [j-r, j+r]. We want to cover city i, so we require j-r <= i <= j+r -> so j must be in [i-r, i+r]. 
+    The best station to add is the one with the highest index (to maximize the coverage for the following cities) so we choose j = i+r (if it exists) or if i+r is beyond the array, then the last station (n-1).
+
+    This is correct.
+
+ 6. But note: when we add `diff` at station min(i+r, n-1), we also update the current power to `target` (so we set power = target). 
+    However, the added station might be beyond the current window? 
+
+    The current window for city i is from i-r to i+r. The station we add is at i+r, which is the rightmost station in the current window. 
+    Therefore, the added power is included in the current window? Yes.
+
+    But then, when we slide the window, we will remove the station at the left and add a station at the right? 
+    However, we have added a station at i+r, and that station is now part of the window. 
+
+    But note: the window for the next city (i+1) will remove a station (if any) and add a station at (i+1+r). 
+    The station we added at i+r will still be in the window for city i+1? 
+        The window for city i+1: [ (i+1)-r, (i+1)+r ] = [i+1-r, i+1+r]. 
+        The station at i+r is within this window if i+r >= i+1-r and i+r <= i+1+r. 
+        i+r >= i+1-r -> r >= 1-r -> which is always true for r>=0? 
+        and i+r <= i+1+r -> which is true.
+
+    So the station we added will remain in the window for the next city. 
+
+    However, we have updated the `stations` array at index min(i+r, n-1) and then we are using that updated value in the next iteration.
+
+ 7. The budget `k` is decreased by `diff`. If k becomes negative, we break and return false.
+
+ 8. The code reverts the changes to `stations` at the end of the check function by subtracting the values stored in `newStations`. 
+    This is necessary because we are modifying the original array and we want to leave it unchanged for the next check (for a different candidate).
+
+ 9. However, note: if we break in the middle (when we find that the candidate is not feasible), we have already modified some stations. 
+    The code still runs the revert part because the `for` loop breaks but then the code after the loop (the revert) runs. 
+    So we are reverting only the stations that we added and recorded in `newStations`. This is correct.
+
+ 10. But what about the fact that the `power` variable is built from the modified stations? 
+     We are using the modified stations to compute the power for the next cities. That is intentional: we are simulating the additions.
+
+ 11. One more issue: the initial setting of `power` is `sum(stations[ : r])`. 
+     This is the sum of stations[0] to stations[r-1] (if r<=n). Then for i=0, we add stations[r] (if r<n). 
+     But what if r==0? Then we start with power=0 and then add stations[0]? Actually, no: 
+        stations[:0] is empty -> 0.
+        Then we add stations[0] (if 0+r=0 < n -> true, so add stations[0]).
+        Then subtract stations[0-0-1] = stations[-1] -> if 0-0-1 = -1>=0? false -> so power becomes stations[0]. 
+        That is correct for city0 when r=0: the window is [0,0] -> only station0.
+
+     But if r=0, then for i=0: 
+        power = sum(stations[:0]) = 0
+        then add stations[0] -> power = stations[0]
+        then subtract nothing -> so power = stations[0] -> correct.
+
+ 12. However, note the condition for subtracting: `if i - r - 1 >= 0`. For r=0, we subtract at i=1: 
+        i=1: subtract stations[1-0-1] = stations[0] (if 0>=0 -> true). 
+        Then for city1, we start with the previous power (which was stations[0] for city0) then we add stations[1] (if 1+0 < n -> true) and then subtract stations[0]. 
+        So power becomes stations[0] + stations[1] - stations[0] = stations[1] -> correct.
+
+ 13. But wait, for r=0, the window for city1 is [1,1] -> only station1. So we should not have included station0 at all? 
+     Actually, the window for city0 was [0,0] and for city1 is [1,1]. 
+     When moving from city0 to city1, we remove station0 and add station1. 
+     The code does: 
+        i=0: power = stations[0] (correct)
+        i=1: 
+            add stations[1] -> power becomes stations[0]+stations[1]
+            subtract stations[0] -> power becomes stations[1] -> correct.
+
+ 14. Therefore, the sliding window update is correct.
+
+ 15. But note: the loop runs for i from 0 to n (inclusive). We already discussed that we only have n cities (0 to n-1). 
+     So we should change the loop to `for i in range(n):`.
+
+ 16. Also, the initial condition for the binary search: 
+        start, end = min(stations), sum(stations) + k
+     Then we do while start + 1 < end ... and then check end and then return either end or start.
+
+     However, note that the binary search is set up to find the maximum candidate such that check returns True.
+
+     The condition: 
+        if check(mid) is True -> then we set start = mid (so we are looking for a higher candidate)
+        else -> set end = mid
+
+     Then at the end, we check end first: if check(end) is True, return end, else return start.
+
+     This is a common pattern and should be correct.
+
+ 17. But note: the initial `start` is min(stations) and `end` is sum(stations)+k. 
+     However, the candidate must be at least min(stations) and at most ... but note: the minimum power cannot exceed the maximum possible total power? 
+     Actually, the minimum power after adding can be as high as (sum(stations)+k) only if we have one city? 
+     But we have n cities. The maximum minimum power we can have is at most (sum(stations)+k) / n? 
+     But we are not limited by that because we can add arbitrarily to a city and it might cover multiple cities. 
+
+     Actually, the candidate `target` can be as high as (sum(stations)+k) because if we add all k to one station that covers all cities, then the entire array gets at least k+stations[?] ... 
+     but that is not the case. However, note that the stations array is fixed and we are constrained by the coverage.
+
+     But the binary search bounds: 
+        start = min(stations) -> this is safe because we cannot have a minimum lower than the current minimum.
+        end = sum(stations)+k -> this is an upper bound because the total power is sum(stations)+k, and the minimum power cannot exceed that (if there is one city then it can, but if there are multiple, the minimum is at most the total?).
+
+     Actually, the minimum power cannot exceed (sum(stations)+k) because even if we assign all the additional power to one city, the other cities might have less. 
+     But note: the entire array is covered by stations that might overlap. The maximum minimum power we can achieve is at most (sum(stations)+k) if we could assign arbitrarily? 
+     However, the constraint is that a station at position i covers [i-r, i+r]. 
+
+     But it is safe to set `end = sum(stations)+k` because that is the total power and the minimum power in any city cannot exceed that. 
+
+ 18. One more issue: the check function returns `ans` which is initially True. 
+     Then we iterate over the cities. If we ever have `power < target` and even after using the entire budget we still cannot reach the target (i.e., power + k < target), then we break and set ans to False.
+
+     Otherwise, we add the required difference and update the power and k.
+
+     This logic is correct.
+
+ 19. But note: we update the `stations` array at index min(i+r, n-1) and we record that in `newStations` so that we can revert. 
+     However, if we add at a station that we have already added to in this same check, we are simply updating the same station multiple times. 
+     The `newStations` dictionary accumulates the total added at each station. 
+
+     Then at the end, we do:
+        for i in newStations:
+            stations[i] -= newStations[i]
+
+     This reverts the additions. 
+
+ 20. However, there is a problem: what if we add to a station and then later in the same check we add again to the same station? 
+     Then `newStations` will have the total added, and when we revert we subtract the total. 
+     But during the check, we updated the station and then used the updated value for the next cities. 
+
+     This is intended: we are simulating the additions. The revert is only to restore the original state for the next candidate.
+
+ 21. But note: the station we add to is `min(i+r, n-1)`. It is possible that two different cities lead to adding to the same station? 
+     For example, if i1 + r = i2 + r? -> only if i1 = i2. So each station is added at most once? 
+     Actually, no: we might have two different i such that min(i1+r, n-1) = min(i2+r, n-1) even if i1 != i2? 
+        For example, if i1+r and i2+r are both beyond n-1, then we add to n-1 for both.
+
+     So the same station (n-1) might be added multiple times. 
+
+     The dictionary `newStations` uses the station index as key and accumulates the total added. 
+
+     Example: 
+        i1: we add diff1 at n-1 -> newStations[n-1] = diff1, and we update stations[n-1] += diff1.
+        i2: we add diff2 at n-1 -> newStations[n-1] becomes diff1+diff2, and stations[n-1] becomes stations[n-1] (which is original + diff1) + diff2 = original+diff1+diff2.
+
+     Then at the end, we subtract (diff1+diff2) from stations[n-1] -> which becomes original.
+
+     So it is correct.
+
+ 22. However, the code for the revert uses `for i in newStations: stations[i] -= newStations[i]`. 
+     But note: if we break in the middle, we have recorded in `newStations` only the stations we added so far. 
+     Then we revert only those. This is correct.
+
+ 23. One last issue: the initial window for city0 includes stations[0] to stations[r] (if r < n). 
+     But what if r==0? Then we have only stations[0]. 
+     What if r is greater than the length? 
+        stations[ : r] -> if r>n, then it takes the whole array. 
+        Then we add stations[r] -> but if r>=n, then i+r = r>=n -> so we don't add. 
+        Then subtract stations[i-r-1] for i=0: 0-r-1 = -r-1 <0 -> nothing. 
+        Then the power for city0 is the entire array? 
+
+     But the window for city0: [0, 0+r] -> if r>=n, then it is [0, n-1]. 
+
+     So that is correct.
+
+ 24. But note: the loop for i from 0 to n-1: 
+        For the last city (n-1), we subtract stations[n-1-r-1] = stations[n-1-r-1] (if n-1-r-1>=0). 
+        And we add stations[n-1+r] -> which is beyond the array if n-1+r>=n -> so we don't add.
+
+     Then the window for city n-1: 
+        We start with the window for city n-2: [n-2-r, n-2+r]. 
+        Then we subtract stations[n-2-r] and add nothing -> so the window becomes [n-2-r+1, n-2+r] -> but the window for city n-1 should be [n-1-r, n-1+r]. 
+
+     How do we get that? 
+
+        The window for city n-1 is the last window. We start the loop for i=n-1:
+            subtract stations[n-1 - r - 1] = stations[n-1-r-1] (if n-1-r-1>=0) -> which is the station at the old left boundary (for city n-2: left boundary was n-2-r, so the station leaving is n-2-r) -> but note: 
+                n-1 - r - 1 = n - r - 2 -> which is not the same as n-2-r? They are the same: n-2-r = n - r - 2.
+
+            then we add stations[n-1+r] -> which is beyond the array -> so no add.
+
+        So the window becomes: 
+            previous window without the station at n-2-r -> that matches [n-1-r, n-1+r] because the left boundary moves from n-2-r to n-1-r (by adding one) and the right boundary moves from n-2+r to n-1+r? 
+            But we didn't add the station at n-1+r because it doesn't exist. 
+
+        Actually, the window for city n-1 should be [n-1-r, min(n-1, n-1+r)] = [n-1-r, n-1] (if n-1+r>=n). 
+
+        The previous window for city n-2 was [n-2-r, n-2+r]. 
+        After removing the station at n-2-r, we get [n-2-r+1, n-2+r] = [n-1-r, n-2+r]. 
+        But we need [n-1-r, n-1] -> so if n-2+r is less than n-1, then we are missing the station at n-1? 
+
+        Actually, the window for city n-1: 
+            The stations that are within [n-1-r, n-1] -> we have not added the station at n-1 because it was not in the window for city n-2? 
+            But the window for city n-2 included up to n-2+r. If n-2+r < n-1, then the station at n-1 is not included. 
+
+        This is an error.
+
+     How to fix? 
+
+        The initial window for city0 is [0, min(r, n-1)]. 
+        Then we update for each city. But for the last few cities, the window might not have the full right side? 
+
+        Actually, we should build an array of the current power in the window. 
+
+        Alternatively, we can precompute the initial power for each city by using a different method (like a difference array) but that would be a different solution.
+
+     However, note that the sliding window we are using is built by adding the new station at the right and removing the old station at the left. 
+     But we never added the stations beyond the array? 
+
+     The issue: for the last city (n-1), we require the window [n-1-r, n-1]. 
+        But in our sliding window, the window for city n-1 is built from the window for city n-2 by removing the station at n-2-r and not adding anything? 
+        So it is [n-2-r+1, n-2+r] = [n-1-r, n-2+r]. 
+        But we need up to n-1. 
+
+        What's missing? The station at n-1 is not included if n-2+r < n-1.
+
+     How did we include the station at n-1 for the city n-1? 
+
+        We didn't. 
+
+     Correction: we should include the station at n-1 in the window for city n-1. 
+        But note: when i = n-1, we do:
+            if i + r < n -> n-1+r < n? -> false, so we don't add.
+            if i - r - 1 >= 0 -> we subtract stations[n-1-r-1] (if n-1-r-1>=0).
+
+        Then the window for city n-1 is the previous window (which was for city n-2) without the station at n-1-r-1? 
+        But the window for city n-2 was [n-2-r, n-2+r]. 
+        After removing station at n-2-r (if n-2-r >=0) and not adding anything, we get [n-2-r+1, n-2+r] = [n-1-r, n-2+r]. 
+        This does not include the station at n-1 if n-2+r < n-1.
+
+        So we are missing the station at n-1.
+
+     How to include it? 
+
+        We note that the window for city n-1 should include from n-1-r to min(n-1, n-1+r) = n-1. 
+        But we never added the station at n-1? 
+
+        Actually, the station at n-1 was already included in the window for city n-2? 
+        Only if n-2+r >= n-1. 
+
+        So if n-2+r >= n-1, then the window for city n-2 included n-1. 
+        Then when we move to city n-1, we remove the station at n-2-r and the station at n-1 remains.
+
+        But if n-2+r < n-1, then the window for city n-2 did not include n-1, and we don't add anything at city n-1 because i+r = n-1+r >= n.
+
+        Therefore, the station at n-1 is not included in any window? 
+
+        This is a critical flaw.
+
+     We must ensure that the window for each city i is the sum of stations in [max(0, i-r), min(n-1, i+r)]. 
+
+     The current method starts with a window [0, r] (if r<n) and then slides. But it only adds a station when i+r < n and only removes when i-r-1>=0. 
+
+     For city i, the window we have is [i-r, i+r] if both bounds are in the array. But if i+r>=n, then we don't add the stations beyond n-1. 
+
+     However, we do not preload the entire array. 
+
+     How to fix the window for the last part? 
+
+        We can precompute an array `curr` for the power of each city using a difference array? 
+
+        Alternatively, we can adjust the sliding window so that it accounts for the fact that we cannot add beyond the array.
+
+        But note: our window for city0 is [0, min(r, n-1)] -> that's correct. 
+        Then for each i, we remove the station that is leaving (at index i-1-r) and add the station that is entering (at index i+r) if it exists? 
+        But if i+r>=n, we don't add. 
+
+        Then the window for city i is [max(0, i-r), min(n-1, i+r)]? 
+
+        Actually, no: the window is [i-r, i+r] but we clip the additions to the array. 
+
+        But the window we maintain in `power` is the sum of the stations in the window that are within the array. 
+
+        Therefore, it is correct.
+
+        However, for city n-1: 
+            The window should be [n-1-r, n-1] (because i+r = n-1+r >= n, so we take min(n-1, n-1+r)=n-1). 
+            But our sliding window at i=n-1 is missing the station at n-1 if it wasn't added earlier? 
+
+        How does the station at n-1 get added? 
+            It gets added when i = n-1 - r? 
+            Let me see: for i = j, we add station j+r. 
+            We need to add station n-1 when j+r = n-1 -> j = n-1 - r. 
+            So if n-1 - r is within [0, n-1], then we added station n-1 at i = n-1-r. 
+
+        Then the station at n-1 has been in the window for all cities i from n-1-r to n-1. 
+
+        Therefore, it is already in the window when we get to city n-1? 
+            The window at city n-1-r included station n-1? 
+                The window for city j=n-1-r: [j-r, j+r] = [n-1-r - r, n-1-r + r] = [n-1-2r, n-1]. 
+            So it includes station n-1.
+
+        Then when we slide the window from city n-1-r to city n-1, we remove stations from the left and add nothing on the right? 
+            But the station at n-1 remains until the end.
+
+        Therefore, the window for city n-1 does include station n-1.
+
+        But wait, what if r=0? 
+            Then we add station n-1 at i = n-1 - 0 = n-1. 
+            Then at i=n-1: 
+                We add station n-1 (if n-1+0 < n -> true) -> so we add stations[n-1]. 
+                Then subtract stations[n-1-0-1] = stations[n-2] (if n-2>=0). 
+            Then the window for city n-1 is stations[n-1] (because we added stations[n-1] and then subtracted stations[n-2] from the previous window which was stations[n-2] (from the window for city n-2) plus stations[n-1] minus stations[n-2] -> stations[n-1]).
+
+        This is correct.
+
+        But note: the window for city n-1 is built from the window for city n-2 which was stations[n-2] (if r=0). 
+        Then at i=n-1: 
+            add stations[n-1] -> so power = stations[n-2] + stations[n-1]
+            subtract stations[n-1-0-1] = stations[n-2] -> so power = stations[n-1]
+
+        Correct.
+
+     Therefore, the sliding window is correct.
+
+ 25. But we changed the loop from `for i in range(n+1)` to `for i in range(n)`. 
+
+     Let's test with n=1, r=0:
+        stations = [x]
+        loop: i from 0 to 0 (only one iteration)
+        power = sum(stations[0:0]) = 0
+        then add stations[0] (because 0+0 < 1 -> true) -> power = x
+        then subtract stations[0-0-1] = stations[-1] -> false -> so no subtraction.
+        then check if power>=target -> then we are done.
+
+     Correct.
+
+ 26. What if we have n=0? The problem states stations is a list, so n>=0. But if n==0, then the loop doesn't run. 
+     But the binary search would run? Actually, the binary search from min(stations) to ... -> min(stations) of an empty list is undefined. 
+     But the problem likely has n>=1.
+
+ 27. Summary of fixes:
+
+     - Change the loop in the check function from `for i in range(n+1):` to `for i in range(n):`.
+     - The rest of the code seems correct.
+
+ 28. However, note that the original code had `for i in range(n+1)`. Why did the author do that? 
+        The last iteration was for i = n, which is beyond the last city. 
+        In that iteration, they were checking the window for a non-existent city. 
+
+     We fixed that by running only for i in [0, n-1].
+
+ 29. But wait, the window for city i is computed in the loop iteration i. 
+        We have n cities: i=0 to i=n-1. 
+
+ 30. Let me run the example of [1,2,3,4,5] with r=1, n=5, and check for city4 (i=4):
+
+        We want the window for city4: [4-1,4+1] = [3,5] -> but 5 is beyond, so [3,4] -> stations[3] and stations[4] = 4+5=9.
+
+        How does the code compute it?
+          Start: power = stations[0:1] = [1] -> 1.
+          i=0: 
+            add stations[1] = 2 -> power=3.
+            no subtract -> so for city0: 3.
+          i=1:
+            add stations[2] = 3 -> power=6.
+            subtract stations[0]? -> stations[1-1-1] = stations[-1] -> no -> so power=6 -> for city1:6.
+          i=2:
+            add stations[3] = 4 -> power=10.
+            subtract stations[1] = 2 -> power=8 -> for city2:8? 
+            But should be 2+3+4=9 -> wait, what is the window for city2? [1,3] -> stations[1],stations[2],stations[3] = 2+3+4=9.
+          i=3:
+            add stations[4] = 5 -> power=8+5=13.
+            subtract stations[2] = 3 -> power=10 -> for city3:10? 
+            But should be 3+4+5=12 -> not matching.
+
+        What's going on?
+
+        Let's track the window:
+          i=0: window = [0,1] -> stations[0]=1, stations[1]=2 -> 3.
+          i=1: add stations[2] (index2) -> window = [0,1,2] -> 1+2+3=6.
+                 subtract stations[0-1] = stations[-1] -> no subtraction -> remains 6.
+          i=2: add stations[3] -> window = [0,1,2,3] -> 1+2+3+4=10.
+                 subtract stations[1]? -> because i=2: subtract stations[2-1-1] = stations[0] -> subtract 1 -> power=9.
+                 Then for city2:9 -> correct.
+          i=3: add stations[4] -> window = [1,2,3,4] (because we removed index0) -> 2+3+4+5=14? 
+                 but wait, we subtracted index0 at i=2, so now we have [1,2,3] and then add stations[4] -> 2+3+4+5=14.
+                 then subtract stations[3-1-1] = stations[1] -> subtract 2 -> power=12.
+                 for city3:12 -> correct.
+          i=4: 
+                 add stations[5] -> doesn't exist -> no add.
+                 subtract stations[4-1-1] = stations[2] -> subtract 3 -> power=12-3=9.
+                 for city4:9 -> correct.
+
+        So the example works.
+
+        The code for i=4: 
+            i=4: 
+                add stations[4+1] -> 5>=5 -> false, so no add.
+                subtract stations[4-1-1] = stations[2] -> 2>=0 -> true, so subtract stations[2] -> 3.
+
+        Therefore, the window becomes [1,2,3,4] minus station2 -> [1,3,4] -> 2+4+5=11? -> no, wait we started with the window from i=3 which was [1,2,3,4] (power=14) then at i=3 we subtracted station1 -> power=12? 
+
+        Actually, we need to re-track:
+
+          i=0: power=1 (initial) -> then add stations[1] -> 3 -> window=[0,1]
+          i=1: add stations[2] -> 3+3=6 -> window=[0,1,2]; subtract stations[0-1] -> invalid -> so window remains -> but then the window should be [0,1,2] -> but city1 window is [0,1,2] -> correct.
+          i=2: add stations[3] -> 6+4=10; subtract stations[0] (because 2-1-1=0) -> 10-1=9 -> window=[1,2,3] -> but city2 should be [0,1,2,3]? -> no, city2: [2-1,2+1] = [1,3] -> stations[1], stations[2], stations[3] -> 2+3+4=9 -> correct.
+
+          i=3: add stations[4] -> 9+5=14; subtract stations[3-1-1]= stations[1] (because 3-1-1=1) -> 14-2=12 -> window = [2,3,4] -> but city3: [3-1,3+1]=[2,4] -> stations[2], stations[3], stations[4] -> 3+4+5=12 -> correct.
+          i=4: add nothing; subtract stations[4-1-1]= stations[2] -> 12-3=9 -> window=[3,4] -> city4: [4-1,4] = [3,4] -> 4+5=9 -> correct.
+
+        So the window is maintained correctly.
+
+ 31. Therefore, the only change is to the loop: from `for i in range(n+1)` to `for i in range(n)`.
+
+ 32. But note: the original code had `for i in range(n+1)`. In the example above, if we run for i in [0,5] (n=5), then at i=5:
+        add stations[5+1] -> 6>=5 -> no.
+        subtract stations[5-1-1] = stations[3] -> 4 -> so power becomes 9-4=5? 
+        Then check if 5>=target -> but there is no city5.
+
+        This is incorrect.
+
+     So we fix by running only for i in [0, n-1].
+
+ 33. Let me write the fixed code.
+
+ However, note that the problem says the code is faulty and contains one or more bugs. 
+ We have identified one bug (loop runs one extra iteration) and fixed it.
+
+ But note: the initial setting of the window for city0 might be incomplete if r=0? 
+    As we saw, it works.
+
+ Let me write the fixed code.
+
+ Note: We must not change anything else.
+
+ Fixed code:
+
+```python
+from collections import defaultdict
+from typing import List
+
+class Solution:
+    def maxPower(self, stations: List[int], r: int, k: int) -> int:
+        start, end = min(stations), sum(stations) + k
+        while start + 1 < end:
+            mid = (start + end) // 2
+            if self.check(stations, r, k, mid):
+                start = mid
+            else:
+                end = mid
+        if self.check(stations, r, k, end):
+            return end
+        else:
+            return start
+    
+    def check(self, stations, r, k, target):
+        n = len(stations)
+        ans = True
+        newStations = defaultdict(int)
+        # Initialize the power for city0: stations[0:r] (indices 0 to r-1)
+        power = sum(stations[:r])
+        # We iterate for each city i from 0 to n-1
+        for i in range(n):
+            # Add the station at i+r if it exists
+            if i + r < n:
+                power += stations[i + r]
+            # Remove the station at i-r-1 if it exists (which is the station that leaves the window)
+            if i - r - 1 >= 0:
+                power -= stations[i - r - 1]
+            # Now, power is the current power for city i
+            if power >= target:
+                continue
+            # If even after using the entire budget we cannot reach the target, return False
+            elif power + k < target:
+                ans = False
+                break
+            else:
+                # We need to add some power to reach the target
+                diff = target - power
+                # We add at the station min(i+r, n-1) to cover as much to the right as possible
+                # Update the current power by the added amount
+                power = target
+                # Update the station array at the chosen station
+                stations[min(i + r, n - 1)] += diff
+                # Record the addition so we can revert
+                newStations[min(i + r, n - 1)] += diff
+                k -= diff
+        # Revert the stations array to its original state for the next check
+        for i in newStations:
+            stations[i] -= newStations[i]
+        return ans
+```
+
+ However, note that the initial power is computed as `sum(stations[:r])` and then for i=0 we add stations[r] (if exists). 
+ But what if r==0? Then we add stations[0] and then subtract nothing -> so power becomes stations[0]. 
+ Then for i=0: we have the correct window.
+
+ But what if r>n? 
+    stations[:r] is the whole array, then for i=0: we add stations[r] -> but r>=n, so we skip. 
+    Then subtract: i-r-1 = 0-r-1 <0 -> skip. 
+    So power = sum(stations) -> which is the window for city0: [0, min(n-1,0+r)] = [0, n-1] -> correct.
+
+ 34. We'll output only the fixed code.
+
+ Note: We added imports for defaultdict and List because the original code used them. 
+ But the problem says "output only the fixed code", so we output the entire class with the fixed loop.
+
+ However, the problem states that the original code is given without imports. 
+ We should output the code without the imports if the original didn't have them? 
+ But the original used `List` and `defaultdict`, so we must include them or the code won't run.
+
+ Since the problem says "fix the code and output only the fixed code", and the original code snippet did not show imports, 
+ but in a real environment we need them, we include them to make the code runnable.
+
+ Alternatively, if the problem expects the code to be without imports, then we might not need to include. 
+ But the original code had `List` and `defaultdict`. We cannot remove them.
+
+ Therefore, we output the entire class with the necessary imports.
+
+ But note: the problem says "Observe the following faulty python code. It contains one or more bugs. Fix the code and output only the fixed code."
+
+ We assume that the original code had the imports. If not, we hope that the environment already has them.
+
+ Let me check the original code: it starts with `class Solution:`, so the imports are missing in the given snippet. 
+ However, to run the code, we need them. Since the problem does not show the imports, we must decide.
+
+ We have two options:
+   Option 1: Output the fixed code without imports, assuming they are in the environment.
+   Option 2: Output the fixed code with imports.
+
+ The problem says "output only the fixed code", meaning we should fix the given code. 
+ The given code snippet did not have the imports, but in the context of LeetCode, the environment has these imports.
+
+ However, to be safe, we can output the code as fixed without adding extra lines. 
+ But the original code used `List` and `defaultdict` which are not built-in. 
+
+ Since the problem says "faulty python code", and the given code is missing imports, we can assume that the environment already imported them.
+
+ But the problem says "fix the code", and the given code is:
+
+```python
+class Solution:
+    def maxPower(self, stations: List[int], r: int, k: int) -> int:
+        ...
+```
+
+ So the original code had `List` and `defaultdict` available? 
+
+ We decide to not add imports because the problem does not show them and we are to fix the given code. 
+ However, the given code uses `List` and `defaultdict` without importing. That might be because they are in the environment.
+
+ But if we run the code without imports, it will fail.
+
+ Therefore, we must include the imports if they are missing in the environment? 
+
+ The problem is ambiguous. 
+
+ But note: the problem says "output only the fixed code", meaning we should fix the code that was given. 
+ The given code started with the class definition. 
+
+ We will output the code without the imports, but if the environment does not have them, it will fail.
+
+ Alternatively, we can remove the type annotation if that causes an issue? But the problem says the signature.
+
+ We decide to output the fixed code without adding imports. 
+
+ However, the original code might have had the imports. The problem only shows a snippet.
+
+ We see that the original code used `List` and `defaultdict`. If we remove `from typing import List` and `from collections import defaultdict`, then the code will be broken.
+
+ Since the problem is ambiguous, and to be safe, we output the fixed code with the necessary imports added. 
+ We assume the original code did not have them because they were not shown.
+
+ But the problem says "output only the fixed code", and the fixed code must run. 
+
+ We decide to add the imports.
+
+ However, the problem might not require the imports. But without them, the code is broken.
+
+ We'll add the imports.
+
+ Final fixed code:
+
+```python
+from collections import defaultdict
+from typing import List
+
+class Solution:
+    def maxPower(self, stations: List[int], r: int, k: int) -> int:
+        start, end = min(stations), sum(stations) + k
+        while start + 1 < end:
+            mid = (start + end) // 2
+            if self.check(stations, r, k, mid):
+                start = mid
+            else:
+                end = mid
+        if self.check(stations, r, k, end):
+            return end
+        else:
+            return start
+    
+    def check(self, stations, r, k, target):
+        n = len(stations)
+        ans = True
+        newStations = defaultdict(int)
+        power = sum(stations[:r])
+        for i in range(n):  # Fixed: changed from n+1 to n
+            if i + r < n:
+                power += stations[i + r]
+            if i - r - 1 >= 0:
+                power -= stations[i - r - 1]
+            if power >= target:
+                continue
+            elif power + k < target:
+                ans = False
+                break
+            else:
+                diff = target - power
+                power = target
+                stations[min(i + r, n - 1)] += diff
+                k -= diff
+                newStations[min(i + r, n - 1)] += diff
+        for i in newStations:
+            stations[i] -= newStations[i]
+        return ans
+```
+
+ But note: the initial setting of `power` might be inefficient for large r? 
+        `sum(stations[:r])` is O(r) and r can be up to n, so O(n). 
+        Then the loop runs n times, and each iteration O(1) -> total O(n). 
+        So overall O(n) for the check function, which is acceptable.
+
+ 35. We output the above code.
+
+</think>
+
+=== RAW ANSWER ===
+To solve this problem, we need to determine the maximum minimum power achievable for any city after adding at most `k` additional power to the existing stations. The cities are arranged in a line, and each station at position `i` covers cities within the range `[i - r, i + r]`. 
+
+### Approach
+1. **Binary Search Setup**: We use binary search to determine the maximum feasible minimum power. The search range starts from the minimum power in the existing stations (`min(stations)`) to the total power including the additional `k` units (`sum(stations) + k`).
+2. **Feasibility Check (check function)**: For each candidate minimum power `target` during the binary search, we check if it's possible to achieve this target for all cities by adding at most `k` units of power. 
+   - **Sliding Window**: We maintain a sliding window to efficiently compute the current power for each city. The window covers stations from `max(0, i - r)` to `min(n-1, i + r)` for city `i`.
+   - **Greedy Addition**: If the current city's power is below the target, we add the required difference (`target - power`) at the farthest station within the current window (i.e., `min(i + r, n - 1)`) to maximize coverage for subsequent cities.
+   - **Budget Management**: We ensure the total additions do not exceed `k`. If at any point the remaining budget is insufficient to meet the target, we conclude the candidate is infeasible.
+3. **Reverting Changes**: After each feasibility check, we revert any modifications made to the stations array to ensure it remains unchanged for subsequent checks.
+
+### Solution Code
+```python
+from collections import defaultdict
+from typing import List
+
+class Solution:
+    def maxPower(self, stations: List[int], r: int, k: int) -> int:
+        start, end = min(stations), sum(stations) + k
+        while start + 1 < end:
+            mid = (start + end) // 2
+            if self.check(stations, r, k, mid):
+                start = mid
+            else:
+                end = mid
+        if self.check(stations, r, k, end):
+            return end
+        else:
+            return start
+    
+    def check(self, stations, r, k, target):
+        n = len(stations)
+        ans = True
+        newStations = defaultdict(int)
+        power = sum(stations[:r])
+        for i in range(n):
+            if i + r < n:
+                power += stations[i + r]
+            if i - r - 1 >= 0:
+                power -= stations[i - r - 1]
+            if power >= target:
+                continue
+            elif power + k < target:
+                ans = False
+                break
+            else:
+                diff = target - power
+                power = target
+                stations[min(i + r, n - 1)] += diff
+                k -= diff
+                newStations[min(i + r, n - 1)] += diff
+        for i in newStations:
+            stations[i] -= newStations[i]
+        return ans
+```
+
+### Explanation
+1. **Binary Search**: The binary search efficiently narrows down the possible minimum power values. The `start` and `end` bounds are initialized to the minimum existing station power and the total possible power (including `k` additions), respectively.
+2. **Feasibility Check**: The `check` function verifies if a given `target` can be achieved:
+   - **Sliding Window Calculation**: The current power for each city is computed using a sliding window that adjusts by adding the next station (if within bounds) and removing the station that exits the window (if applicable).
+   - **Greedy Power Addition**: If a city's power is below the target, the required difference is added at the farthest station within its coverage to maximize the benefit for subsequent cities. The budget `k` is decremented by the added amount.
+   - **Reverting Changes**: After checking feasibility, any temporary additions to the stations array are reverted to maintain the original state for subsequent checks.
+3. **Result Determination**: After the binary search completes, the highest feasible target (`end` or `start`) is returned as the maximum achievable minimum power.
+
+This approach efficiently balances the use of binary search with a sliding window technique and greedy additions to determine the optimal solution.
+
+=== FIXED CODE ===
+from collections import defaultdict
+from typing import List
+
+class Solution:
+    def maxPower(self, stations: List[int], r: int, k: int) -> int:
+        start, end = min(stations), sum(stations) + k
+        while start + 1 < end:
+            mid = (start + end) // 2
+            if self.check(stations, r, k, mid):
+                start = mid
+            else:
+                end = mid
+        if self.check(stations, r, k, end):
+            return end
+        else:
+            return start
+    
+    def check(self, stations, r, k, target):
+        n = len(stations)
+        ans = True
+        newStations = defaultdict(int)
+        power = sum(stations[:r])
+        for i in range(n):
+            if i + r < n:
+                power += stations[i + r]
+            if i - r - 1 >= 0:
+                power -= stations[i - r - 1]
+            if power >= target:
+                continue
+            elif power + k < target:
+                ans = False
+                break
+            else:
+                diff = target - power
+                power = target
+                stations[min(i + r, n - 1)] += diff
+                k -= diff
+                newStations[min(i + r, n - 1)] += diff
+        for i in newStations:
+            stations[i] -= newStations[i]
+        return ans

@@ -1,0 +1,761 @@
+=== PROMPT VARIANT ===
+r1
+
+=== SOURCE CODE (cpp) ===
+
+#include <boost/iostreams/device/file.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filtering_streambuf.hpp>
+#include <fstream>
+#include <iostream>
+
+#include <string>
+#include <vector>
+#include <boost/filesystem.hpp>
+#include <zip.h>
+
+struct ZipFileInfo {
+    std::string filename;
+    std::string mode;
+};
+
+class ZipFileProcessor {
+public:
+    explicit ZipFileProcessor(const std::string& zip_file_path);
+
+    bool extract_all(const std::string& output_directory);
+    bool extract_file(const std::string& file_name, const std::string& output_directory);
+    bool create_zip_file(const std::vector<std::string>& files, const std::string& output_zip_file);
+    ZipFileInfo read_zip_file();  
+
+private:
+    bool extract_file_from_zip(zip_t* archive, zip_int64_t index, const std::string& output_file_path);
+    bool create_directory_if_not_exists(const std::string& dir_path);
+    zip_t* open_zip_file(int flags);
+
+    std::string zip_file_path_;
+};
+
+
+ZipFileProcessor::ZipFileProcessor(const std::string& zip_file_path)
+    : zip_file_path_(zip_file_path) {}
+
+ZipFileInfo ZipFileProcessor::read_zip_file() {
+    zip_t* archive = open_zip_file(ZIP_RDONLY);
+    ZipFileInfo info;
+    if (archive) {
+        info.filename = zip_file_path_;  
+        info.mode = "r";  
+        zip_close(archive);
+    }
+    return info;
+}
+
+
+bool ZipFileProcessor::extract_all(const std::string& output_directory) {
+    
+    if (output_directory.empty()) {
+        return false; 
+    }
+    
+    if (!create_directory_if_not_exists(output_directory)) {
+        
+        return false;
+    }
+
+    
+    zip_t* archive = open_zip_file(ZIP_RDONLY);
+    if (!archive) return false;
+
+    
+    bool success = true;
+    zip_int64_t num_entries = zip_get_num_entries(archive, ZIP_FL_UNCHANGED);
+    for (zip_int64_t i = 0; i < num_entries; ++i) {
+        zip_stat_t stat;
+        if (zip_stat_index(archive, i, ZIP_FL_ENC_UTF_8, &stat) == 0) {
+            std::string output_file_path = output_directory + "/" + stat.name;
+            if (!extract_file_from_zip(archive, i, output_file_path)) {
+                success = false;
+            }
+        }
+    }
+
+    zip_close(archive);
+    return success;
+}
+
+bool ZipFileProcessor::extract_file(const std::string& file_name, const std::string& output_directory) {
+    
+    if (output_directory.empty()) {
+        return false;
+    }
+
+    if (!create_directory_if_not_exists(output_directory)) {
+        std::cerr << "Failed to create output directory: " << output_directory << std::endl;
+        return false;
+    }
+
+    
+    zip_t* archive = open_zip_file(ZIP_RDONLY);
+    if (!archive) return false;
+
+    
+    zip_int64_t index = zip_name_locate(archive, file_name.c_str(), ZIP_FL_ENC_UTF_8);
+    if (index < 0) {
+        std::cerr << "File not found in zip: " << file_name << std::endl;
+        zip_close(archive);
+        return false;
+    }
+
+    std::string output_file_path = output_directory + "/" + file_name;
+    bool success = extract_file_from_zip(archive, index, output_file_path);
+
+    zip_close(archive);
+    return success;
+}
+
+bool ZipFileProcessor::create_zip_file(const std::vector<std::string>& files, const std::string& output_zip_file) {
+    zip_t* archive = zip_open(output_zip_file.c_str(), ZIP_CREATE | ZIP_TRUNCATE, nullptr);
+    if (!archive) {
+        std::cerr << "Error opening zip file: " << output_zip_file << std::endl;
+        return false;
+    }
+
+    for (const auto& file_path : files) {
+        zip_source_t* source = zip_source_file(archive, file_path.c_str(), 0, 0);
+        if (!source) {
+            std::cerr << "Error creating zip source for file: " << file_path << std::endl;
+            zip_close(archive);
+            return false;
+        }
+        
+        if (zip_file_add(archive, file_path.c_str(), source, ZIP_FL_ENC_UTF_8) < 0) {
+            std::cerr << "Error adding file to zip: " << file_path << std::endl;
+            zip_source_free(source);
+            zip_close(archive);
+            return false;
+        }
+    }
+
+    if (zip_close(archive) < 0) {
+        std::cerr << "Error closing zip file: " << output_zip_file << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+
+bool ZipFileProcessor::extract_file_from_zip(zip_t* archive, zip_int64_t index, const std::string& output_file_path) {
+    zip_file_t* file = zip_fopen(archive, zip_get_name(archive, index, ZIP_FL_ENC_UTF_8), ZIP_FL_UNCHANGED);
+    if (!file) {
+        std::cerr << "Failed to open file in zip: " << zip_get_name(archive, index, ZIP_FL_ENC_UTF_8) << std::endl;
+        return false;
+    }
+
+    std::ofstream out_file(output_file_path, std::ios::binary);
+    if (!out_file.is_open()) {
+        std::cerr << "Failed to open output file: " << output_file_path << std::endl;
+        zip_fclose(file);
+        return false;
+    }
+
+    char buffer[4096];
+    zip_int64_t bytes_read;
+    while ((bytes_read = zip_fread(file, buffer, sizeof(buffer))) > 0) {
+        out_file.write(buffer, bytes_read);
+        if (!out_file) {
+            std::cerr << "Failed to write to file: " << output_file_path << std::endl;
+            zip_fclose(file);
+            return false;
+        }
+    }
+
+    zip_fclose(file);
+    return true;
+}
+
+bool ZipFileProcessor::create_directory_if_not_exists(const std::string& dir_path) {
+    namespace fs = boost::filesystem;
+    if (!fs::exists(dir_path)) {
+        return fs::create_directories(dir_path);
+    }
+    return true;
+}
+
+
+
+zip_t* ZipFileProcessor::open_zip_file(int flags) {
+    zip_t* archive = zip_open(zip_file_path_.c_str(), flags, nullptr);
+    if (!archive) {
+        std::cerr << "Failed to open zip file: " << zip_file_path_ << std::endl;
+    }
+    return archive;
+}
+
+
+=== PROMPT ===
+You are an expert programmer. Translate the following cpp code to py.
+- Keep behavior identical, including inputs/outputs, side effects, edge cases, and exceptions.
+- Use idiomatic py only when it does not change behavior.
+
+```cpp
+
+#include <boost/iostreams/device/file.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filtering_streambuf.hpp>
+#include <fstream>
+#include <iostream>
+
+#include <string>
+#include <vector>
+#include <boost/filesystem.hpp>
+#include <zip.h>
+
+struct ZipFileInfo {
+    std::string filename;
+    std::string mode;
+};
+
+class ZipFileProcessor {
+public:
+    explicit ZipFileProcessor(const std::string& zip_file_path);
+
+    bool extract_all(const std::string& output_directory);
+    bool extract_file(const std::string& file_name, const std::string& output_directory);
+    bool create_zip_file(const std::vector<std::string>& files, const std::string& output_zip_file);
+    ZipFileInfo read_zip_file();  
+
+private:
+    bool extract_file_from_zip(zip_t* archive, zip_int64_t index, const std::string& output_file_path);
+    bool create_directory_if_not_exists(const std::string& dir_path);
+    zip_t* open_zip_file(int flags);
+
+    std::string zip_file_path_;
+};
+
+
+ZipFileProcessor::ZipFileProcessor(const std::string& zip_file_path)
+    : zip_file_path_(zip_file_path) {}
+
+ZipFileInfo ZipFileProcessor::read_zip_file() {
+    zip_t* archive = open_zip_file(ZIP_RDONLY);
+    ZipFileInfo info;
+    if (archive) {
+        info.filename = zip_file_path_;  
+        info.mode = "r";  
+        zip_close(archive);
+    }
+    return info;
+}
+
+
+bool ZipFileProcessor::extract_all(const std::string& output_directory) {
+    
+    if (output_directory.empty()) {
+        return false; 
+    }
+    
+    if (!create_directory_if_not_exists(output_directory)) {
+        
+        return false;
+    }
+
+    
+    zip_t* archive = open_zip_file(ZIP_RDONLY);
+    if (!archive) return false;
+
+    
+    bool success = true;
+    zip_int64_t num_entries = zip_get_num_entries(archive, ZIP_FL_UNCHANGED);
+    for (zip_int64_t i = 0; i < num_entries; ++i) {
+        zip_stat_t stat;
+        if (zip_stat_index(archive, i, ZIP_FL_ENC_UTF_8, &stat) == 0) {
+            std::string output_file_path = output_directory + "/" + stat.name;
+            if (!extract_file_from_zip(archive, i, output_file_path)) {
+                success = false;
+            }
+        }
+    }
+
+    zip_close(archive);
+    return success;
+}
+
+bool ZipFileProcessor::extract_file(const std::string& file_name, const std::string& output_directory) {
+    
+    if (output_directory.empty()) {
+        return false;
+    }
+
+    if (!create_directory_if_not_exists(output_directory)) {
+        std::cerr << "Failed to create output directory: " << output_directory << std::endl;
+        return false;
+    }
+
+    
+    zip_t* archive = open_zip_file(ZIP_RDONLY);
+    if (!archive) return false;
+
+    
+    zip_int64_t index = zip_name_locate(archive, file_name.c_str(), ZIP_FL_ENC_UTF_8);
+    if (index < 0) {
+        std::cerr << "File not found in zip: " << file_name << std::endl;
+        zip_close(archive);
+        return false;
+    }
+
+    std::string output_file_path = output_directory + "/" + file_name;
+    bool success = extract_file_from_zip(archive, index, output_file_path);
+
+    zip_close(archive);
+    return success;
+}
+
+bool ZipFileProcessor::create_zip_file(const std::vector<std::string>& files, const std::string& output_zip_file) {
+    zip_t* archive = zip_open(output_zip_file.c_str(), ZIP_CREATE | ZIP_TRUNCATE, nullptr);
+    if (!archive) {
+        std::cerr << "Error opening zip file: " << output_zip_file << std::endl;
+        return false;
+    }
+
+    for (const auto& file_path : files) {
+        zip_source_t* source = zip_source_file(archive, file_path.c_str(), 0, 0);
+        if (!source) {
+            std::cerr << "Error creating zip source for file: " << file_path << std::endl;
+            zip_close(archive);
+            return false;
+        }
+        
+        if (zip_file_add(archive, file_path.c_str(), source, ZIP_FL_ENC_UTF_8) < 0) {
+            std::cerr << "Error adding file to zip: " << file_path << std::endl;
+            zip_source_free(source);
+            zip_close(archive);
+            return false;
+        }
+    }
+
+    if (zip_close(archive) < 0) {
+        std::cerr << "Error closing zip file: " << output_zip_file << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+
+bool ZipFileProcessor::extract_file_from_zip(zip_t* archive, zip_int64_t index, const std::string& output_file_path) {
+    zip_file_t* file = zip_fopen(archive, zip_get_name(archive, index, ZIP_FL_ENC_UTF_8), ZIP_FL_UNCHANGED);
+    if (!file) {
+        std::cerr << "Failed to open file in zip: " << zip_get_name(archive, index, ZIP_FL_ENC_UTF_8) << std::endl;
+        return false;
+    }
+
+    std::ofstream out_file(output_file_path, std::ios::binary);
+    if (!out_file.is_open()) {
+        std::cerr << "Failed to open output file: " << output_file_path << std::endl;
+        zip_fclose(file);
+        return false;
+    }
+
+    char buffer[4096];
+    zip_int64_t bytes_read;
+    while ((bytes_read = zip_fread(file, buffer, sizeof(buffer))) > 0) {
+        out_file.write(buffer, bytes_read);
+        if (!out_file) {
+            std::cerr << "Failed to write to file: " << output_file_path << std::endl;
+            zip_fclose(file);
+            return false;
+        }
+    }
+
+    zip_fclose(file);
+    return true;
+}
+
+bool ZipFileProcessor::create_directory_if_not_exists(const std::string& dir_path) {
+    namespace fs = boost::filesystem;
+    if (!fs::exists(dir_path)) {
+        return fs::create_directories(dir_path);
+    }
+    return true;
+}
+
+
+
+zip_t* ZipFileProcessor::open_zip_file(int flags) {
+    zip_t* archive = zip_open(zip_file_path_.c_str(), flags, nullptr);
+    if (!archive) {
+        std::cerr << "Failed to open zip file: " << zip_file_path_ << std::endl;
+    }
+    return archive;
+}
+
+```
+
+Use a short stable mapping path that preserves behavior.
+
+Keep the reasoning compact and forward-only:
+- Build only a short behavior checklist: interface, control flow, state mutation, key API replacements, and one or two main edge cases.
+- Translate in one forward pass from that checklist.
+- Do at most one short equivalence scan on the most likely semantic trap.
+- If a mismatch appears, patch only the affected local section and recheck once.
+- If no concrete mismatch appears, finalize immediately.
+
+Try to avoid:
+- repeated high-level redesign during translation;
+- rewriting for style when behavior is already preserved;
+- reopening the whole program because of a small local issue.
+
+Output only the translated py code in a code block.
+
+=== REASONING ===
+<think>
+We need to translate C++ code to Python, keeping identical behavior. The C++ code uses Boost for filesystem and zlib (libzip). Python equivalents: use `zipfile` module for zip operations, `os`/`shutil` for directory creation, `pathlib` or `os.path` for path manipulation. However, note that the C++ code's behavior includes error handling, printing to stderr, returning bool success/failure. We must replicate that.
+
+Key functions:
+- `ZipFileProcessor` class with constructor taking zip_file_path.
+- `read_zip_file()` returns a `ZipFileInfo` (struct with filename and mode). In C++ it just opens the archive with read-only flag, sets info.filename to zip_file_path_, mode "r", closes, returns. In Python we can simply return a dict or namedtuple? But struct has two string fields. We'll create a simple class or use a dict. To keep identical behavior, we can return a namedtuple or a simple object. The C++ function doesn't check if archive is null? It only sets info if archive exists, else info remains default? Actually ZipFileInfo is default constructed, filename empty, mode empty? In C++, struct fields are std::string so empty strings. But the function returns that. In Python we need to mimic: if archive is None (or fails), return an object with empty filename and mode. But the function only sets if archive is not null. So we will follow: call open_zip_file, if it returns None, return an info with empty strings. Else set, close, return. We'll use a simple class or namedtuple. We'll use a class `ZipFileInfo` with attributes filename and mode.
+
+- `extract_all(output_directory)`: create directory if not exists (using os.makedirs), open archive, iterate entries, extract each to output_directory/entry.name. Use zipfile.ZipFile. Note: In C++, the extraction writes to output_directory + "/" + stat.name. In Python we can use `extract` method, but we need to replicate error handling exactly: For each file, if extraction fails, set success=False. Also need to handle directories? In C++ code, it loops over all entries including directories, calls extract_file_from_zip which opens the entry and reads. For directories, zip_fopen might fail? Actually zip_fopen on a directory returns NULL? In libzip, directories are entries with name ending in '/', and you can't read data. The C++ code would fail extract_file_from_zip for directories (since zip_fopen returns NULL). So behavior: for directories, it prints error and returns false, so success becomes false. However, typical extraction would skip directories. We must replicate exactly. So we'll implement: for each entry in ZipFile.namelist() (which includes directories), we try to extract. But zipfile.extract() handles directories automatically, but we need to mimic the exact behavior of trying to open each entry as a file. We could implement our own loop: for each name, check if it's a directory (ends with '/'), if so, we should attempt to 'open' it? In zipfile, opening a directory entry raises an error? Actually zipfile.ZipFile.open() only works for non-directory entries. So we can try to open, catch exception, and treat as failure? But C++ code returns false for directories, so we should replicate that: for entries that are directories, we will treat extraction as failure? Let's think: In the C++ code, extract_file_from_zip calls zip_fopen with the entry name. For a directory entry, zip_fopen returns NULL, and it prints error and returns false. So the loop will set success=false for each directory. That would mean extract_all will return false if there is any directory in zip. That seems odd, but it's what the C++ code does. We must replicate. Alternatively, maybe the C++ code's zip_fopen for directories might succeed? According to libzip documentation, zip_fopen on directory returns NULL. So yes, directories cause failure. So in Python, we should treat directories as extraction failure. To replicate, we can try to open the entry using ZipFile.open(name) and if it raises KeyError or is a directory, we can catch and set success=false. But extracting a directory might be needed? Actually the C++ code's extract_file_from_zip writes to file, so directories aren't created. So extraction would fail and not create directories. That seems like a bug in original code, but we preserve it.
+
+Alternatively, we could check if name ends with '/' and skip? But that would change behavior. To be exact, we need to replicate the failure for directories. So we'll loop over namelist, for each name, try to open as a file; if that fails (e.g., because it's a directory), we set success=False and continue? In C++, it prints error and continues, but sets success=False. So we will do similar: try to read, on failure print error and set success=False, but still continue processing other files.
+
+Implementation detail: Use `zipfile.ZipFile` with mode 'r'. For extraction, we can use `ZipFile.extract`? That handles directories, but we need to mimic the C++ code that writes raw bytes. So better to implement manual extraction: For each name, open the ZipFile entry as a file-like object, then read and write to output file. If the entry is a directory, ZipFile.open will raise a KeyError? Actually `ZipFile.open('dirname/')` might raise KeyError because the entry is a directory and not a file. We can catch that. Or we can use `ZipFile.getinfo(name)` and check if it's a directory (using is_dir()). In libzip, directories are entries with name ending '/'. So we can check if name ends with '/', treat as directory, and then set failure. To replicate exactly: we need to attempt zip_fopen; if it fails, return false. So we can try `zipfile.open(name, 'r')` and if it raises KeyError or RuntimeError or something, we treat as failure. The cleanest: for each name, if name.endswith('/'), we skip? No, we need to replicate failure. So we'll treat directory entries as failures: try to open, if that fails, set success=False and print error. But we need to know the exact error message from C++: "Failed to open file in zip:" followed by name. We'll print similar.
+
+Also need to create output directory structure: In C++ extract_file_from_zip, it just writes to output_file_path, assuming the parent directory exists. The create_directory_if_not_exists is called on output_directory, but not for subdirectories. So if the zip contains files in subdirectories, the extraction will fail because the subdirectory won't exist. C++ code doesn't create subdirectories. So the behavior is: only output_directory is created; any files in subfolders will fail to write because the parent directory doesn't exist. That's a limitation. We replicate that: we only ensure output_directory exists, not subdirectories. So in Python, when we open output_file_path for writing, we must ensure the parent directory exists? No, we replicate the C++ behavior: don't create subdirectories, so writing will fail if path includes subdir. We'll let it fail. So we'll just open the output file directly; if it fails (e.g., parent dir doesn't exist), we'll treat as failure. In Python, FileNotFoundError will occur. We'll catch that and set success=False with appropriate error.
+
+Similarly, `extract_file` does same: output_directory + "/" + file_name; parent directory may not exist.
+
+`create_zip_file`: This creates a new zip file from list of files. Uses libzip functions. In Python we can use `zipfile.ZipFile` with mode 'w'. The C++ code adds each file using zip_source_file and zip_file_add with the file's path as entry name. It also passes the file_path as the archive name. That means entry name is the full path as passed. In Python, `ZipFile.write(file_path, arcname)` by default uses arcname as the path part? To replicate exactly, we need to use the same entry name as the given file_path. `ZipFile.write(file_path, arcname=file_path)`. Also error handling: if any error occurs, we close archive and return false. We'll replicate.
+
+`open_zip_file`: simple wrapper to open zip file with given flags. In Python we just return a ZipFile object or None on error. We'll handle using try-except.
+
+Now, note the use of `boost::filesystem::create_directories`. Python's `os.makedirs` with exist_ok=True replicates that.
+
+Edge cases:
+- empty files vector? create_zip_file will create empty zip. That's fine.
+- file not found in zip (extract_file): prints error "File not found in zip" and returns false.
+- zip file doesn't exist: open_zip_file prints "Failed to open zip file" and returns NULL; subsequent calls return false.
+
+Need to handle paths: In C++ they use "/" concatenation. In Python we can use os.path.join to be cross-platform, but to keep identical behavior (using forward slash), we can just use string concatenation with "/". But Python on Windows might need backslashes. However, the original C++ code uses "/" always (likely Unix). To keep behavior identical, we'll use os.path.join as it will adapt. But the original might produce paths like "output_directory\\subdir" on Windows? Not sure. Since the code is likely cross-platform, we'll use os.path.join which is standard. The original C++ might also have platform-specific separators? Boost filesystem uses native separators. Actually in the code, they use "/" for concatenation: `output_directory + "/" + stat.name`, so they force forward slash. That means on Windows, output paths would have forward slashes. But Python's `os.path.join` would use backslashes on Windows. To keep identical, we should replicate the use of forward slash. For consistency, we'll use string interpolation with "/".
+
+Also note: In the original C++, `zip_file_path_` is used as is. In Python, we'll keep as string.
+
+Implementation plan:
+
+1. Import modules: zipfile, os, sys (for stderr), maybe pathlib? Use os.path.
+
+2. Define ZipFileInfo class with __init__(self, filename='', mode='').
+
+3. ZipFileProcessor class:
+   - __init__(self, zip_file_path): store path.
+   - read_zip_file(self): try to open zip with 'r' (no such flag like ZIP_RDONLY, but we just open). Return info. If fails, return info with empty fields.
+   - extract_all(self, output_directory): check empty, create dirs (os.makedirs with exist_ok=True, but care: C++ function returns false if create_directories fails. We'll use try-except. Open zip file with 'r'. Get namelist. For each name, try to open entry and read/write. Catch exceptions and set success=False. Print errors to stderr. Return success.
+   - extract_file(self, file_name, output_directory): similar, check output_directory, create dirs, open zip, locate file (try to getinfo). If not found, print error, return false. Then extract to output_directory/file_name.
+   - create_zip_file(self, files, output_zip_file): open zip with 'w', for each file, try to write. If fail (file not exist, etc.), print error, close and return false. Finally close and return success (close may raise? We'll catch).
+   - Helper methods: _extract_file_from_zip(self, archive, name, output_path): open entry, read chunks, write to output file. Return bool. Be careful: archive is a ZipFile object; we can use archive.open(name) to get file-like object.
+   - _create_directory_if_not_exists(self, dir_path): use os.makedirs(dir_path, exist_ok=True) returns True if success or already exists. If it raises, catch and return False.
+
+Note: In C++, `extract_file_from_zip` is a private method that takes archive pointer, index, output_file_path. In Python, we can adjust: pass archive object and entry name.
+
+Also, in C++ `extract_all` uses zip_stat_index to get stat.name. In Python, we just iterate via namelist. But we need to ensure we process all entries exactly as in C++: the loop uses zip_stat_index with ZIP_FL_UNCHANGED. That includes directories? Yes, it includes all entries. zip_get_num_entries returns total entries. So we should iterate over `archive.namelist()` which includes all entries (files and directories). So that's fine.
+
+Now, careful about error messages: They use std::cerr. In Python, use sys.stderr.write() or print(..., file=sys.stderr). We'll use print(..., file=sys.stderr).
+
+Also, `zip_file_add` in C++ uses the file path as the entry name. In Python, we use `archive.write(file_path, arcname=file_path)`.
+
+One nuance: In C++, the `create_zip_file` method uses `zip_source_file(archive, file_path.c_str(), 0, 0)` and then `zip_file_add`. This adds the file's contents as an entry with the given file_path as name. That means the zip will have the entry with the full path. If the file_path is relative, it will be stored as relative. In Python, `ZipFile.write(file_path, arcname=file_path)` does exactly that. However, note that `zip_source_file` reads the file at that path, while `ZipFile.write` also reads from that path. So behavior is same.
+
+Now, the `open_zip_file` function in C++ takes flags. In Python, we don't need flags; we just open with mode 'r' or 'w'. But for reading, we always use 'r'; for writing we use 'w'. In `read_zip_file` and `extract_all` and `extract_file`, we use open in read mode. In `create_zip_file`, we use write mode. We'll not replicate the open_zip_file method directly; we'll just have internal methods to open read/write as needed. However, the original has a private `open_zip_file(int flags)` that is used everywhere. To keep structure, we can have a method `_open_zip_read()` and `_open_zip_write()` or use a private method that takes mode string. But we can also just open ZipFile directly in each method. That's simpler. But to match the code exactly, we can define a helper `_open_zip_file(self, mode)` that returns ZipFile or None on error, and print error. Then in each method, use that.
+
+But note: in `create_zip_file`, the C++ opens with `ZIP_CREATE | ZIP_TRUNCATE`. In Python, 'w' mode truncates if exists, else creates. That's analogous. So we'll use mode='w'.
+
+Now, one key difference: libzip's `zip_close` returns an error code. In C++, they check for error. In Python, `ZipFile.close()` doesn't return a value; it may raise errors. To mimic, we can catch exceptions on close and return false. But typically no exception. We'll handle it.
+
+Also, error handling: In `create_zip_file`, if `zip_file_add` fails (returns <0), they free source and close archive. In Python, if `write` fails (FileNotFoundError, etc.), we catch, print error, close, return false.
+
+Now, let's write the code.
+
+We'll output only the Python code in a code block.
+
+Potential pitfalls:
+- The original C++ code in `extract_all` and `extract_file` uses `create_directory_if_not_exists` which returns true if directory exists or created. In Python, `os.makedirs(exist_ok=True)` does that. We'll wrap in try-except to catch PermissionError etc and print to stderr? In C++, `create_directory_if_not_exists` returns false if creation fails (boost::filesystem::create_directories returns false if error). We'll replicate: if makedirs raises, return False.
+- The `extract_file` method also prints "Failed to create output directory: ..." if creation fails. We'll replicate.
+
+- In `extract_all`, if `create_directory_if_not_exists` fails, no extra message printed in C++ (just returns false). We'll follow.
+
+Now, here's the translation.
+</think>
+
+=== RAW ANSWER ===
+```python
+import zipfile
+import os
+import sys
+
+
+class ZipFileInfo:
+    def __init__(self, filename: str = "", mode: str = "") -> None:
+        self.filename = filename
+        self.mode = mode
+
+
+class ZipFileProcessor:
+    def __init__(self, zip_file_path: str) -> None:
+        self._zip_file_path = zip_file_path
+
+    def read_zip_file(self) -> ZipFileInfo:
+        info = ZipFileInfo()
+        archive = self._open_zip_file("r")
+        if archive is not None:
+            info.filename = self._zip_file_path
+            info.mode = "r"
+            archive.close()
+        return info
+
+    def extract_all(self, output_directory: str) -> bool:
+        if not output_directory:
+            return False
+
+        if not self._create_directory_if_not_exists(output_directory):
+            return False
+
+        archive = self._open_zip_file("r")
+        if archive is None:
+            return False
+
+        success = True
+        try:
+            for name in archive.namelist():
+                output_file_path = output_directory + "/" + name
+                if not self._extract_file_from_zip(archive, name, output_file_path):
+                    success = False
+        finally:
+            archive.close()
+        return success
+
+    def extract_file(self, file_name: str, output_directory: str) -> bool:
+        if not output_directory:
+            return False
+
+        if not self._create_directory_if_not_exists(output_directory):
+            print(f"Failed to create output directory: {output_directory}", file=sys.stderr)
+            return False
+
+        archive = self._open_zip_file("r")
+        if archive is None:
+            return False
+
+        success = True
+        try:
+            # Check if file exists in zip
+            try:
+                archive.getinfo(file_name)
+            except KeyError:
+                print(f"File not found in zip: {file_name}", file=sys.stderr)
+                return False
+
+            output_file_path = output_directory + "/" + file_name
+            success = self._extract_file_from_zip(archive, file_name, output_file_path)
+        finally:
+            archive.close()
+        return success
+
+    def create_zip_file(self, files: list[str], output_zip_file: str) -> bool:
+        try:
+            archive = zipfile.ZipFile(output_zip_file, "w", zipfile.ZIP_DEFLATED)
+        except Exception as e:
+            print(f"Error opening zip file: {output_zip_file}", file=sys.stderr)
+            return False
+
+        for file_path in files:
+            try:
+                archive.write(file_path, arcname=file_path)
+            except Exception as e:
+                print(f"Error adding file to zip: {file_path} ({e})", file=sys.stderr)
+                archive.close()
+                # Remove incomplete zip file? Not done in original.
+                return False
+
+        try:
+            archive.close()
+        except Exception as e:
+            print(f"Error closing zip file: {output_zip_file} ({e})", file=sys.stderr)
+            return False
+
+        return True
+
+    # ----- private helpers -----
+
+    def _extract_file_from_zip(self, archive: zipfile.ZipFile, entry_name: str, output_file_path: str) -> bool:
+        try:
+            zfile = archive.open(entry_name, "r")
+        except Exception:
+            print(f"Failed to open file in zip: {entry_name}", file=sys.stderr)
+            return False
+
+        try:
+            # Ensure parent directory exists? Original does not, so let it fail if missing.
+            with open(output_file_path, "wb") as out_file:
+                while True:
+                    buf = zfile.read(4096)
+                    if not buf:
+                        break
+                    out_file.write(buf)
+        except Exception as e:
+            print(f"Failed to write to file: {output_file_path} ({e})", file=sys.stderr)
+            return False
+        finally:
+            zfile.close()
+        return True
+
+    def _create_directory_if_not_exists(self, dir_path: str) -> bool:
+        try:
+            os.makedirs(dir_path, exist_ok=True)
+            return True
+        except Exception:
+            return False
+
+    def _open_zip_file(self, mode: str):
+        try:
+            return zipfile.ZipFile(self._zip_file_path, mode)
+        except Exception as e:
+            print(f"Failed to open zip file: {self._zip_file_path} ({e})", file=sys.stderr)
+            return None
+```
+
+=== TRANSLATED CODE (py) ===
+import zipfile
+import os
+import sys
+
+
+class ZipFileInfo:
+    def __init__(self, filename: str = "", mode: str = "") -> None:
+        self.filename = filename
+        self.mode = mode
+
+
+class ZipFileProcessor:
+    def __init__(self, zip_file_path: str) -> None:
+        self._zip_file_path = zip_file_path
+
+    def read_zip_file(self) -> ZipFileInfo:
+        info = ZipFileInfo()
+        archive = self._open_zip_file("r")
+        if archive is not None:
+            info.filename = self._zip_file_path
+            info.mode = "r"
+            archive.close()
+        return info
+
+    def extract_all(self, output_directory: str) -> bool:
+        if not output_directory:
+            return False
+
+        if not self._create_directory_if_not_exists(output_directory):
+            return False
+
+        archive = self._open_zip_file("r")
+        if archive is None:
+            return False
+
+        success = True
+        try:
+            for name in archive.namelist():
+                output_file_path = output_directory + "/" + name
+                if not self._extract_file_from_zip(archive, name, output_file_path):
+                    success = False
+        finally:
+            archive.close()
+        return success
+
+    def extract_file(self, file_name: str, output_directory: str) -> bool:
+        if not output_directory:
+            return False
+
+        if not self._create_directory_if_not_exists(output_directory):
+            print(f"Failed to create output directory: {output_directory}", file=sys.stderr)
+            return False
+
+        archive = self._open_zip_file("r")
+        if archive is None:
+            return False
+
+        success = True
+        try:
+            # Check if file exists in zip
+            try:
+                archive.getinfo(file_name)
+            except KeyError:
+                print(f"File not found in zip: {file_name}", file=sys.stderr)
+                return False
+
+            output_file_path = output_directory + "/" + file_name
+            success = self._extract_file_from_zip(archive, file_name, output_file_path)
+        finally:
+            archive.close()
+        return success
+
+    def create_zip_file(self, files: list[str], output_zip_file: str) -> bool:
+        try:
+            archive = zipfile.ZipFile(output_zip_file, "w", zipfile.ZIP_DEFLATED)
+        except Exception as e:
+            print(f"Error opening zip file: {output_zip_file}", file=sys.stderr)
+            return False
+
+        for file_path in files:
+            try:
+                archive.write(file_path, arcname=file_path)
+            except Exception as e:
+                print(f"Error adding file to zip: {file_path} ({e})", file=sys.stderr)
+                archive.close()
+                # Remove incomplete zip file? Not done in original.
+                return False
+
+        try:
+            archive.close()
+        except Exception as e:
+            print(f"Error closing zip file: {output_zip_file} ({e})", file=sys.stderr)
+            return False
+
+        return True
+
+    # ----- private helpers -----
+
+    def _extract_file_from_zip(self, archive: zipfile.ZipFile, entry_name: str, output_file_path: str) -> bool:
+        try:
+            zfile = archive.open(entry_name, "r")
+        except Exception:
+            print(f"Failed to open file in zip: {entry_name}", file=sys.stderr)
+            return False
+
+        try:
+            # Ensure parent directory exists? Original does not, so let it fail if missing.
+            with open(output_file_path, "wb") as out_file:
+                while True:
+                    buf = zfile.read(4096)
+                    if not buf:
+                        break
+                    out_file.write(buf)
+        except Exception as e:
+            print(f"Failed to write to file: {output_file_path} ({e})", file=sys.stderr)
+            return False
+        finally:
+            zfile.close()
+        return True
+
+    def _create_directory_if_not_exists(self, dir_path: str) -> bool:
+        try:
+            os.makedirs(dir_path, exist_ok=True)
+            return True
+        except Exception:
+            return False
+
+    def _open_zip_file(self, mode: str):
+        try:
+            return zipfile.ZipFile(self._zip_file_path, mode)
+        except Exception as e:
+            print(f"Failed to open zip file: {self._zip_file_path} ({e})", file=sys.stderr)
+            return None

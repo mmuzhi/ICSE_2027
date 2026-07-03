@@ -1,0 +1,755 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+
+class EmailClient {
+    private String addr;
+    private double capacity;
+    private List<Map<String, Object>> inbox;
+
+    public EmailClient(String addr, double capacity) {
+        this.addr = addr;
+        this.capacity = capacity;
+        this.inbox = new ArrayList<>();
+    }
+
+    public boolean sendTo(EmailClient recv, String content, double size) {
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            Map<String, Object> email = new HashMap<>();
+            email.put("sender", this.addr);
+            email.put("receiver", recv.addr);
+            email.put("content", content);
+            email.put("size", size);
+            email.put("time", timestamp);
+            email.put("state", "unread");
+            recv.inbox.add(email);
+            return true;
+        }
+        else {
+            this.clearInbox(size);
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size); // Retry sending after clearing
+        }
+    }
+
+    public Map<String, Object> fetch() {
+        if (this.inbox.isEmpty()) {
+            return null;
+        }
+        for (Map<String, Object> email : this.inbox) {
+            if ("unread".equals(email.get("state"))) {
+                email.put("state", "read");
+                return email;
+            }
+        }
+        return null;
+    }
+
+    public boolean isFullWithOneMoreEmail(double size) {
+        double occupiedSize = this.getOccupiedSize();
+        return occupiedSize + size > this.capacity;
+    }
+
+    public double getOccupiedSize() {
+        double occupiedSize = 0;
+        for (Map<String, Object> email : this.inbox) {
+            Object sizeObj = email.get("size");
+            if (sizeObj instanceof Number) {
+                occupiedSize += ((Number) sizeObj).doubleValue();
+            }
+        }
+        return occupiedSize;
+    }
+
+    public void clearInbox(double size) {
+        if (this.addr.isEmpty()) {
+            return;
+        }
+        double freedSpace = 0;
+        while (freedSpace < size && !this.inbox.isEmpty()) {
+            Map<String, Object> email = this.inbox.remove(0);
+            Object sizeObj = email.get("size");
+            if (sizeObj instanceof Number) {
+                freedSpace += ((Number) sizeObj).doubleValue();
+            }
+        }
+    }
+
+    public List<Map<String, Object>> getInbox() {
+        return this.inbox;
+    }
+
+    public void setInbox(List<Map<String, Object>> inbox) {
+        this.inbox = inbox;
+    }
+}
+
+
+=== REASONING ===
+<think>
+
+We are going to translate the Java code to C++ step by step.
+ Important: We must keep the behavior identical.
+
+ Steps:
+ 1. We don't have packages in C++, so we remove the package.
+ 2. We'll use standard C++ libraries for equivalent functionality.
+    - We'll use `std::vector` for the list of emails (inbox).
+    - We'll use `std::map` or `std::unordered_map` for the email map. Since order doesn't matter for the map, we can use unordered_map, but note that in Java the `HashMap` does not guarantee order. However, in the `clearInbox` method we remove the first element (index 0). In C++ `std::vector` we can do the same. But note: the inbox is stored in a list (ArrayList) in Java, and we are removing from the front. In C++ vector, removing from the front is O(n). We might consider using a deque for efficient removal from front? However, the problem says to keep behavior identical and use idiomatic C++ only when it doesn't change behavior. Since the original code uses a list and removes from the front (which in ArrayList is also O(n) because it shifts elements), we can use vector and remove from front with the same performance characteristics. Alternatively, we can use a deque for efficient removal from both ends. But note: the original code uses a list and we are iterating by index? Actually, no: in `clearInbox` we remove the first element repeatedly until we have freed enough space. In Java, removing the first element of an ArrayList is O(n) each time. In C++ vector, removing the first element is also O(n). However, if we expect many deletions, we might want to optimize. But the problem says to keep behavior identical. So we'll stick with vector and do removals from the front.
+
+ However, note: in the `fetch` method, we iterate over the inbox and look for an unread email. The order is the same as insertion (since ArrayList is ordered). In C++ vector, the order is preserved.
+
+ But note: the `clearInbox` method removes the oldest emails first (because it removes from index 0). So we are using the inbox as a FIFO for clearing? Yes. So we must preserve the insertion order.
+
+ We can use `std::vector` and remove the first element by using `erase` on the beginning. However, that is O(n). Alternatively, we can use `std::deque` which allows efficient removal from the front. Since the requirement is to keep behavior identical, and the original Java code uses an ArrayList (which is a dynamic array), using a deque would change the container type but not the observable behavior? Actually, the behavior of the inbox as a list that preserves insertion order is the same. And deque also preserves insertion order. The only difference is the performance of removal from the front: deque is O(1) per removal, while vector is O(n). However, the original Java code uses ArrayList which also has O(n) removal from the front. So if we want to be identical in performance, we should use vector? But note: the problem says "use idiomatic C++ only when it doesn't change behavior". Since deque is more efficient and doesn't change the observable behavior (the order of the emails and the fact that we remove the oldest first), we can use deque to avoid the performance penalty? However, the problem says "keep behavior identical" including edge cases and side effects. The side effect of performance might be considered? But the problem likely focuses on functional behavior.
+
+ Let's decide: we'll use `std::deque` for the inbox because it is more efficient for removing from the front and it preserves the order. This is acceptable because:
+   - The order of iteration in `fetch` will be the same (insertion order).
+   - The removal in `clearInbox` removes the oldest (first inserted) which is at the front.
+
+ Alternatively, we could use `std::vector` and then remove with `erase` from the beginning. But that would be inefficient if there are many emails.
+
+ Since the problem does not specify performance requirements, but we are to use idiomatic C++ when it doesn't change behavior, and deque is the standard container for front removal, we'll use deque.
+
+ However, note: the original `getInbox` returns a list (ArrayList). We are returning a `List<Map>`. In C++ we can return a `std::deque<...>`. But the problem says that the `getInbox` returns the inbox. We are going to change the container type? The original code allows the caller to modify the inbox via the list? Yes, because in Java we return a reference. In C++ we have to decide: do we return a reference? We want the same behavior: if the caller modifies the returned list, it should modify the actual inbox? Yes. So we'll return a reference to the inbox.
+
+ Steps for the class:
+
+ 3. We'll create a class `EmailClient` in C++.
+ 4. We'll use `std::string` for `addr`.
+ 5. `capacity` and `occupiedSize` will be `double`.
+ 6. For the inbox: we'll use `std::deque<std::unordered_map<std::string, std::variant<std::string, double>>>`? But the email map has:
+      - sender: string
+      - receiver: string
+      - content: string
+      - size: double (but in the code it's stored as an Object that is a Number, so double in C++)
+      - time: string (formatted timestamp)
+      - state: string ("unread" or "read")
+
+ However, C++ is statically typed. We cannot have a map that holds arbitrary types. We can use `std::any` but that would be overkill and not idiomatic. Alternatively, we can define a struct for the email.
+
+ But note: the original code uses `Map<String, Object>` and then when getting the size, it checks if it's a Number. In C++ we can avoid that by using a struct.
+
+ However, the problem says: "Keep behavior identical". The original code allows any Object to be stored? Actually, we know the types. We can define:
+
+    struct Email {
+        std::string sender;
+        std::string receiver;
+        std::string content;
+        double size;
+        std::string time;
+        std::string state; // could be an enum? but original uses string: "unread" or "read"
+    };
+
+ Then the inbox would be a deque (or vector) of Email.
+
+ But note: the original code returns a Map in `fetch` and the caller can modify the map? In the original code, `fetch` returns a reference to the same map that is in the inbox? And then the caller can modify it? Actually, no: in the `fetch` method, we are modifying the state to "read" and then returning the map. Then the caller can modify the map? Yes, because in Java we are returning a reference to the same map object. If we change to a struct, then returning by value would break that because the caller would get a copy. We want the caller to have the same ability to modify the email? Actually, in the original code, if the caller modifies the email, it would modify the one in the inbox? Yes.
+
+ So we must return a reference to the email in the inbox.
+
+ Therefore, if we use a struct, we can store the inbox as a deque of `Email` objects. Then when we return from `fetch`, we return a pointer (or reference) to the email? But the problem says: the method `fetch` returns a `Map<String, Object>`. We can return a `std::map` but then we would have to convert the struct to a map? That would break the reference: if the caller modifies the map, it wouldn't modify the original email.
+
+ Alternatively, we can store the email as a `std::map` or `std::unordered_map` with `std::string` keys and `std::any` values? But that is heavy.
+
+ Considering the requirement to keep behavior identical, including the ability for the caller to modify the email (like changing the state? but note: the `fetch` method sets the state to "read", and then returns the same map. The caller might set it to something else? The original code doesn't prevent that). So we must allow modification of the email in the inbox.
+
+ Therefore, we have two options:
+   Option 1: Use a map type for the email. We can use `std::unordered_map<std::string, std::any>` but then we lose type safety and we have to use `std::any` and then cast when accessing.
+
+   Option 2: Use a struct and then return a pointer or reference to it? But the return type of `fetch` is `Map<String, Object>` in Java. In C++ we can return a pointer to the struct? But then the caller would have to use pointer syntax? Or we can return a reference to a map? That doesn't match.
+
+ Alternatively, we can design the C++ class to have the same public interface? But the problem does not specify the public interface beyond the given methods. However, note that the `getInbox` returns a `List<Map<String, Object>>`. So we must return a container of maps.
+
+ Therefore, we decide to store the inbox as a deque of `std::unordered_map<std::string, std::any>`.
+
+ But note: the `std::any` requires C++17. We assume we are using at least C++17.
+
+ However, the original code uses specific types. We can also use a map with `std::variant` if we know all the types. The types are: string and double (and possibly others? only string and double). We have:
+   - sender: string
+   - receiver: string
+   - content: string
+   - size: double
+   - time: string
+   - state: string
+
+ So we can use `std::variant<std::string, double>`. But then we have to know the type when accessing.
+
+ Alternatively, we can define:
+
+   using Email = std::unordered_map<std::string, std::any>;
+
+ Then we can store the inbox as `std::deque<Email>`.
+
+ Then when we access, we have to use `std::any_cast` to convert.
+
+ Steps:
+
+   - We'll include the necessary headers: <deque>, <unordered_map>, <string>, <vector>, <any>, <ctime> or <chrono> for the timestamp.
+
+ 7. For the timestamp: Java uses `LocalDateTime.now()` and formats with "yyyy-MM-dd HH:mm:ss". In C++ we can use the `std::chrono` and `std::put_time` to format.
+
+ 8. We'll write helper functions if needed.
+
+ Implementation:
+
+   We'll create a class `EmailClient` with:
+      std::string addr;
+      double capacity;
+      std::deque<std::unordered_map<std::string, std::any>> inbox;
+
+   We'll have:
+      EmailClient(std::string addr, double capacity)
+
+   Methods:
+
+      bool sendTo(EmailClient& recv, std::string content, double size)
+        - Note: we pass recv by reference.
+
+      std::unordered_map<std::string, std::any>* fetch()
+        - Instead of returning null, we return a pointer (or we can return a reference wrapper? but simpler: return a pointer, and nullptr for not found).
+
+      bool isFullWithOneMoreEmail(double size)
+      double getOccupiedSize()
+      void clearInbox(double size)
+
+      Also, getInbox: we'll return a reference to the inbox? But the original returns a List<Map>. We can return a constant reference? Or non-const? The original returns a reference that allows modification. So we return non-const.
+
+      We'll have: 
+          std::deque<std::unordered_map<std::string, std::any>>& getInbox() { return inbox; }
+
+      But note: the original also has `setInbox`. We'll provide that too? Yes.
+
+      We'll write a setInbox that takes a `std::deque<std::unordered_map<std::string, std::any>>` by value? or by reference? We'll take by const reference and then assign? But the original takes a List and sets. So we do:
+
+          void setInbox(const std::deque<std::unordered_map<std::string, std::any>>& newInbox) {
+              inbox = newInbox;
+          }
+
+ 9. We'll implement the methods.
+
+ 10. For the timestamp: we'll use:
+
+          #include <chrono>
+          #include <iomanip>
+          #include <sstream>
+
+          auto now = std::chrono::system_clock::now();
+          auto in_time_t = std::chrono::system_clock::to_time_t(now);
+          std::stringstream ss;
+          ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+          std::string timestamp = ss.str();
+
+     Note: `std::localtime` is not thread-safe, but we are in a non-threaded context? The problem doesn't specify.
+
+ 11. We must be cautious: the original code uses `LocalDateTime.now()` which is the current time in the local time zone. We do the same.
+
+ 12. In the `sendTo` method, we check if the receiver is full. If not, we create the email and add it. Otherwise, we clear our own inbox? Wait: the original code does:
+
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            // ... create email and add to recv.inbox
+        } else {
+            this.clearInbox(size);   // clear the sender's inbox? That seems odd.
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size); // recursive retry
+        }
+
+     This is a bit odd: why does the sender clear its own inbox? But that's the original behavior.
+
+ 13. We'll implement the same logic.
+
+ Implementation of `getOccupiedSize`:
+
+        double getOccupiedSize() {
+            double occupiedSize = 0;
+            for (const auto& email : inbox) {
+                // email is a map. We look for key "size"
+                auto it = email.find("size");
+                if (it != email.end()) {
+                    // Check if the any holds a double
+                    if (it->second.type() == typeid(double)) {
+                        occupiedSize += std::any_cast<double>(it->second);
+                    }
+                    // Also, in Java it was a Number. We stored as double so we don't expect other types?
+                }
+            }
+            return occupiedSize;
+        }
+
+ 14. Similarly, in `clearInbox`:
+
+        void clearInbox(double size) {
+            if (addr.empty()) {
+                return;
+            }
+            double freedSpace = 0;
+            while (freedSpace < size && !inbox.empty()) {
+                auto email = inbox.front();
+                inbox.pop_front();
+                auto it = email.find("size");
+                if (it != email.end()) {
+                    if (it->second.type() == typeid(double)) {
+                        freedSpace += std::any_cast<double>(it->second);
+                    }
+                }
+            }
+        }
+
+ 15. For `fetch`:
+
+        std::unordered_map<std::string, std::any>* fetch() {
+            if (inbox.empty()) {
+                return nullptr;
+            }
+            // We traverse the inbox until we find an unread email.
+            for (auto& email : inbox) {
+                auto stateIt = email.find("state");
+                if (stateIt != email.end() && stateIt->second.type() == typeid(std::string)) {
+                    std::string state = std::any_cast<std::string>(stateIt->second);
+                    if (state == "unread") {
+                        // Change the state to "read"
+                        stateIt->second = std::string("read");
+                        // Return a pointer to this email
+                        return &email;
+                    }
+                }
+            }
+            return nullptr;
+        }
+
+ 16. However, note: what if the state is not a string? It should always be a string, but we check anyway.
+
+ 17. We'll write the `sendTo` method:
+
+        bool sendTo(EmailClient& recv, std::string content, double size) {
+            if (!recv.isFullWithOneMoreEmail(size)) {
+                // Create the timestamp string
+                auto now = std::chrono::system_clock::now();
+                auto in_time_t = std::chrono::system_clock::to_time_t(now);
+                std::stringstream ss;
+                ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d %H:%M:%S");
+                std::string timestamp = ss.str();
+
+                std::unordered_map<std::string, std::any> email;
+                email["sender"] = this->addr;
+                email["receiver"] = recv.addr;
+                email["content"] = content;
+                email["size"] = size;
+                email["time"] = timestamp;
+                email["state"] = std::string("unread");
+
+                recv.inbox.push_back(email);
+                return true;
+            }
+            else {
+                this->clearInbox(size);
+                if (recv.isFullWithOneMoreEmail(size)) {
+                    return false;
+                }
+                // Retry sending after clearing
+                return sendTo(recv, content, size);
+            }
+        }
+
+ 18. Note: the recursive call in `sendTo` might cause a stack overflow if the inbox clearing doesn't free enough space? The original Java code has the same issue. We'll keep it.
+
+ 19. We must be cautious: `std::localtime` returns a pointer to a static buffer. It is not thread-safe. If we are in a multithreaded environment, we should use `localtime_r` (on POSIX) or `localtime_s` (on Windows). But the problem doesn't specify. We'll assume single-threaded or use a mutex? Since the problem says to keep behavior identical and the original Java code is thread-safe? Actually, the original Java `LocalDateTime.now()` is thread-safe. So we should use a thread-safe alternative.
+
+    Alternatively, we can use the C++20 `std::chrono::current_zone` and `std::format`? But we don't have C++20.
+
+    We'll use a mutex to protect `std::localtime`? But we don't want to add a mutex if not necessary.
+
+    Alternatively, we can use `gmtime` and then adjust? But we want local time.
+
+    We'll use `localtime_s` for Windows and `localtime_r` for POSIX.
+
+    But the problem says to keep behavior identical. We are allowed to use platform-dependent code? Or we can use a portable way? 
+
+    We can use:
+
+        std::tm tm;
+        auto now = std::chrono::system_clock::now();
+        auto in_time_t = std::chrono::system_clock::to_time_t(now);
+        #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
+            localtime_s(&tm, &in_time_t);
+        #else
+            localtime_r(&in_time_t, &tm);
+        #endif
+
+        ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+
+    However, to avoid platform-dependent code, we can note that the original code is for an example. We'll assume C++17 and use `std::localtime` and hope it's in a non-threaded context? Or we can use a lock.
+
+    Alternatively, we can use the `get_time` and `put_time` without the thread-unsafe `std::localtime`? Actually, we can use:
+
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::tm tm;
+        std::stringstream ss;
+        #ifdef _MSC_VER
+            localtime_s(&tm, &t);
+        #else
+            localtime_r(&t, &tm);
+        #endif
+        ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+
+    But we don't want to write platform-dependent code. Let's use the thread-safe versions conditionally.
+
+    Alternatively, we can use the `strftime` function which is thread-safe if we use a local buffer?
+
+        char buffer[80];
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::tm tm;
+        #ifdef _MSC_VER
+            localtime_s(&tm, &t);
+        #else
+            localtime_r(&t, &tm);
+        #endif
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm);
+        std::string timestamp = buffer;
+
+    This is portable with conditional compilation.
+
+ 20. We'll write a helper function to get the current time string.
+
+        std::string getCurrentTimestamp() {
+            auto now = std::chrono::system_clock::now();
+            std::time_t t = std::chrono::system_clock::to_time_t(now);
+            std::tm tm;
+            #if defined(_WIN32)
+                localtime_s(&tm, &t);
+            #else
+                localtime_r(&t, &tm);
+            #endif
+            char buffer[80];
+            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm);
+            return std::string(buffer);
+        }
+
+ 21. Then in `sendTo` we call this function.
+
+ 22. We'll also note that the original Java code uses `this.addr` and `recv.addr`. We'll access `recv.addr` directly? But in C++ we are in the same class so we can access private members of other instances of the same class? Yes, because the access is within the same class type.
+
+ 23. However, note: the `EmailClient` class in C++ will have the same structure.
+
+ 24. We'll define the class with private members and public methods.
+
+ Let's write the code.
+
+ Note: We'll use `#include <any>` for `std::any`.
+
+ But note: `std::any` is in C++17. We'll assume C++17.
+
+ Implementation:
+
+   We'll have:
+
+   #include <deque>
+   #include <unordered_map>
+   #include <string>
+   #include <any>
+   #include <chrono>
+   #include <iomanip>
+   #include <sstream>
+   #include <cstring> // for strftime
+   #include <iostream> // not needed? but for debugging? We remove if not needed.
+
+   And the helper function for timestamp.
+
+ 25. We'll write the helper function outside the class.
+
+ 26. We'll put everything in a single file.
+
+ Let's code accordingly.
+
+</think>
+
+=== RAW ANSWER ===
+
+To solve this problem, we need to translate a Java `EmailClient` class into C++ while maintaining identical behavior. This involves handling email operations such as sending, fetching, and managing inbox capacity. The solution must preserve the functionality, including input/output behavior, side effects, edge cases, and exception handling.
+
+### Approach
+1. **Data Structures**: Use `std::deque` for the inbox to efficiently manage emails with frequent front removals. Emails are represented as `std::unordered_map<std::string, std::any>` to store heterogeneous data (strings and doubles).
+2. **Timestamp Handling**: Implement a thread-safe function to generate the current local time in "YYYY-MM-DD HH:MM:SS" format using platform-specific functions (`localtime_s` for Windows and `localtime_r` for POSIX systems).
+3. **Email Operations**:
+   - **Sending**: Check if the receiver's inbox can accommodate the email. If not, clear the sender's inbox before retrying.
+   - **Fetching**: Retrieve the first unread email and mark it as read.
+   - **Capacity Management**: Calculate occupied space by summing the sizes of all emails. Clear oldest emails if necessary to free space.
+4. **Memory Management**: Use pointers for returning email references to allow modification of the original email in the inbox.
+
+### Solution Code
+```cpp
+#include <deque>
+#include <unordered_map>
+#include <string>
+#include <any>
+#include <chrono>
+#include <ctime>
+#include <sstream>
+#include <iostream>
+#include <iomanip>
+
+#if defined(_WIN32)
+#define NOMINMAX
+#include <Windows.h>
+#endif
+
+std::string getCurrentTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm;
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buffer[80];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm);
+    return std::string(buffer);
+}
+
+class EmailClient {
+private:
+    std::string addr;
+    double capacity;
+    std::deque<std::unordered_map<std::string, std::any>> inbox;
+
+public:
+    EmailClient(const std::string& addr, double capacity) : addr(addr), capacity(capacity), inbox() {}
+
+    bool sendTo(EmailClient& recv, const std::string& content, double size) {
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            std::string timestamp = getCurrentTimestamp();
+            std::unordered_map<std::string, std::any> email;
+            email["sender"] = this->addr;
+            email["receiver"] = recv.addr;
+            email["content"] = content;
+            email["size"] = size;
+            email["time"] = timestamp;
+            email["state"] = std::string("unread");
+            recv.inbox.push_back(email);
+            return true;
+        } else {
+            this->clearInbox(size);
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size);
+        }
+    }
+
+    std::unordered_map<std::string, std::any>* fetch() {
+        if (inbox.empty()) {
+            return nullptr;
+        }
+        for (auto& email : inbox) {
+            auto stateIt = email.find("state");
+            if (stateIt != email.end()) {
+                try {
+                    std::string state = std::any_cast<std::string>(stateIt->second);
+                    if (state == "unread") {
+                        email["state"] = std::string("read");
+                        return &email;
+                    }
+                } catch (const std::bad_any_cast&) {
+                    continue;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    bool isFullWithOneMoreEmail(double size) {
+        double occupiedSize = getOccupiedSize();
+        return occupiedSize + size > capacity;
+    }
+
+    double getOccupiedSize() {
+        double occupiedSize = 0;
+        for (const auto& email : inbox) {
+            auto it = email.find("size");
+            if (it != email.end()) {
+                try {
+                    double emailSize = std::any_cast<double>(it->second);
+                    occupiedSize += emailSize;
+                } catch (const std::bad_any_cast&) {
+                }
+            }
+        }
+        return occupiedSize;
+    }
+
+    void clearInbox(double size) {
+        if (addr.empty()) {
+            return;
+        }
+        double freedSpace = 0;
+        while (freedSpace < size && !inbox.empty()) {
+            auto email = inbox.front();
+            inbox.pop_front();
+            auto it = email.find("size");
+            if (it != email.end()) {
+                try {
+                    double emailSize = std::any_cast<double>(it->second);
+                    freedSpace += emailSize;
+                } catch (const std::bad_any_cast&) {
+                }
+            }
+        }
+    }
+
+    std::deque<std::unordered_map<std::string, std::any>>& getInbox() {
+        return inbox;
+    }
+
+    void setInbox(const std::deque<std::unordered_map<std::string, std::any>>& newInbox) {
+        inbox = newInbox;
+    }
+};
+```
+
+### Explanation
+1. **Data Structures**: The inbox is a deque of unordered maps, allowing efficient insertion and deletion. Each email is stored as a map with string keys and `std::any` values to handle different data types (strings for addresses/content, doubles for sizes).
+2. **Timestamp Handling**: The `getCurrentTimestamp` function generates the current local time in the required format using thread-safe platform-specific functions.
+3. **Sending Emails**: The `sendTo` method checks the receiver's capacity. If full, it clears the sender's inbox before retrying. Emails are added to the receiver's deque.
+4. **Fetching Emails**: The `fetch` method returns a pointer to the first unread email, marking it as read. It returns `nullptr` if no unread emails exist.
+5. **Capacity Management**: The `isFullWithOneMoreEmail` method checks if adding another email would exceed capacity. The `getOccupiedSize` method sums the sizes of all emails. The `clearInbox` method removes the oldest emails to free space.
+6. **Memory Management**: Using pointers in `fetch` allows callers to modify the actual email in the inbox, maintaining consistency with the Java reference behavior.
+
+=== TRANSLATED CODE (cpp) ===
+#include <deque>
+#include <unordered_map>
+#include <string>
+#include <any>
+#include <chrono>
+#include <ctime>
+#include <sstream>
+#include <iostream>
+#include <iomanip>
+
+#if defined(_WIN32)
+#define NOMINMAX
+#include <Windows.h>
+#endif
+
+std::string getCurrentTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm;
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buffer[80];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm);
+    return std::string(buffer);
+}
+
+class EmailClient {
+private:
+    std::string addr;
+    double capacity;
+    std::deque<std::unordered_map<std::string, std::any>> inbox;
+
+public:
+    EmailClient(const std::string& addr, double capacity) : addr(addr), capacity(capacity), inbox() {}
+
+    bool sendTo(EmailClient& recv, const std::string& content, double size) {
+        if (!recv.isFullWithOneMoreEmail(size)) {
+            std::string timestamp = getCurrentTimestamp();
+            std::unordered_map<std::string, std::any> email;
+            email["sender"] = this->addr;
+            email["receiver"] = recv.addr;
+            email["content"] = content;
+            email["size"] = size;
+            email["time"] = timestamp;
+            email["state"] = std::string("unread");
+            recv.inbox.push_back(email);
+            return true;
+        } else {
+            this->clearInbox(size);
+            if (recv.isFullWithOneMoreEmail(size)) {
+                return false;
+            }
+            return sendTo(recv, content, size);
+        }
+    }
+
+    std::unordered_map<std::string, std::any>* fetch() {
+        if (inbox.empty()) {
+            return nullptr;
+        }
+        for (auto& email : inbox) {
+            auto stateIt = email.find("state");
+            if (stateIt != email.end()) {
+                try {
+                    std::string state = std::any_cast<std::string>(stateIt->second);
+                    if (state == "unread") {
+                        email["state"] = std::string("read");
+                        return &email;
+                    }
+                } catch (const std::bad_any_cast&) {
+                    continue;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    bool isFullWithOneMoreEmail(double size) {
+        double occupiedSize = getOccupiedSize();
+        return occupiedSize + size > capacity;
+    }
+
+    double getOccupiedSize() {
+        double occupiedSize = 0;
+        for (const auto& email : inbox) {
+            auto it = email.find("size");
+            if (it != email.end()) {
+                try {
+                    double emailSize = std::any_cast<double>(it->second);
+                    occupiedSize += emailSize;
+                } catch (const std::bad_any_cast&) {
+                }
+            }
+        }
+        return occupiedSize;
+    }
+
+    void clearInbox(double size) {
+        if (addr.empty()) {
+            return;
+        }
+        double freedSpace = 0;
+        while (freedSpace < size && !inbox.empty()) {
+            auto email = inbox.front();
+            inbox.pop_front();
+            auto it = email.find("size");
+            if (it != email.end()) {
+                try {
+                    double emailSize = std::any_cast<double>(it->second);
+                    freedSpace += emailSize;
+                } catch (const std::bad_any_cast&) {
+                }
+            }
+        }
+    }
+
+    std::deque<std::unordered_map<std::string, std::any>>& getInbox() {
+        return inbox;
+    }
+
+    void setInbox(const std::deque<std::unordered_map<std::string, std::any>>& newInbox) {
+        inbox = newInbox;
+    }
+};

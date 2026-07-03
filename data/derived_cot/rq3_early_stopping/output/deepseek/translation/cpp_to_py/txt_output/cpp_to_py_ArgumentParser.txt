@@ -1,0 +1,625 @@
+=== SOURCE CODE (cpp) ===
+
+#include <sstream>
+#include <utility>
+
+
+#include <string>
+#include <map>
+#include <set>
+#include <tuple>
+#include <functional>
+
+class ArgumentParser {
+public:
+    ArgumentParser();
+    std::tuple<bool, std::set<std::string>> parse_arguments(const std::string& command_string);
+    std::string get_argument(const std::string& key) const;
+    void add_argument(const std::string& arg, bool required = false, const std::string& type = "string");
+
+    std::map<std::string, std::string> arguments;
+    std::set<std::string> required;
+    std::map<std::string, std::string> types;
+    std::map<std::string, std::function<std::string(const std::string&)>> type_converters;
+
+    std::string convert_type(const std::string& arg, const std::string& value) const;
+    void initialize_converters();
+};
+
+ArgumentParser::ArgumentParser()
+{
+    initialize_converters();
+}
+
+std::tuple<bool, std::set<std::string>> ArgumentParser::parse_arguments(const std::string &command_string)
+{
+    std::istringstream iss(command_string);
+    std::string word;
+    std::getline(iss, word, ' '); 
+
+    while (iss >> word)
+    {
+        if (word.find("--") == 0)
+        {
+            auto key_value = word.substr(2);
+            size_t pos = key_value.find('=');
+            std::string key = key_value.substr(0, pos);
+            std::string value = pos == std::string::npos ? "" : key_value.substr(pos + 1);
+            arguments[key] = convert_type(key, value.empty() ? "1" : value);
+        }
+        else if (word.find("-") == 0)
+        {
+            std::string key = word.substr(1);
+            std::string value;
+            char nxt = iss.peek();
+            if (!iss.eof() && iss.peek() != '-')
+            {
+                iss >> value;
+                arguments[key] = convert_type(key, value);
+            }
+            else
+            {
+                arguments[key] = convert_type(key, "1");
+            }
+        }
+    }
+
+    std::set<std::string> missing_args;
+    for (const auto &req : required)
+    {
+        if (arguments.find(req) == arguments.end())
+        {
+            missing_args.insert(req);
+        }
+    }
+
+    return {missing_args.empty(), missing_args};
+}
+
+std::string ArgumentParser::get_argument(const std::string &key) const
+{
+    auto it = arguments.find(key);
+    if (it != arguments.end())
+    {
+        return it->second;
+    }
+    return "";
+}
+
+void ArgumentParser::add_argument(const std::string &arg, bool required, const std::string &type)
+{
+    if (required)
+    {
+        this->required.insert(arg);
+    }
+    types[arg] = type;
+}
+
+std::string ArgumentParser::convert_type(const std::string &arg, const std::string &value) const
+{
+    if (types.find(arg) == types.end())
+    {
+        return value;
+    }
+    auto it = type_converters.find(types.at(arg));
+    if (it != type_converters.end())
+    {
+        return it->second(value);
+    }
+    return value;
+}
+
+void ArgumentParser::initialize_converters()
+{
+    type_converters["int"] = [](const std::string &value)
+    {
+        try
+        {
+            return std::to_string(std::stoi(value));
+        }
+        catch (...)
+        {
+            return value;
+        }
+    };
+
+    type_converters["bool"] = [](const std::string &value)
+    {
+        std::string tmp = value;
+        if (tmp == "True")
+            tmp = "1";
+        if (tmp == "False")
+            tmp = "0";
+        return tmp;
+    };
+}
+
+
+=== REASONING ===
+<think>
+We need to translate this C++ code to Python. Keep behavior identical, including inputs/outputs, side effects, edge cases, exceptions. Use idiomatic Python only when it doesn't change behavior.
+
+The C++ code defines an `ArgumentParser` class with:
+- private/public members (all public in C++ actually)
+- constructor initializes type converters
+- `parse_arguments` takes a command string, returns tuple (bool, set of missing required args). It splits by spaces, handles `--key=value` and `--key` (value "1") and `-k value` or `-k` (value "1"). It uses `convert_type` to transform the value according to type.
+- `get_argument` returns argument value or empty string.
+- `add_argument` registers argument with required flag and type.
+- `convert_type` uses `type_converters` map of functions to convert to string representation (e.g., int converter tries to convert to int then back to string; bool maps "True" -> "1", "False" -> "0").
+- `initialize_converters` sets up those functions.
+
+Edge cases:
+- Multiple spaces? C++ `iss >> word` skips whitespace. Python `split()` also skips multiple spaces and splits on any whitespace. But careful: the C++ code first does `getline(iss, word, ' ');` to skip the first word? Actually: `std::getline(iss, word, ' ');` reads until first space character? The command_string likely includes the program name? The code reads the first token (until space) but then discards it. Then it loops `while (iss >> word)` which reads subsequent tokens. So the first token (the program name) is skipped. In Python, we should replicate that: split the string, discard first token, then iterate over remaining tokens.
+
+- Also note that for short options `-k`, if next token exists and doesn't start with `-`, it takes the next token as value. Otherwise value "1". For `--key` without `=`, value "1". For `--key=value`, value after `=`.
+
+- `convert_type` returns the original value if type not registered or converter fails.
+
+- Missing args: set of keys from required that are not in arguments.
+
+We'll implement as a class in Python.
+
+Potential differences:
+- C++ `iss.peek()` checks next character without extracting. Python we can look ahead by examining next token in list, but since we are iterating, we can just check if there is a next token and it doesn't start with '-'.
+- For `iss.eof()`: we can test if we have more tokens.
+
+Implementation plan:
+- `parse_arguments(self, command_string)`:
+  - split command_string on whitespace (using `split()` which handles any whitespace, multiple spaces).
+  - If list is empty, return (True, empty set) maybe? But original code: `getline(iss, word, ' ');` if command_string is empty, `getline` will read empty string? `iss >> word` in while will not execute. So missing args check will run, return (False, required) if any required. So we must handle empty list: skip first token (if any). Actually if command_string is empty, `iss >> word` will fail, but we still have the line `std::getline(iss, word, ' ');` which might set `word` to empty? Let's consider: if `command_string` is empty string "", then `istringstream iss("")`. `getline(iss, word, ' ')` will read nothing because stream is at end, `word` becomes empty string (or doesn't change?), but then `while(iss >> word)` will not execute because eof. So we should replicate: split and remove first token only if there is at least one token? Actually original always reads first token but doesn't use it. If string is empty, `getline` will fail and set failbit? `std::getline` returns reference to stream, but it's not checked. In practice, it reads until delimiter or eof; if eof immediately, word becomes empty and stream's eof flag set. Then `iss >> word` will fail because eof. So it's fine. In Python, we can handle: tokens = command_string.split(); if tokens: tokens = tokens[1:] (skip first). Then iterate over remaining tokens.
+  - For each token:
+    - If starts with "--":
+        - remove "--", split by '=' maxsplit=1 to get key and value. If no '=', value is "" then later set to "1".
+        - arguments[key] = convert_type(key, value if value else "1")
+    - Else if starts with "-":
+        - key = token[1:]
+        - Need to look ahead for next token: we can use an index variable or while loop with index. Simpler: convert tokens list to deque or use index. We'll use a list and index pointer.
+        - If next token exists and does not start with "-", then value = next token, advance index.
+        - Else value = "1".
+        - arguments[key] = convert_type(key, value)
+    - Else: ignore? Original doesn't handle non-option args? It just continues loop? Actually `else` not present; only checks for `--` and `-`. So other tokens are ignored. We'll just ignore.
+
+  - After loop, compute missing_args = set(req for req in self.required if req not in self.arguments).
+  - Return (len(missing_args)==0, missing_args)
+
+- `get_argument(self, key)`: return self.arguments.get(key, "")
+
+- `add_argument(self, arg, required=False, type="string")`: if required: add to self.required set; self.types[arg] = type
+
+- `convert_type(self, arg, value)`: if arg in self.types: get type, lookup in self.type_converters dict, call function if exists, else return value.
+
+- `initialize_converters(self)`: define functions. For int: try int(value) and return str(result), except return value. For bool: if value == "True" return "1", if value == "False" return "0", else return value. (Note: C++ bool converter does exactly that: if tmp == "True" set to "1", else if tmp == "False" set to "0", else return tmp unchanged. So we do same.)
+
+Edge cases: case sensitivity? The C++ bool converter checks exactly "True" and "False". We'll replicate.
+
+- The C++ code uses `std::set<std::string>` which is sorted. Python set is unordered. But the return tuple includes a set. Typically behavior identical? The requirement "Keep behavior identical" might include ordering? The set in C++ is ordered, but set is not ordered in Python. However, the code does not rely on order; it just returns the set. Tests may check set equality regardless of order. Usually set equality is order-independent. Should be fine.
+
+- Also note: In C++, `arguments` is a map; Python dict preserves insertion order (since 3.7). That's fine.
+
+- The C++ code uses public member variables. In Python we can just use instance attributes.
+
+- The `add_argument` method signature: `void add_argument(const std::string& arg, bool required = false, const std::string& type = "string");` So default values. In Python we'll use default parameters.
+
+- The `type_converters` is a map of string to function. In Python we'll use a dict mapping type name to callable.
+
+- Also note: The `parse_arguments` method returns `std::tuple<bool, std::set<std::string>>`. In Python we'll return a tuple (bool, set).
+
+Now, we must ensure we handle the case where token is exactly "-" or "--"? C++ code: word.find("--") == 0 matches if starts with "--". If token is "--", then substr(2) is "" -> key = ""? Then key_value.find('=') returns npos, so key = "", value="". arguments[""] = "1". That's possibly unintended but we replicate. Similarly "-" -> key = "" (substr(1) returns empty string). Then next token if exists and doesn't start with '-', it would be taken as value. That's edge case. We'll replicate.
+
+Now, let's write Python code.
+
+Also note: In C++, `std::istringstream iss(command_string); std::getline(iss, word, ' ');` The first `getline` reads until the first space, which effectively discards the first token (the program name). But if command_string has no spaces, e.g., "program" only, then `getline` reads whole string, word = "program", and then `iss >> word` fails because eof. So no arguments parsed. In Python, we split and if length >=1, discard first token. If length ==0, do nothing. That matches.
+
+Also consider command_string like "  --key=value" (leading spaces). `split()` will handle. The C++ `istringstream` with `>>` also skips leading whitespace. First `getline` until space: if leading spaces, `getline` will read empty? Actually `getline` uses delimiter ' ', if stream starts with spaces, it will read empty string (since first character is space, so it reads until delimiter, which is immediately at position 0, so word becomes empty). Then subsequent `iss >> word` will skip whitespace and read "--key=value". That yields same as Python split discarding first token (which would be empty string if we split? No, split with default splits on whitespace and discards empty strings. So "  --key=value".split() -> ["--key=value"]; then we discard first token (index 0) -> tokens becomes [] -> then we parse nothing? That's different. Let's examine.
+
+C++ behavior for "  --key=value":
+- `istringstream iss("  --key=value")`.
+- `getline(iss, word, ' ')`: reads until first space. It reads from start, finds space at position 0? Actually the string starts with two spaces. The `getline` with delimiter ' ' reads characters until it encounters the delimiter. At position 0, the character is space, so it stops immediately, extracting an empty string? Standard behavior: `std::getline(iss, word, ' ')`: reads characters and appends to `word` until delimiter found. If the stream starts with delimiter, it extracts nothing and sets `word` to empty. Then the delimiter is extracted and discarded. So after this call, `word` is "", and stream position is after the first space (position 1). Then `iss >> word` will skip whitespace and read "--key=value". So the effect is skipping the first whitespace-delimited token? Actually it's odd. Another way: the intention was probably to skip the program name, but if there are leading spaces, the first getline may produce empty string and the loop then processes the next token(s). The code also uses `while (iss >> word)` which automatically skips whitespace before each read. So overall, it will process all tokens except the very first one (which may be empty or the program name). The behavior: it discards the first token, regardless of content.
+
+In Python, we can replicate by splitting and removing the first element. If there are leading spaces, `split()` will ignore them and produce list with first token being "--key=value". Then we discard that first token, leaving empty list, so no arguments parsed. That's different from C++ which would parse "--key=value". So we need a more faithful replication.
+
+Better: use `shlex.split()`? That preserves spaces? Not. Let's replicate the exact C++ behavior: first, extract the first token (until first space) and ignore it, then parse the rest. In C++, `getline(iss, word, ' ')` reads up to the first space (including possibly empty if stream starts with space). Then the remaining stream contains everything after that first space (including leading spaces). Then `iss >> word` will skip whitespace and read next token. So effectively, the first token (delimited by first space) is removed, and then the remaining tokens are parsed normally with whitespace skipping.
+
+In Python, we can simulate by doing: 
+- Find first space? Actually, to replicate, we can split on first space only, then use the rest. But `getline(iss, word, ' ')` discards the delimiter. So we can: 
+```
+import re
+match = re.split(r' ', command_string, maxsplit=1)
+if len(match) == 2:
+    rest = match[1]
+else:
+    rest = ''
+```
+But if command_string starts with space, first element is empty, rest is everything after first space. Then we can split `rest` on whitespace to get tokens. That matches C++: first token (empty) ignored, then tokens from `rest`. So implement:
+
+```
+# In parse_arguments:
+parts = command_string.split(' ', 1)  # split on first space
+if len(parts) == 2:
+    rest = parts[1]
+else:
+    rest = ''
+tokens = rest.split()  # split on any whitespace, skip empty
+# then iterate over tokens
+```
+
+But what if command_string has no spaces? Then parts has length 1, rest='', tokens=[], so no arguments parsed. That's same as C++ (first token is whole string, no further tokens). Good.
+
+If command_string is exactly " "? Split on first space gives ['', '']? Actually `' '.split(' ', 1)` yields ['', ''] (because there is one space). rest='' (second element empty?), Wait: `' '.split(' ', 1)` splits at the first space, resulting in two parts: before space (empty) and after space (empty). So rest = '' (the second element). Then tokens = []. So no arguments. C++: `getline` reads empty word, then `iss >> word` fails because stream is empty after extracting the first space? Let's simulate: `istringstream iss(" ")`. `getline(iss, word, ' ')` reads up to first space - at position 0 is space, so word empty. Then delimiter extracted, stream now empty (since only one space). Then `iss >> word` fails. So no arguments. Good.
+
+If command_string has multiple spaces at start: "  --key=value". Split on first space: parts = ['', ' --key=value']? Actually `'  --key=value'.split(' ', 1)` splits at first space, giving ['', ' --key=value']. rest = ' --key=value'. Then tokens = ['--key=value'] (since split on whitespace). So we will parse that token. C++: first getline gets empty, then `iss >> word` reads "--key=value". Good.
+
+Thus this works.
+
+But careful: C++ `getline` uses delimiter ' ' but custom locale? No. So we use `split(' ', 1)`.
+
+Now, for iteration: we have tokens list. We'll use index variable i=0. While i < len(tokens): 
+word = tokens[i]
+if word.startswith('--'): process, i+=1
+elif word.startswith('-'): 
+    key = word[1:]
+    # check if next token exists and does not start with '-'
+    if i+1 < len(tokens) and not tokens[i+1].startswith('-'):
+        value = tokens[i+1]
+        i += 2
+    else:
+        value = "1"
+        i += 1
+    arguments[key] = convert_type(key, value)
+else:
+    i += 1 # ignore non-option tokens? Actually C++ doesn't have else; it just skips? The while loop only processes words that start with '-' or '--'. Non-option tokens are ignored. In our loop, we need to skip them. So if not starts with '-' or '--', just i+=1.
+
+Also for '--', we must handle the case where it is exactly '--' (starts with '--', substr(2) gives empty), then no '=' found, key = "", value "" then later set to "1". So we set value to "1" if no '='.
+
+Now, for convert_type: we have type_converters dict initialized in __init__.
+
+Edge: `convert_type` uses `types` dict (arg -> type string). If arg not in types, returns original value.
+
+Now, we need to ensure the functions in type_converters are defined as instance methods? In C++ they are lambdas stored in map, they capture nothing. In Python we can store lambda functions or regular functions in a dict. They should be bound to the instance maybe? But they don't use self. So we can define them as static methods or just lambda. We'll store in `self.type_converters = {}` and assign.
+
+Potential issue: `std::to_string(std::stoi(value))` converts to int and back to string. In Python, `str(int(value))` does the same, but if value is not integer, it raises ValueError. The C++ catches exceptions with `catch(...)` and returns original value. So we need to try-except.
+
+For bool: as described.
+
+Now, we need to output exactly the same as C++? The Python functions should return the same types. The `parse_arguments` returns tuple (bool, set). The set will contain strings. The `get_argument` returns string. `add_argument` returns None.
+
+We must also consider that the C++ code uses `std::set<std::string>` which is ordered by string. In Python, we can use a set but order is arbitrary. However, if the user expects ordered missing args, they might have relied on the C++ ordering? The assignment says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)." But ordering of set iteration is not part of typical behavior? If they test equality of sets, order doesn't matter. If they iterate over missing_args in a specific order, they might have assumed sorted order. But C++ set iteration is sorted lexicographically. To be safe, we can return a sorted set? But the return type is `std::set<std::string>`, not `std::vector`. Typically set equality checks ignore order. However, to be identical, maybe we should preserve sorted order. Python's set is unordered, but we can store in a `set` and rely on the user not depending on order. If we want to be absolutely identical, we could return a sorted list? No, that changes type. Alternatively, we could store missing_args as a list internally and sort before returning as set? Actually we can return a `set` but the iteration order is arbitrary. In C++, if they iterate over the set, they get sorted order. If we return a set, they can't iterate sorted automatically. But the function returns a set, so they can't assume order unless they sort themselves. I think it's acceptable to return a Python set. If we want to mimic the exact sorted order, we could return a `SortedSet` but that's not standard. I think it's okay.
+
+Alternatively, we can return a frozenset? No.
+
+We'll assume it's acceptable.
+
+Now, let's write the Python code.
+
+We'll define:
+
+class ArgumentParser:
+    def __init__(self):
+        self.arguments = {}
+        self.required = set()
+        self.types = {}
+        self.type_converters = {}
+        self.initialize_converters()
+
+    def initialize_converters(self):
+        self.type_converters["int"] = lambda value: str(int(value)) if value.isdigit() else value? Better: try-except.
+        # Actually, int conversion should try to convert any string to int, not just digits. "123abc" should raise ValueError, then return original. So:
+        self.type_converters["int"] = lambda value: self._int_converter(value)
+        self.type_converters["bool"] = lambda value: "1" if value == "True" else ("0" if value == "False" else value)
+    But we need to define _int_converter as a method? Lambda can't include try-except easily. We can define a separate function or use a lambda with a helper. Easiest: store a function that wraps try-except.
+
+Better: define a method `_convert_int` and `_convert_bool`. Or use nested function inside `initialize_converters`.
+
+Pseudo:
+
+def initialize_converters(self):
+    def int_converter(value):
+        try:
+            return str(int(value))
+        except (ValueError, TypeError):
+            return value
+    self.type_converters["int"] = int_converter
+
+    def bool_converter(value):
+        if value == "True":
+            return "1"
+        elif value == "False":
+            return "0"
+        else:
+            return value
+    self.type_converters["bool"] = bool_converter
+
+Now, convert_type method:
+
+def convert_type(self, arg, value):
+    if arg not in self.types:
+        return value
+    type_name = self.types[arg]
+    converter = self.type_converters.get(type_name)
+    if converter is None:
+        return value
+    return converter(value)
+
+Now, parse_arguments:
+
+def parse_arguments(self, command_string):
+    # split on first space to discard the first token (like program name)
+    import re
+    parts = command_string.split(' ', 1)  # maxsplit=1
+    if len(parts) == 2:
+        rest = parts[1]
+    else:
+        rest = ''
+    tokens = rest.split()  # splits on any whitespace, ignores empty
+    i = 0
+    while i < len(tokens):
+        word = tokens[i]
+        if word.startswith('--'):
+            # process long option
+            key_value = word[2:]  # remove '--'
+            if '=' in key_value:
+                key, value = key_value.split('=', 1)
+            else:
+                key = key_value
+                value = '1'  # default
+            self.arguments[key] = self.convert_type(key, value)
+            i += 1
+        elif word.startswith('-'):
+            # short option
+            key = word[1:]  # remove '-'
+            # look ahead for value
+            if i+1 < len(tokens) and not tokens[i+1].startswith('-'):
+                value = tokens[i+1]
+                i += 2
+            else:
+                value = '1'
+                i += 1
+            self.arguments[key] = self.convert_type(key, value)
+        else:
+            i += 1  # ignore non-option tokens
+    missing_args = set()
+    for req in self.required:
+        if req not in self.arguments:
+            missing_args.add(req)
+    return (len(missing_args) == 0, missing_args)
+
+Note: In the `--key` case, if there is no `=`, we set value "1". That's same as C++.
+
+Now, test with examples:
+
+- Empty string: parts = [''], rest='', tokens=[], missing_args set includes required if any, return (False, set). Good.
+
+- "program --key=value": split on first space -> parts=['program','--key=value'], rest='--key=value', tokens=['--key=value'] -> parse key='key', value='value', convert if type registered, add to arguments. Missing args check.
+
+- "program -k val": parts: ['program','-k val'], rest='-k val', tokens=['-k','val'] -> word='-k', key='k', next token 'val' does not start with '-', so value='val', i+=2. Arguments['k']='val'.
+
+- "program --flag": tokens=['--flag'] -> key='flag', value='1'.
+
+- "program -ab": token '-ab' -> key='ab', next token? none or starts with '-'? We check: i+1? if none, value='1'. So arguments['ab']='1'. (C++ does same: short option flag).
+
+- "program --key= --other": tokens: ['--key=','--other'] -> first word: key_value='key=', split on '=' gives key='key', value='' (because after '=' empty). Then later value = '' -> convert_type(key, ''). But C++ code: `key_value.substr(pos+1)` gives "" if pos at end? If `--key=`, then pos = 4 (since 'key=' length 4, '=' at index 3?), key_value="key=", find('=') returns 3 (0-based), substr(0,3)="key", substr(3+1)=substr(4) which is end? Actually string "key=" length 4, substr(4) returns empty string. So value = "". Then inside `arguments[key] = convert_type(key, value.empty() ? "1" : value);` So value.empty() is true, so it becomes "1". So `--key=` is treated as `--key=1`. Our code: split on '=', key='key', value='' (empty string). Then we pass to convert_type(key, ''). But we need to apply the empty check: if value is empty, set to "1". In C++, the empty check is after the `key_value.substr(pos+1)` and before convert_type. So we should do: if value == '': value = '1'. Then convert. Let's adjust.
+
+In the long option processing:
+
+```
+if '=' in key_value:
+    key, value = key_value.split('=', 1)
+else:
+    key = key_value
+    value = '1'
+```
+
+But for `--key=`, split gives key='key', value='' (empty). Then we should replace empty with '1'. So after split, if value == '': value = '1'. Or we can set default before split? Actually C++ logic: if no '=', default value is '1'. If '=', value is taken (even if empty) and then if empty, set to '1'. So we need to handle both. So:
+
+```
+if '=' in key_value:
+    key, value = key_value.split('=', 1)
+    if value == '':
+        value = '1'
+else:
+    key = key_value
+    value = '1'
+```
+
+That replicates C++ exactly.
+
+Now, for short option `-` followed by nothing? e.g., "-" alone: key = word[1:] = '' (empty). Look ahead: if next token exists and not start with '-', take it; else value='1'. That's fine.
+
+Now, need to import `re`? not needed.
+
+Now, we should also consider that C++ `iss` uses `std::ws`? No.
+
+Now, test with given examples in C++? Not provided. But we can self-test.
+
+One more nuance: In C++, after processing the command string, `missing_args` is populated and returned. Note that the `parse_arguments` method modifies `self.arguments` (it adds/overwrites). In Python, we do the same.
+
+Now, about `get_argument`: returns empty string if key not present. In Python, `self.arguments.get(key, "")`.
+
+Now, ensure that `add_argument` sets `self.types[arg] = type` and if required adds to `self.required`. Here `type` is a string default "string".
+
+Now, about type "string": no converter registered. `convert_type` will return original value because `type_name` not in `type_converters` (since we only have "int" and "bool"). So that's fine.
+
+Now, the C++ code has all members public. In Python, we can keep them as public attributes.
+
+Now, final code.
+
+Let's write the Python class.
+
+We'll put it all together.
+
+Potential improvements: Use type hints? Not necessary.
+
+Now, I'll produce final answer.
+</think>
+
+=== RAW ANSWER ===
+```python
+class ArgumentParser:
+    def __init__(self):
+        self.arguments = {}
+        self.required = set()
+        self.types = {}
+        self.type_converters = {}
+        self.initialize_converters()
+
+    def initialize_converters(self):
+        def int_converter(value: str) -> str:
+            try:
+                return str(int(value))
+            except (ValueError, TypeError):
+                return value
+
+        def bool_converter(value: str) -> str:
+            if value == "True":
+                return "1"
+            elif value == "False":
+                return "0"
+            else:
+                return value
+
+        self.type_converters["int"] = int_converter
+        self.type_converters["bool"] = bool_converter
+
+    def convert_type(self, arg: str, value: str) -> str:
+        if arg not in self.types:
+            return value
+        type_name = self.types[arg]
+        converter = self.type_converters.get(type_name)
+        if converter is None:
+            return value
+        return converter(value)
+
+    def parse_arguments(self, command_string: str):
+        # Split on the first space to discard the first token (program name)
+        parts = command_string.split(' ', 1)
+        rest = parts[1] if len(parts) == 2 else ''
+        tokens = rest.split()  # split on any whitespace, discarding empty strings
+
+        i = 0
+        while i < len(tokens):
+            word = tokens[i]
+            if word.startswith('--'):
+                # Long option
+                key_value = word[2:]  # remove leading '--'
+                if '=' in key_value:
+                    key, value = key_value.split('=', 1)
+                    if value == '':
+                        value = '1'
+                else:
+                    key = key_value
+                    value = '1'
+                self.arguments[key] = self.convert_type(key, value)
+                i += 1
+            elif word.startswith('-'):
+                # Short option
+                key = word[1:]  # remove leading '-'
+                # Check if the next token is a value (not an option)
+                if (i + 1 < len(tokens)) and not tokens[i + 1].startswith('-'):
+                    value = tokens[i + 1]
+                    i += 2
+                else:
+                    value = '1'
+                    i += 1
+                self.arguments[key] = self.convert_type(key, value)
+            else:
+                # Non-option token, ignore (as in C++ code)
+                i += 1
+
+        # Determine missing required arguments
+        missing_args = set()
+        for req in self.required:
+            if req not in self.arguments:
+                missing_args.add(req)
+
+        return (len(missing_args) == 0, missing_args)
+
+    def get_argument(self, key: str) -> str:
+        return self.arguments.get(key, "")
+
+    def add_argument(self, arg: str, required: bool = False, type: str = "string"):
+        if required:
+            self.required.add(arg)
+        self.types[arg] = type
+```
+
+=== TRANSLATED CODE (py) ===
+class ArgumentParser:
+    def __init__(self):
+        self.arguments = {}
+        self.required = set()
+        self.types = {}
+        self.type_converters = {}
+        self.initialize_converters()
+
+    def initialize_converters(self):
+        def int_converter(value: str) -> str:
+            try:
+                return str(int(value))
+            except (ValueError, TypeError):
+                return value
+
+        def bool_converter(value: str) -> str:
+            if value == "True":
+                return "1"
+            elif value == "False":
+                return "0"
+            else:
+                return value
+
+        self.type_converters["int"] = int_converter
+        self.type_converters["bool"] = bool_converter
+
+    def convert_type(self, arg: str, value: str) -> str:
+        if arg not in self.types:
+            return value
+        type_name = self.types[arg]
+        converter = self.type_converters.get(type_name)
+        if converter is None:
+            return value
+        return converter(value)
+
+    def parse_arguments(self, command_string: str):
+        parts = command_string.split(' ', 1)
+        rest = parts[1] if len(parts) == 2 else ''
+        tokens = rest.split()  # split on any whitespace, discarding empty strings
+
+        i = 0
+        while i < len(tokens):
+            word = tokens[i]
+            if word.startswith('--'):
+                key_value = word[2:]  # remove leading '--'
+                if '=' in key_value:
+                    key, value = key_value.split('=', 1)
+                    if value == '':
+                        value = '1'
+                else:
+                    key = key_value
+                    value = '1'
+                self.arguments[key] = self.convert_type(key, value)
+                i += 1
+            elif word.startswith('-'):
+                key = word[1:]  # remove leading '-'
+                if (i + 1 < len(tokens)) and not tokens[i + 1].startswith('-'):
+                    value = tokens[i + 1]
+                    i += 2
+                else:
+                    value = '1'
+                    i += 1
+                self.arguments[key] = self.convert_type(key, value)
+            else:
+                i += 1
+
+        missing_args = set()
+        for req in self.required:
+            if req not in self.arguments:
+                missing_args.add(req)
+
+        return (len(missing_args) == 0, missing_args)
+
+    def get_argument(self, key: str) -> str:
+        return self.arguments.get(key, "")
+
+    def add_argument(self, arg: str, required: bool = False, type: str = "string"):
+        if required:
+            self.required.add(arg)
+        self.types[arg] = type

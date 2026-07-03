@@ -1,0 +1,373 @@
+=== SOURCE CODE (cpp) ===
+
+#include <iostream>
+#include <stdexcept>
+
+#include <winsqlite/winsqlite3.h>
+#include <string>
+#include <vector>
+
+class MovieTicketDB {
+public:
+    MovieTicketDB(const std::string& dbName);
+    ~MovieTicketDB();
+
+    void create_table();
+    void insert_ticket(const std::string& movieName, const std::string& theaterName,
+        const std::string& seatNumber, const std::string& customerName);
+    std::vector<std::vector<std::string>> search_tickets_by_customer(const std::string& customerName);
+    void delete_ticket(const std::string& ticketId);
+    void close_connection();
+
+private:
+    sqlite3* db;
+    std::string dbName;
+};
+
+MovieTicketDB::MovieTicketDB(const std::string& dbName) : dbName(dbName) {
+    if (sqlite3_open(dbName.c_str(), &db) != SQLITE_OK) {
+        throw std::runtime_error("Unable to open database");
+    }
+    create_table();
+}
+
+MovieTicketDB::~MovieTicketDB() {
+    close_connection();
+}
+
+void MovieTicketDB::create_table() {
+    const char* create_tableSQL = R"(
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY,
+            movie_name TEXT,
+            theater_name TEXT,
+            seat_number TEXT,
+            customer_name TEXT
+        )
+    )";
+    char* errMsg = nullptr;
+    if (sqlite3_exec(db, create_tableSQL, nullptr, nullptr, &errMsg) != SQLITE_OK) {
+        throw std::runtime_error("Failed to create table: " + std::string(errMsg));
+    }
+}
+
+void MovieTicketDB::insert_ticket(const std::string& movieName, const std::string& theaterName,
+    const std::string& seatNumber, const std::string& customerName) {
+    const char* insertSQL = R"(
+        INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+        VALUES (?, ?, ?, ?)
+    )";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement");
+    }
+    sqlite3_bind_text(stmt, 1, movieName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, theaterName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, seatNumber.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, customerName.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to insert ticket");
+    }
+    sqlite3_finalize(stmt);
+}
+
+std::vector<std::vector<std::string>> MovieTicketDB::search_tickets_by_customer(const std::string& customerName) {
+    const char* searchSQL = R"(
+        SELECT * FROM tickets WHERE customer_name = ?
+    )";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, searchSQL, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement");
+    }
+    sqlite3_bind_text(stmt, 1, customerName.c_str(), -1, SQLITE_STATIC);
+
+    std::vector<std::vector<std::string>> results;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::vector<std::string> row;
+        for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
+            row.emplace_back(reinterpret_cast<const char*>(sqlite3_column_text(stmt, i)));
+        }
+        results.emplace_back(std::move(row));
+    }
+    sqlite3_finalize(stmt);
+    return results;
+}
+
+void MovieTicketDB::delete_ticket(const std::string& ticketId) {
+    const char* deleteSQL = R"(
+        DELETE FROM tickets WHERE id = ?
+    )";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, deleteSQL, -1, &stmt, nullptr) != SQLITE_OK) {
+        throw std::runtime_error("Failed to prepare statement");
+    }
+    sqlite3_bind_text(stmt, 1, ticketId.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        throw std::runtime_error("Failed to delete ticket");
+    }
+    sqlite3_finalize(stmt);
+}
+
+void MovieTicketDB::close_connection() {
+    if (db) {
+        sqlite3_close(db);
+        db = nullptr;
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate C++ code to Python, keeping identical behavior. The code is a class MovieTicketDB that uses SQLite3 (winsqlite3.h, but that's Windows-specific; in Python we'll use sqlite3 standard library). The C++ uses RAII: constructor opens DB and creates table, destructor closes. Exceptions thrown on errors. Need to replicate this in Python.
+
+Key points:
+- Constructor: opens database, create table, throws runtime_error on failure.
+- Destructor: close connection.
+- insert_ticket: uses prepared statement with bound parameters, throws on failure.
+- search_tickets_by_customer: returns list of lists (each row as list of strings from columns). Notably, in C++, it includes the id column (SELECT *), so results include id as first column. Must return same.
+- delete_ticket: deletes where id = ?, throws on failure.
+- close_connection: sets db to None.
+
+Edge cases: empty results, invalid SQL, binding text, etc.
+
+Use Python's sqlite3 module. We'll wrap connection in context manager? No, the C++ class has explicit open/close and destructor calls close. In Python, we can use __enter__/__exit__? But the C++ code does not use context manager; it's simple object. We'll implement __init__ and __del__ (finalizer) to close. However, __del__ is not guaranteed to be called immediately; but we can also provide close method. We'll replicate exactly: constructor opens, destructor calls close. Also, close_connection can be called manually, and then __del__ should check if already closed.
+
+We'll import sqlite3 and raise RuntimeError on errors, matching C++ runtime_error.
+
+One nuance: C++ code uses sqlite3_bind_text with SQLITE_STATIC, meaning it doesn't copy the string. Python's sqlite3 copies; that's fine.
+
+Also, the search returns vector<vector<string>>. In Python, we'll return list of lists of strings.
+
+We need to ensure we handle NULL columns? In C++, sqlite3_column_text returns const char*, may be NULL. But the code uses reinterpret_cast<const char*> which could cause issues if NULL? Actually sqlite3_column_text returns NULL for NULL columns; reinterpret_cast would be invalid. But the schema has all columns NOT NULL? Actually there's no NOT NULL constraint, but likely they expect non-null values. However, to be safe, we could handle NULL by converting to empty string? The C++ code would crash on NULL. In Python, sqlite3 returns None for NULL. To be identical, we could either raise error or convert to empty string? The C++ code likely expects non-null, so we can treat None as empty string? But the behavior would differ. Safer: keep None as None? But C++ code would crash. To match exact behavior, we must assume no NULLs because constraints are not enforced. But the code doesn't check; it just casts. In practice, it might work if the string is null? Actually if sqlite3_column_text returns NULL, passing it to reinterpret_cast<const char*> is undefined. So it's a bug in C++. But we can't replicate that undefined behavior. The Python translation should avoid that. Best: we'll convert None to empty string to be safe, but that changes behavior. Alternatively, we could raise an exception if any column is NULL. But original would likely crash or print garbage. Since the original doesn't handle NULL, we can assume no NULLs are inserted. I'll convert to empty string only if None? Actually, to mimic the same "undefined" behavior, we could raise an error? That's not identical. Simpler: use str() on the value? Or if None, set empty string? But that would be different. Let's look at the context: the search returns all columns including id (which is integer) and text. The text columns are inserted with non-null strings. So None shouldn't occur. We'll just use Python's fetchall which returns tuple of values, and we'll convert each to string: str(val). For None, str(None) gives 'None' which is not same as NULL handling. But original would crash. However, there's no NULL expected. So I'll map each element to str(val) to ensure string conversion. For integer id, it becomes string like '1'. That matches C++ which used sqlite3_column_text which returns text representation of integer? Actually sqlite3_column_text returns text; for integer, it returns the integer as text. Yes, sqlite3_column_text converts integer to text. So str() works. For float? Not used. So we'll use str().
+
+We'll also ensure we handle the case where database name is empty? Not a concern.
+
+We'll create class with __init__, __del__, and methods.
+
+Implementation steps:
+
+- import sqlite3, sys
+- class MovieTicketDB:
+    def __init__(self, dbName):
+        self.dbName = dbName
+        self.db = None
+        try:
+            self.db = sqlite3.connect(dbName)
+        except sqlite3.Error as e:
+            raise RuntimeError("Unable to open database") from e
+        self.create_table()
+
+    def __del__(self):
+        self.close_connection()
+
+    def create_table(self):
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY,
+            movie_name TEXT,
+            theater_name TEXT,
+            seat_number TEXT,
+            customer_name TEXT
+        )
+        """
+        try:
+            self.db.execute(create_table_sql)
+        except sqlite3.Error as e:
+            raise RuntimeError("Failed to create table: " + str(e)) from e
+
+    def insert_ticket(self, movieName, theaterName, seatNumber, customerName):
+        insert_sql = """
+        INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+        VALUES (?, ?, ?, ?)
+        """
+        try:
+            self.db.execute(insert_sql, (movieName, theaterName, seatNumber, customerName))
+        except sqlite3.Error as e:
+            raise RuntimeError("Failed to insert ticket") from e
+
+    def search_tickets_by_customer(self, customerName):
+        search_sql = "SELECT * FROM tickets WHERE customer_name = ?"
+        try:
+            cursor = self.db.execute(search_sql, (customerName,))
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append([str(val) for val in row])
+            return results
+        except sqlite3.Error as e:
+            raise RuntimeError("Failed to prepare statement") from e  # or similar
+
+    def delete_ticket(self, ticketId):
+        delete_sql = "DELETE FROM tickets WHERE id = ?"
+        try:
+            cursor = self.db.execute(delete_sql, (ticketId,))  # ticketId is string, but id is integer; SQLite will convert
+        except sqlite3.Error as e:
+            raise RuntimeError("Failed to delete ticket") from e
+        # Ensure exactly one row affected? C++ doesn't check, so fine.
+
+    def close_connection(self):
+        if self.db is not None:
+            self.db.close()
+            self.db = None
+
+But note: In C++, close_connection sets db to nullptr. In Python, we set self.db = None. Also, in __del__, if close_connection already called, it's safe because we check.
+
+Potential differences: 
+- C++ uses sqlite3_prepare_v2 and finalize. Python's execute handles everything. No need to manage statements.
+- C++ throws runtime_error on any error. Python we raise RuntimeError.
+- The exception message in search: C++ says "Failed to prepare statement", but we are executing. We'll keep consistent.
+
+Edge cases: If delete_ticket is called with ticketId that is not integer, C++ binds text; SQLite will convert to integer if possible. In Python, we pass a string, SQLite will also convert. Good.
+
+We must ensure that the database is committed? In C++, no explicit commit; by default in SQLite, changes are auto-committed when statement finishes? Actually SQLite is in autocommit mode by default unless BEGIN/COMMIT. With sqlite3_exec, it's auto-commit. In Python, sqlite3 module also autocommits by default when using .execute()? Actually, by default, the connection is in autocommit mode. But we should ensure that after insert/delete, changes are committed. Python's sqlite3 module's connection is in autocommit mode by default? Actually, the default for sqlite3.connect is autocommit=True? The Python sqlite3 module: "By default, the sqlite3 module uses the autocommit mode, meaning that each statement is automatically committed." Yes, so it's fine.
+
+One more nuance: In C++, the destructor calls close_connection which calls sqlite3_close. In Python, __del__ is called when reference count drops. But if an exception occurs during __init__, the object might not be fully constructed; but __del__ might still be called with self.db possibly not set. In C++, if constructor throws, destructor is not called (since object not fully constructed). In Python, __del__ is called even if __init__ raised? Actually, if __init__ raises an exception, the object may not be fully initialized, but __del__ will still be called because the object was created (__new__). But __init__ raised, so some attributes may not exist. We should guard __del__ with getattr or try/except. However, in C++, if sqlite3_open fails, throw before assigning db? Actually, the code: MovieTicketDB::MovieTicketDB(const std::string& dbName) : dbName(dbName) { if (sqlite3_open(...) != SQLITE_OK) throw ...; create_table(); } The member db is initialized? It's a raw pointer, not initialized in initializer list? In C++, if it's not initialized, it has indeterminate value. But the code initializes db in the constructor body? Actually, it's declared as sqlite3* db; in class, but not initialized in initializer list. In the constructor, it calls sqlite3_open, which sets db. If that fails, throw; db may be undefined. But then destructor will be called? Actually, if constructor throws, the destructor is not called because the object never completed construction. So safe. In Python, we set self.db = None initially, then connect, then create_table. If connect fails, we raise before self.db is set? Actually we set self.db = sqlite3.connect(dbName) after try. We should set self.db = None first, then try to connect, else if connect fails, self.db remains None. Then we raise. The __del__ will check if self.db is not None. So it's safe. But we must ensure self.db is set before raising? Actually if we do self.db = None, then try connect, if error, we set self.db = None again? No, we need to set self.db = None first. So we can do:
+
+self.db = None
+try:
+    self.db = sqlite3.connect(dbName)
+except:
+    raise
+
+Then later, __del__ checks self.db is not None. Good.
+
+Now, about the import: won't need winsqlite3; just import sqlite3.
+
+Also, note that the C++ code uses sqlite3_bind_text with -1 length, meaning null-terminated string. Python binding handles that.
+
+We'll output the final Python code.
+
+Let's also consider if we need to handle the case where close_connection is called multiple times.
+</think>
+
+=== RAW ANSWER ===
+```
+import sqlite3
+
+class MovieTicketDB:
+    def __init__(self, dbName: str):
+        self.dbName = dbName
+        self.db = None
+        try:
+            self.db = sqlite3.connect(dbName)
+        except sqlite3.Error:
+            raise RuntimeError("Unable to open database")
+        self.create_table()
+
+    def __del__(self):
+        self.close_connection()
+
+    def create_table(self):
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY,
+            movie_name TEXT,
+            theater_name TEXT,
+            seat_number TEXT,
+            customer_name TEXT
+        )
+        """
+        try:
+            self.db.execute(create_table_sql)
+        except sqlite3.Error as e:
+            raise RuntimeError("Failed to create table: " + str(e))
+
+    def insert_ticket(self, movieName: str, theaterName: str, seatNumber: str, customerName: str):
+        insert_sql = """
+        INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+        VALUES (?, ?, ?, ?)
+        """
+        try:
+            self.db.execute(insert_sql, (movieName, theaterName, seatNumber, customerName))
+        except sqlite3.Error:
+            raise RuntimeError("Failed to insert ticket")
+
+    def search_tickets_by_customer(self, customerName: str):
+        search_sql = "SELECT * FROM tickets WHERE customer_name = ?"
+        try:
+            cursor = self.db.execute(search_sql, (customerName,))
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append([str(val) for val in row])
+            return results
+        except sqlite3.Error:
+            raise RuntimeError("Failed to prepare statement")
+
+    def delete_ticket(self, ticketId: str):
+        delete_sql = "DELETE FROM tickets WHERE id = ?"
+        try:
+            self.db.execute(delete_sql, (ticketId,))
+        except sqlite3.Error:
+            raise RuntimeError("Failed to delete ticket")
+
+    def close_connection(self):
+        if self.db is not None:
+            self.db.close()
+            self.db = None
+```
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+
+class MovieTicketDB:
+    def __init__(self, dbName: str):
+        self.dbName = dbName
+        self.db = None
+        try:
+            self.db = sqlite3.connect(dbName)
+        except sqlite3.Error:
+            raise RuntimeError("Unable to open database")
+        self.create_table()
+
+    def __del__(self):
+        self.close_connection()
+
+    def create_table(self):
+        create_table_sql = """
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY,
+            movie_name TEXT,
+            theater_name TEXT,
+            seat_number TEXT,
+            customer_name TEXT
+        )
+        """
+        try:
+            self.db.execute(create_table_sql)
+        except sqlite3.Error as e:
+            raise RuntimeError("Failed to create table: " + str(e))
+
+    def insert_ticket(self, movieName: str, theaterName: str, seatNumber: str, customerName: str):
+        insert_sql = """
+        INSERT INTO tickets (movie_name, theater_name, seat_number, customer_name)
+        VALUES (?, ?, ?, ?)
+        """
+        try:
+            self.db.execute(insert_sql, (movieName, theaterName, seatNumber, customerName))
+        except sqlite3.Error:
+            raise RuntimeError("Failed to insert ticket")
+
+    def search_tickets_by_customer(self, customerName: str):
+        search_sql = "SELECT * FROM tickets WHERE customer_name = ?"
+        try:
+            cursor = self.db.execute(search_sql, (customerName,))
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append([str(val) for val in row])
+            return results
+        except sqlite3.Error:
+            raise RuntimeError("Failed to prepare statement")
+
+    def delete_ticket(self, ticketId: str):
+        delete_sql = "DELETE FROM tickets WHERE id = ?"
+        try:
+            self.db.execute(delete_sql, (ticketId,))
+        except sqlite3.Error:
+            raise RuntimeError("Failed to delete ticket")
+
+    def close_connection(self):
+        if self.db is not None:
+            self.db.close()
+            self.db = None

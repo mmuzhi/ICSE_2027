@@ -1,0 +1,506 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+
+public class CamelCaseMap {
+    private final Map<String, Object> data = new LinkedHashMap<>();
+
+    public Object get(String key) {
+        return data.get(_convertKey(key));
+    }
+
+    public void put(String key, Object value) {
+        data.put(_convertKey(key), value);
+    }
+
+    public void remove(String key) {
+        data.remove(_convertKey(key));
+    }
+
+    String _convertKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        return _toCamelCase(key);
+    }
+
+    static String _toCamelCase(String key) {
+        String[] parts = key.split("_");
+        StringBuilder camelCaseString = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            camelCaseString.append(parts[i].substring(0, 1).toUpperCase()).append(parts[i].substring(1).toLowerCase());
+        }
+        return camelCaseString.toString();
+    }
+
+    public Set<String> keySet() {
+        return data.keySet();
+    }
+
+    public int size() {
+        return data.size();
+    }
+}
+
+
+=== REASONING ===
+<think>
+We need to translate Java code to C++ with same behavior. Key points:
+
+- Class CamelCaseMap wraps a LinkedHashMap<String, Object>. In C++, we can use std::map or std::unordered_map? Java's LinkedHashMap maintains insertion order. In C++, we can use boost::multi_index or just std::map (which is ordered but not insertion order). But to match LinkedHashMap exactly, we need insertion order. Could use std::vector of pairs or boost::multi_index. However, the problem says "Keep behavior identical" and "Use idiomatic C++ only when it doesn't change behavior." So we must preserve insertion order. We can implement a simple wrapper with a std::list or std::vector of key-value pairs and a hash map for O(1) lookup. But that's more complex. Alternatively, use std::map with a custom comparator? No, map is sorted by key, not insertion order. Since the Java code only exposes keySet(), size(), get, put, remove, and internal data, we need insertion order for keySet() retrieval and iteration order. In Java, keySet() returns keys in insertion order. So C++ must do same.
+
+Simplest: use std::list<std::pair<std::string, std::any>>? But need O(1) access by key. Could use std::unordered_map<std::string, std::list<...>::iterator> plus list. That's typical. But we need to handle removal and keep list consistent.
+
+Alternatively, we can limit to C++ standard library. No boost allowed? Not specified. We'll assume only standard library. So we implement a custom class that maintains insertion order.
+
+But note: the code also has a null key handling. In C++ std::string cannot be null. However Java's get/put/remove with null key: _convertKey returns null, then data.get(null) returns null (since map may contain null key). In Java, LinkedHashMap allows null keys. In C++, std::map or unordered_map cannot have null keys directly. So we need to handle null case separately. The behavior: if key is null, _convertKey returns null, then data.get(null) returns null if not present. For put, data.put(null, value) stores null key. In C++, we can represent null key as an empty string? But empty string is a valid key. Better to use std::optional<std::string> or a sentinel. The simplest: use a special flag or use std::string but treat a specific value (e.g., empty string) as null? But empty string is distinct from null in Java. However, the _convertKey method splits by "_", so empty string would be split into [""] then parts[0] = "" -> camelCaseString starts with "" -> returns "". That's not null. So we need distinct representation. We can use std::optional<std::string> for keys. Or we can store a separate boolean and string. Perhaps best: use std::variant<std::string, nullptr_t>? But std::variant cannot have std::nullptr_t? Could use std::optional. But then the internal map would be std::unordered_map<std::optional<std::string>, ...>. That is possible but unordered_map requires hash for optional<string>. We would need to provide hash. Or we could store a special sentinel string like "\0" but that could conflict. Better to avoid null keys if possible, but the Java code explicitly allows it. The instructions: "Keep behavior identical". So we must handle null key correctly.
+
+Alternative: Use std::map<std::string, ...> but treat null as a special case stored outside map. That would require custom logic. Could store a separate field for null key. That might be simpler: have a boolean hasNullKey and a Object nullValue (using std::any). And the order: if null key is inserted, it appears first? In LinkedHashMap, order is insertion order. So we need to track where null key appears in order. Could store a list of keys including null indicator. We'll need a custom container.
+
+Given complexity, we can simplify: The problem states "Translate the following Java code to C++." Likely expects a straightforward translation using modern C++ features. Perhaps they don't require exact insertion order? But keySet() is used. The Java code only uses keySet() but doesn't iterate over it in this snippet, but it's exposed. Could be used. To be safe, we preserve insertion order.
+
+I'll implement a custom class using std::unordered_map for fast lookups and a std::list to maintain order. For null key, we'll use a special marker like std::optional, or store null key as a separate member. Since std::unordered_map keys need to be hashable, we can use std::string and treat empty string as null? But then _convertKey("") would return "" (not null). So if user inserts key null, it should be stored as null, not as "". So we need to differentiate. I think storing a separate std::optional<std::string> for the null entry is acceptable. We'll have a bool hasNullKey, std::any nullValue, and a list iterator position for null (if in the list). That's messy but doable.
+
+Alternatively, we can avoid null keys altogether and throw an exception when null is passed? But Java code allows it. The problem says "Keep behavior identical": if Java code can have null keys, C++ must too. So we must implement.
+
+Maybe easier: Use std::map<std::string, std::any> and treat empty string as null? But then _convertKey("") returns "", and if user passes null, _convertKey returns null, which we map to "". Then get("") would also return the null entry. But in Java, get("") would be different from get(null). So incorrect.
+
+Thus we need distinct representation. I'll use std::optional<std::string> for the key in the internal structures. For unordered_map, we need to provide a hash for optional<string>. We can define a custom hash. Or we can store the internal map as std::unordered_map<std::string, ...> and keep null outside. I'll choose the separate null member approach to keep it simple.
+
+Implementation plan:
+
+- Class CamelCaseMap.
+- Private:
+  - std::unordered_map<std::string, std::any> data; (for non-null keys)
+  - std::list<std::string> order; (maintains insertion order of non-null keys)
+  - bool hasNullKey = false;
+  - std::any nullValue;
+  - std::optional<std::list<std::string>::iterator> nullPos; // position in order if null inserted (but order list only holds strings, not null. We'll need to represent null in order. Could store a separate sentinel string like "\0"? But then we need to ensure that key cannot be that sentinel. Might conflict. Better to store a separate list of something like std::variant<std::string, nullptr_t>? A simpler method: keep a separate boolean for null presence, and also maintain a separate list of order entries, each entry can be either a string key or null marker. We could use std::vector<std::optional<std::string>> but then lookup in map becomes complex. Simpler: store order as list of keys, but if null is inserted, we can store a special string that is unlikely to collide, e.g., a string with a null character. But then we must ensure that _convertKey never produces such a string. Since _convertKey splits by "_" and concatenates, it will not include null characters. So we could use a special sentinel like "\0" (single null char) to represent null key. That is valid in std::string. And we guarantee no user key can produce that because _convertKey returns a string that only contains letters (from parts), and splitting by "_" removes underscores, and then toUpperCase/toLowerCase produce only letters. So no null char. So we can use "\0" as sentinel. Then we can store everything in one map: std::unordered_map<std::string, std::any> data, and maintain a list of keys (including sentinel) for order. This is simpler: the internal data map also stores the null entry under sentinel key. And order list contains sentinel when null is inserted. However, if user later calls put(null, ...), we will store under sentinel. When they call get(null), _convertKey returns null, and we then convert null to sentinel string. So we need a helper to convert null to sentinel and back. For other methods, we need to return null when key is sentinel? Actually, the external interface expects that keys are strings (or null). The _convertKey returns null, and then we use that to interact with data. In our C++ implementation, we can define a function that takes a potentially null string pointer and returns an optional<string> representing the internal key. Use std::optional<std::string> as internal key type. That might be cleaner: map<optional<string>, any>. Provide hash for optional<string>. Let's do that.
+
+We'll define a helper: std::optional<std::string> convertKey(const std::string* key) where key can be nullptr. If key is nullptr, return std::nullopt. Else, convert to camel case and return that string. Then internal map is std::unordered_map<std::optional<std::string>, std::any>. We'll need to provide a custom hash for std::optional<std::string>. This is doable. We'll also need to maintain insertion order: we can keep a std::list<std::optional<std::string>> order. Then we can use std::unordered_map<std::optional<std::string>, std::pair<std::any, std::list<...>::iterator>> to quickly find position for removal and update. That's typical.
+
+Implementation details:
+
+- Use std::any for values (C++17).
+- Use std::optional<std::string> for keys.
+- Provide hash for optional<string>:
+  struct OptionalStringHash {
+      size_t operator()(const std::optional<std::string>& opt) const {
+          if (!opt) return 0; // hash for nullopt
+          return std::hash<std::string>()(*opt);
+      }
+  };
+- Provide equality: std::equal_to<std::optional<std::string>> works by default.
+
+- Class members:
+  std::unordered_map<std::optional<std::string>, std::pair<std::any, std::list<std::optional<std::string>>::iterator>, OptionalStringHash> map;
+  std::list<std::optional<std::string>> order;
+
+- Methods:
+  get(key): convertKey, if no, return null? In Java, data.get(null) returns null if not present. So our map's [] or find returns null any if not found. We'll use find and return value or return empty std::any? Java returns null, so in C++ we return std::any() (empty). Similar for put: insert or update, and if key is new, add to end of order list. remove: erase from map and remove from list.
+
+- keySet(): returns set of keys? In Java, keySet() returns Set<String>. In C++, we could return std::set<std::string> but that loses order. Or return std::vector<std::string>? Or we can return a custom iterator range? Simpler: return std::list<std::string>? But the Java method returns a Set view (backed by map). In C++, we could return a std::vector<std::string> of the keys in order. That would be a copy. Or we could return a reference to internal container? But to keep identical behavior, we need to allow iteration and size. Since we cannot return a live view easily, we'll return a std::vector<std::string> containing all keys (non-null keys? In Java, keySet() includes null if present. So we need to handle null: if hasNullKey, include a null representation? In C++ string cannot be null. So we might return std::vector<std::optional<std::string>>? Or we can return std::vector<std::string> and use a sentinel to represent null? Alternatively, we can change return type to something else. The problem likely expects a translation that compiles and works, but we must keep interface similar. Since Java's keySet() returns a Set that can be iterated, and null can be in the set, we need to represent that. Option: return std::set<std::string> but again null issue. Perhaps we can define our own container? Overkill.
+
+Maybe the intended translation does not worry about null keys? But the Java code explicitly handles null key. Let's check if the _convertKey returns null when key is null, then data.get(null) etc. So null can be a key. In practice, using null as key is rare but possible. We should handle it properly.
+
+Simplify: Because this is a translation task, we can use a special string key like "null" to represent null? But then that collides with actual string "null". However, original Java code: if key is null, _convertKey returns null. The map stores null as key. So if user puts key "null", the _convertKey("null") -> parts = ["null"] -> camelCase = "null". That's different from null. So we could use a sentinel like "\0" (a string containing only null char) to represent null. That won't be produced by _convertKey. So in internal map, we use std::string keys, with sentinel for null. Then we don't need optional. We'll just convert null to sentinel in convertKey. Then the map can be std::unordered_map<std::string, std::any>. And order list is std::list<std::string>. Then keySet() returns std::set<std::string>? But order lost. To preserve order, we need to return a container that maintains insertion order and includes the sentinel. We could return a reference to the order list? But that would expose internal sentinel. To mimic Java's Set, we could return a std::vector<std::string> of keys, where null is represented as sentinel? That leaks sentinel. Better: we can return a std::vector<std::optional<std::string>> where null is std::nullopt. That is clean. But then the user of C++ code must know to check for null? The Java keySet() returns a Set of strings that can contain null. In C++, we can return std::vector<std::string> and have a separate flag or use empty string to represent null? But empty string is a valid key. So not good.
+
+I think using std::optional<std::string> for external keys is appropriate. But the original Java method signature uses String (which can be null). In C++, we cannot pass null directly as std::string. So we need to pass const std::string* or std::optional<const std::string&>? Typically, we would accept std::optional<std::string> or const std::string* (nullable). The Java methods are:
+- public Object get(String key)
+- public void put(String key, Object value)
+- public void remove(String key)
+- public Set<String> keySet()
+
+In C++, we can translate these as:
+- std::any get(const std::string* key) // or const std::optional<std::string>&
+- void put(const std::string* key, const std::any& value)
+- void remove(const std::string* key)
+- std::vector<std::optional<std::string>> keySet() // or a custom iterator
+
+But we must keep behavior identical. Let's decide on a practical approach: Since the Java code uses String (nullable) and we need to handle null, we'll use std::optional<std::string> for the key parameter. But then calling get(null) in Java translates to get(std::nullopt) in C++. That is acceptable. The user code would need to use std::nullopt to indicate null. Alternatively, we could provide overloads with const char* and handle nullptr. That might be more natural for C++: get(const char* key) where key can be nullptr. Then internally convert to optional. I'll do that: accept const char* (or const std::string*). To keep it simple, I'll use const std::string* and require the caller to pass pointer to string or nullptr. That is similar to Java's reference that can be null.
+
+For keySet(), we can return std::vector<std::string> but we need to represent null. We could return a pair: a set of strings and a bool indicating null presence. But the Java keySet() returns a single Set that contains null if present. In C++, we can return a custom class that wraps the internal data and allows iteration, similar to Java's view. But that's complex.
+
+Given the context, perhaps the test harness won't test null keys. But the problem says "Keep behavior identical". So we should implement null handling correctly. I'll implement internal map using std::optional<std::string> and provide methods that accept std::optional<std::string>. For keySet(), I'll return std::vector<std::optional<std::string>>, which can contain std::nullopt for null. That is a direct representation. The user can then iterate and check if key has_value().
+
+I'll also provide a fallback: overloads with const char* that handle null by checking if ptr is nullptr -> std::nullopt, else std::string(ptr). That might be more convenient.
+
+Now, complexity of maintaining order with unordered_map and list. I'll implement that.
+
+Additionally, the static method _toCamelCase should be static and handle edge cases: if key is empty string, split yields [""] -> parts[0] is "", then camelCaseString starts with "", and no more parts, returns "". So that's fine. If key starts with "_", split yields ["", "something", ...] -> parts[0] is "", so camelCaseString starts with "", then for i=1, we capitalize parts[1]. So result like "Something". That matches Java.
+
+Implementation steps:
+
+1. CamelCaseMap.h or inline class.
+2. Include <unordered_map>, <list>, <any>, <string>, <vector>, <optional>, <cctype> for tolower/toupper.
+3. Define class CamelCaseMap.
+4. Private:
+   using Key = std::optional<std::string>;
+   struct KeyHash { size_t operator()(const Key& k) const; };
+   struct KeyEqual { bool operator()(const Key& a, const Key& b) const; };
+   std::unordered_map<Key, std::pair<std::any, std::list<Key>::iterator>, KeyHash, KeyEqual> data_;
+   std::list<Key> order_;
+   // Helper to convert user key (const std::string* or const char*) to Key.
+   Key convertKey(const std::string* key) const;
+   Key convertKey(const char* key) const; // if key is null, returns nullopt.
+   static std::string toCamelCase(const std::string& key);
+5. Public:
+   std::any get(const std::string* key) const;
+   std::any get(const char* key) const;
+   void put(const std::string* key, const std::any& value);
+   void put(const char* key, const std::any& value);
+   void remove(const std::string* key);
+   void remove(const char* key);
+   std::vector<Key> keySet() const; // returns vector of keys in insertion order.
+   size_t size() const;
+
+Need to handle const-correctness.
+
+Edge cases:
+- get with null key not present: return empty std::any (Java returns null).
+- put with null key: store in map, add to order if new.
+- remove with null key: if present, remove.
+
+Also, update order on put: if key already exists, we don't need to change order (LinkedHashMap does not move on re-insert). So we check if key exists; if not, push_back to order and store iterator in map. If exists, just update value.
+
+For remove: erase from map, and remove from list using stored iterator.
+
+Now, code.
+
+We'll write a single C++ file with the class.
+
+I'll produce final answer.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <any>
+#include <cctype>
+#include <list>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+class CamelCaseMap {
+public:
+    // Key type used internally (nullopt represents Java null)
+    using Key = std::optional<std::string>;
+
+    CamelCaseMap() = default;
+    ~CamelCaseMap() = default;
+    CamelCaseMap(const CamelCaseMap&) = delete;
+    CamelCaseMap& operator=(const CamelCaseMap&) = delete;
+
+    // get (nullptr allowed – represents Java null key)
+    std::any get(const std::string* key) const {
+        Key k = convertKey(key);
+        return getImpl(k);
+    }
+
+    std::any get(const char* key) const {
+        Key k = convertKey(key);
+        return getImpl(k);
+    }
+
+    // put
+    void put(const std::string* key, const std::any& value) {
+        Key k = convertKey(key);
+        putImpl(k, value);
+    }
+
+    void put(const char* key, const std::any& value) {
+        Key k = convertKey(key);
+        putImpl(k, value);
+    }
+
+    // remove
+    void remove(const std::string* key) {
+        Key k = convertKey(key);
+        removeImpl(k);
+    }
+
+    void remove(const char* key) {
+        Key k = convertKey(key);
+        removeImpl(k);
+    }
+
+    // keySet – returns keys in insertion order, null represented as std::nullopt
+    std::vector<Key> keySet() const {
+        std::vector<Key> result;
+        result.reserve(order_.size());
+        for (const auto& k : order_) {
+            result.push_back(k);
+        }
+        return result;
+    }
+
+    size_t size() const {
+        return data_.size();
+    }
+
+private:
+    // -------- internal conversion helpers --------
+    Key convertKey(const std::string* key) const {
+        if (key == nullptr) {
+            return std::nullopt;
+        }
+        return toCamelCase(*key);
+    }
+
+    Key convertKey(const char* key) const {
+        if (key == nullptr) {
+            return std::nullopt;
+        }
+        std::string s(key);
+        return toCamelCase(s);
+    }
+
+    static std::string toCamelCase(const std::string& key) {
+        std::vector<std::string> parts;
+        size_t start = 0;
+        size_t end = 0;
+        while ((end = key.find('_', start)) != std::string::npos) {
+            parts.push_back(key.substr(start, end - start));
+            start = end + 1;
+        }
+        parts.push_back(key.substr(start));
+
+        std::string result = parts[0];
+        for (size_t i = 1; i < parts.size(); ++i) {
+            if (!parts[i].empty()) {
+                result += static_cast<char>(std::toupper(parts[i][0]));
+                for (size_t j = 1; j < parts[i].size(); ++j) {
+                    result += static_cast<char>(std::tolower(parts[i][j]));
+                }
+            }
+        }
+        return result;
+    }
+
+    // -------- internal data store helpers --------
+    struct KeyHash {
+        size_t operator()(const Key& k) const {
+            if (!k.has_value()) {
+                return 0;
+            }
+            return std::hash<std::string>()(*k);
+        }
+    };
+
+    struct KeyEqual {
+        bool operator()(const Key& a, const Key& b) const {
+            if (a.has_value() != b.has_value()) {
+                return false;
+            }
+            if (!a.has_value() && !b.has_value()) {
+                return true;
+            }
+            return *a == *b;
+        }
+    };
+
+    // data_ stores: key -> (value, iterator to key in order_)
+    std::unordered_map<Key, std::pair<std::any, std::list<Key>::iterator>, KeyHash, KeyEqual> data_;
+    std::list<Key> order_;   // insertion order
+
+    std::any getImpl(const Key& k) const {
+        auto it = data_.find(k);
+        if (it == data_.end()) {
+            return std::any();   // Java null
+        }
+        return it->second.first;
+    }
+
+    void putImpl(const Key& k, const std::any& value) {
+        auto it = data_.find(k);
+        if (it == data_.end()) {
+            // new key – add to order, insert into map
+            order_.push_back(k);
+            auto last = std::prev(order_.end());
+            data_[k] = std::make_pair(value, last);
+        } else {
+            // existing key – just update value, order unchanged
+            it->second.first = value;
+        }
+    }
+
+    void removeImpl(const Key& k) {
+        auto it = data_.find(k);
+        if (it == data_.end()) {
+            return;
+        }
+        // remove from order list
+        order_.erase(it->second.second);
+        // remove from map
+        data_.erase(it);
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <any>
+#include <cctype>
+#include <list>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+class CamelCaseMap {
+public:
+    // Key type used internally (nullopt represents Java null)
+    using Key = std::optional<std::string>;
+
+    CamelCaseMap() = default;
+    ~CamelCaseMap() = default;
+    CamelCaseMap(const CamelCaseMap&) = delete;
+    CamelCaseMap& operator=(const CamelCaseMap&) = delete;
+
+    // get (nullptr allowed – represents Java null key)
+    std::any get(const std::string* key) const {
+        Key k = convertKey(key);
+        return getImpl(k);
+    }
+
+    std::any get(const char* key) const {
+        Key k = convertKey(key);
+        return getImpl(k);
+    }
+
+    // put
+    void put(const std::string* key, const std::any& value) {
+        Key k = convertKey(key);
+        putImpl(k, value);
+    }
+
+    void put(const char* key, const std::any& value) {
+        Key k = convertKey(key);
+        putImpl(k, value);
+    }
+
+    // remove
+    void remove(const std::string* key) {
+        Key k = convertKey(key);
+        removeImpl(k);
+    }
+
+    void remove(const char* key) {
+        Key k = convertKey(key);
+        removeImpl(k);
+    }
+
+    // keySet – returns keys in insertion order, null represented as std::nullopt
+    std::vector<Key> keySet() const {
+        std::vector<Key> result;
+        result.reserve(order_.size());
+        for (const auto& k : order_) {
+            result.push_back(k);
+        }
+        return result;
+    }
+
+    size_t size() const {
+        return data_.size();
+    }
+
+private:
+    // -------- internal conversion helpers --------
+    Key convertKey(const std::string* key) const {
+        if (key == nullptr) {
+            return std::nullopt;
+        }
+        return toCamelCase(*key);
+    }
+
+    Key convertKey(const char* key) const {
+        if (key == nullptr) {
+            return std::nullopt;
+        }
+        std::string s(key);
+        return toCamelCase(s);
+    }
+
+    static std::string toCamelCase(const std::string& key) {
+        std::vector<std::string> parts;
+        size_t start = 0;
+        size_t end = 0;
+        while ((end = key.find('_', start)) != std::string::npos) {
+            parts.push_back(key.substr(start, end - start));
+            start = end + 1;
+        }
+        parts.push_back(key.substr(start));
+
+        std::string result = parts[0];
+        for (size_t i = 1; i < parts.size(); ++i) {
+            if (!parts[i].empty()) {
+                result += static_cast<char>(std::toupper(parts[i][0]));
+                for (size_t j = 1; j < parts[i].size(); ++j) {
+                    result += static_cast<char>(std::tolower(parts[i][j]));
+                }
+            }
+        }
+        return result;
+    }
+
+    // -------- internal data store helpers --------
+    struct KeyHash {
+        size_t operator()(const Key& k) const {
+            if (!k.has_value()) {
+                return 0;
+            }
+            return std::hash<std::string>()(*k);
+        }
+    };
+
+    struct KeyEqual {
+        bool operator()(const Key& a, const Key& b) const {
+            if (a.has_value() != b.has_value()) {
+                return false;
+            }
+            if (!a.has_value() && !b.has_value()) {
+                return true;
+            }
+            return *a == *b;
+        }
+    };
+
+    // data_ stores: key -> (value, iterator to key in order_)
+    std::unordered_map<Key, std::pair<std::any, std::list<Key>::iterator>, KeyHash, KeyEqual> data_;
+    std::list<Key> order_;   // insertion order
+
+    std::any getImpl(const Key& k) const {
+        auto it = data_.find(k);
+        if (it == data_.end()) {
+            return std::any();   // Java null
+        }
+        return it->second.first;
+    }
+
+    void putImpl(const Key& k, const std::any& value) {
+        auto it = data_.find(k);
+        if (it == data_.end()) {
+            // new key – add to order, insert into map
+            order_.push_back(k);
+            auto last = std::prev(order_.end());
+            data_[k] = std::make_pair(value, last);
+        } else {
+            // existing key – just update value, order unchanged
+            it->second.first = value;
+        }
+    }
+
+    void removeImpl(const Key& k) {
+        auto it = data_.find(k);
+        if (it == data_.end()) {
+            return;
+        }
+        // remove from order list
+        order_.erase(it->second.second);
+        // remove from map
+        data_.erase(it);
+    }
+};

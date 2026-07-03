@@ -1,0 +1,43 @@
+import sys
+from collections import defaultdict, deque
+
+def main():
+    data = sys.stdin.read().split()
+    if not data:
+        print(0)
+        return
+        
+    n = int(data[0])
+    m = int(data[1])
+    edges = []
+    index = 2
+    graph = defaultdict(list)
+    for i in range(m):
+        u = int(data[index]); v = int(data[index+1]); index += 2
+        edges.append((u, v))
+        graph[u].append(v)
+        graph[v].append(u)
+        
+    # If there are no edges, then the graph is already a forest.
+    if m == 0:
+        print(0)
+        return
+        
+    # We'll use DFS/BFS to find connected components and then check for cycles? Actually, we can use union-find to count cycles.
+    # Alternatively, we can use the fact: the minimum edge deletion is m - (n - k) where k is the number of connected components in the forest we form? But note: we are allowed to break cycles arbitrarily.
+
+    # Actually, the problem is: we want to remove edges so that the graph becomes acyclic. The maximum forest we can have is a spanning forest (each connected component is a tree). The number of edges in a spanning forest is n - k, where k is the number of connected components (which we can choose arbitrarily by deleting edges). But note: we cannot change the vertex set, so the connected components are fixed by the graph? Actually, we can break edges arbitrarily, so we can choose to keep a spanning forest that has as many edges as possible.
+
+    # The maximum number of edges in a forest (with n vertices) is n - k, but k is the number of connected components. However, we are not forced to keep all vertices connected. We can have multiple connected components. But note: the graph initially has a fixed set of vertices.
+
+    # Actually, the answer is: the minimum number of edges to delete is the number of edges in cycles? But note: deleting one edge from a cycle breaks one cycle, but if there are multiple cycles, we might break them by deleting edges that are shared.
+
+    # There is a well-known formula: the minimum number of edges to remove to make the graph acyclic is m - (n - k), where k is the number of connected components of the graph? But wait, that formula is for the spanning forest: the spanning forest has n - k edges. So if we have m edges, we need to delete m - (n - k) edges to get a spanning forest (which is acyclic). However, note: the graph might not be connected, so k is the number of connected components.
+
+    # But wait: the graph might have cycles. The spanning forest (which is acyclic) has exactly n - k edges. Therefore, we must delete at least m - (n - k) edges to remove all cycles? Actually, no: because the graph might have cycles that are not in the spanning forest? Actually, the spanning forest is a subgraph that includes all vertices and is acyclic. The edges not in the spanning forest are the ones that form cycles (if any). But note: the spanning forest is defined by the connected components, and within each connected component, we keep exactly (number of vertices in that component) - 1 edges. So the total edges kept is n - k. Therefore, the edges to delete are m - (n - k).
+
+    # However, note: the graph might not be connected. The connected components k is the number of connected components in the original graph? Actually, no: we can break edges arbitrarily, so we can choose which edges to keep. The maximum number of edges we can keep is n - k, where k is the number of connected components we choose to have. But note: we cannot change the vertex set, so the connected components must be a subset of the original graph's connected components? Actually, no: by deleting edges, we can break a connected component into more. So the maximum forest we can have is one that has as many edges as possible, which is n - k, where k is the number of connected components we choose (and we can choose k to be as large as the number of vertices, i.e., k = n, then we have 0 edges). But that is not optimal.
+
+    # Actually, the goal is to remove the minimum number of edges. We want to keep as many edges as possible without forming cycles. The maximum number of edges we can keep is the size of a maximum spanning forest, which is n - k, where k is the number of connected components (but note: the connected components are fixed by the graph? Actually, no: we can choose which edges to keep, so the connected components are the ones that are connected by the kept edges). 
+
+    # The key is: the graph has n vertices. The maximum

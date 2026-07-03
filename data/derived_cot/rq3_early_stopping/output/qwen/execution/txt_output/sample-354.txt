@@ -1,0 +1,663 @@
+=== PROMPT ===
+Here's some python code and the inputs passed into it.
+What output do you expect from it?
+Code: python
+def decode_linux(line, match):
+    perms, links, uid, gid, size, mtime, name = match.groups()
+    is_link = perms.startswith("l")
+    is_dir = perms.startswith("d") or is_link
+    if is_link:
+        name, _, _link_name = name.partition("->")
+        name = name.strip()
+        _link_name = _link_name.strip()
+    permissions = Permissions.parse(perms[1:])
+
+    mtime_epoch = _parse_time(mtime)
+
+    name = unicodedata.normalize("NFC", name)
+
+    raw_info = {
+        "basic": {"name": name, "is_dir": is_dir},
+        "details": {
+            "size": int(size),
+            "type": int(ResourceType.directory if is_dir else ResourceType.file),
+        },
+        "access": {"permissions": permissions.dump()},
+        "ftp": {"ls": line},
+    }
+    access = raw_info["access"]
+    details = raw_info["details"]
+    if mtime_epoch is not None:
+        details["modified"] = mtime_epoch
+
+    access["user"] = uid
+    access["group"] = gid
+
+    return raw_info
+Inputs: 'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian', <re.Match object; span=(0, 85), match='lrwxrwxrwx    1 0        0              19 Jan 18>
+Answer using <ans></ans> tags
+
+=== REASONING ===
+<think>
+
+We are given a string and a regex match object. The function `decode_linux` is expected to parse the line and return a dictionary.
+
+ The input string is: 'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian'
+
+ The regex match object is for the span (0, 85) and the match string is: 'lrwxrwxrwx    1 0        0              19 Jan 18'
+
+ However, note that the entire line is provided and the match is only the part until the date. The function expects the regex to capture the following groups in order:
+   perms, links, uid, gid, size, mtime, name
+
+ But note: the example line does not exactly match the typical output of `ls -l` because it has extra spaces and a link target.
+
+ Let's break down the line:
+
+   'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian'
+
+ The typical `ls -l` format is:
+
+   [permissions] [links] [owner uid] [group gid] [size] [date] [time] [name]
+
+ But note: the provided match string is only up to the date part (without the time and the rest of the line). However, the function is called with the entire line and a regex match that might have captured the parts.
+
+ Since we don't have the exact regex pattern, we can assume that the match groups are as per the function's expectation.
+
+ Steps in the function:
+
+  1. Unpack the groups: perms, links, uid, gid, size, mtime, name.
+  2. Check if it's a link (starts with 'l') and set is_link accordingly. Also, if it's a directory (starts with 'd' or is a link) then is_dir is True.
+  3. If it's a link, then the name part (the last group) will be the entire string after the link indicator. The function then splits the name by '->' and takes the first part for the name and the second part (if exists) for the link name.
+  4. Normalize the name with unicodedata.
+  5. Parse the permissions (we assume there's a Permissions class that can parse the string starting from index 1).
+  6. Parse the mtime (date string) to an epoch timestamp (if possible).
+  7. Build a dictionary with the following structure:
+
+        raw_info = {
+            "basic": {"name": name, "is_dir": is_dir},
+            "details": {
+                "size": int(size),
+                "type": int(ResourceType.directory if is_dir else ResourceType.file),
+            },
+            "access": {"permissions": permissions.dump(), "user": uid, "group": gid},
+            "ftp": {"ls": line},
+        }
+
+  8. If mtime_epoch is not None, add it to details as "modified".
+
+ Let's assume the regex match groups are:
+
+   perms: 'lrwxrwxrwx'
+   links: '1'
+   uid: '0'
+   gid: '0'
+   size: '19'   [But wait, the line has '19' as the date part?]
+
+ However, note that the provided match string is only up to the date part. The line has:
+
+   'lrwxrwxrwx    1 0        0              19 Jan 18  2006'
+
+ The groups in the regex must have captured:
+
+   - perms: 'lrwxrwxrwx'
+   - links: '1'
+   - uid: '0'
+   - gid: '0'
+   - size: '19'   (but note: the typical `ls -l` has the size after the date, but here the date is broken into day, month, day, time, year and then the name and the target)
+
+ Wait, the function is called with a regex match that has span (0,85) and the match string is exactly the part until the date? But the date in the line is '19 Jan 18  2006'. The function expects the mtime to be the date part (without time) but the line has both day and month and then the year and the time is missing? Actually, the line has:
+
+   '19 Jan 18  2006'
+
+ But note: the typical format for `ls -l` is:
+
+   [permissions] [links] [uid] [gid] [size] [date] [time] [name]
+
+ However, the provided line does not have a size (it has a date) and then the name and target. This is because the line is a symlink and the size is the target length? But the function is parsing the size as the fifth group.
+
+ Let me reexamine the line:
+
+   'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian'
+
+ The typical `ls -l` for a symlink would be:
+
+   lrwxrwxrwx 1 owner group 19 Jan 18 2006 symlink -> target
+
+ But note: the function expects the groups to be in the order: perms, links, uid, gid, size, mtime, name.
+
+ In the provided line, the groups would be:
+
+   perms: 'lrwxrwxrwx'
+   links: '1'
+   uid: '0'
+   gid: '0'
+   size: '19'   [because the next number is 19, but wait, the line has a date part that starts with 19?]
+
+ Actually, the line has:
+
+   ... 0              19 Jan 18  2006 ...
+
+ So the groups are:
+
+   [0:9] -> 'lrwxrwxrwx'
+   [9:10] -> '1'
+   [10:11] -> '0'
+   [11:12] -> '0'
+   [12:14] -> '19'   (the next number is 19, but note there are spaces and then the date)
+
+ But wait, the regex must be designed to capture the fields. The function is called with a regex match that has already captured these groups.
+
+ Since we don't have the regex, we must assume that the groups are correctly captured.
+
+ However, the provided match string is only the part until the date: 'lrwxrwxrwx    1 0        0              19 Jan 18'
+
+ This suggests that the regex matched until the date part. But the function expects the name to be the last group. In the provided line, the name is 'debian' and the target is after the arrow.
+
+ But note: the function does:
+
+   if is_link:
+        name, _, _link_name = name.partition("->")
+        name = name.strip()
+        _link_name = _link_name.strip()
+
+ So the name group (the last group) in the regex must be the entire string from the end until the beginning of the target (if present) or the name without the target.
+
+ However, the regex match string does not include the target part. This is a problem because the function expects the name group to include the target if present.
+
+ Let's assume the regex pattern is designed to capture the entire line and break it into the 7 groups. The groups are:
+
+   Group1: permissions
+   Group2: links
+   Group3: uid
+   Group4: gid
+   Group5: size
+   Group6: mtime (which is the date string, e.g., 'Jan 18 2006' or '19 Jan 18 2006' but note the provided match string has '19 Jan 18')
+   Group7: the rest of the line (which should be the name and the target) but note the function splits the name by '->'
+
+ But wait, the provided match string is only up to the date part. The function is called with a regex match that has span (0,85) and the match string is the substring from 0 to 85. The entire line is longer.
+
+ The function uses the entire line for the 'ftp' field (raw_info["ftp"]["ls"] = line).
+
+ Now, let's assume the groups are captured correctly. The input string is:
+
+   'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian'
+
+ The regex must have captured:
+
+   perms: 'lrwxrwxrwx'
+   links: '1'
+   uid: '0'
+   gid: '0'
+   size: '19'   (the number 19 is the fifth field, but note: the typical `ls -l` for a symlink shows the target length? Actually, no, the target length is not shown in the `ls -l` output. The `ls -l` for a symlink shows the number of links (1) and then the owner, group, and then the target is shown in the name field.)
+
+ So the fifth field (size) in the `ls -l` output for a symlink is not the target length. The target length is the length of the string in the target. But the `ls -l` does not show that. So the fifth field is missing? 
+
+ Actually, the typical `ls -l` for a symlink does not have a fifth field (size) for the target. The fields are:
+
+   -rw-r--r-- 1 user group  100 Jan 18 08:10 file
+   lrwxrwxrwx 1 user group   19 Jan 18 08:11 link -> /path/to/target
+
+ So the size field (fifth) is absent for symlinks? Or is it the target string length? 
+
+ In the example line, there is a fifth field: '19'. But note the line:
+
+   'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian'
+
+ This line has a fifth field of '19'. This might be the target length? But the target is 20 characters long (including the './').
+
+ Alternatively, the regex might be capturing the entire line and the groups are:
+
+   Group1: 'lrwxrwxrwx'
+   Group2: '1'
+   Group3: '0'
+   Group4: '0'
+   Group5: '19 Jan 18  2006'   (the date and time part) but then the function expects mtime to be the date string and the time is separate? 
+
+ But the function has:
+
+   mtime = group6, and then it calls _parse_time(mtime)
+
+ The _parse_time function expects a string like 'Jan 18 2006' or '19 Jan 18 2006'. The provided mtime string is '19 Jan 18' (without the year in the match string? But the match string is '19 Jan 18  2006' -> wait, the match string is '19 Jan 18  2006' (with a space and the year) but the function expects the mtime to be the date part without the time? 
+
+ Actually, the function does not have a time part. The _parse_time function might be able to parse '19 Jan 18 2006' (with the year) or without.
+
+ But note: the function expects the mtime string to be the same as the one in the line. The line has the date and time? Actually, the line has:
+
+   '19 Jan 18  2006'
+
+ This is ambiguous. The function might break the date and time into two parts? But the regex only captures the mtime as one group.
+
+ Since we don't have the regex pattern, we must rely on the provided groups.
+
+ Let's assume the groups are:
+
+   perms: 'lrwxrwxrwx'
+   links: '1'
+   uid: '0'
+   gid: '0'
+   size: '19'   (because the next field after gid is the size, but in the line it is the 19 that is the target length? Or the 19 is the date day? Actually, the line has:
+
+        ... 0              19 Jan 18  2006 ...
+
+   So the gid is 0, then there are many spaces, then 19 (which is the day), then the month, etc.
+
+   This suggests that the regex might not be standard. 
+
+ Alternatively, the provided regex pattern might be:
+
+   r'^([rwx-]{10})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\w+\s+\d+\s+\d+|\d+\s+\w+\s+\d+\s+\d+|\d+ \w+ \d+ \d+:\d+ \d{4})\s+(.*)$'
+
+ But note: the function is called with a regex match that has 7 groups. We don't know the exact pattern.
+
+ However, the problem states that the input is passed into the function. The function is designed to work with a regex that captures the line in the standard way.
+
+ Since we are not given the regex pattern, we must assume that the groups are correctly captured and the function runs as intended.
+
+ But note: the provided match string is only the first part of the line. The function uses the entire line for the 'ftp' field.
+
+ Let's assume the function runs and the groups are:
+
+   perms: 'lrwxrwxrwx'
+   links: '1'
+   uid: '0'
+   gid: '0'
+   size: '19'   (this is the fifth group, which is the day of the month)
+   mtime: 'Jan 18  2006'   (the sixth group) but wait, the provided match string is '19 Jan 18  2006', so the groups might be:
+
+   Group1: 'lrwxrwxrwx'
+   Group2: '1'
+   Group3: '0'
+   Group4: '0'
+   Group5: '19 Jan 18  2006'   (if the regex captures the entire date string as the fifth group) but then the function expects the mtime to be the date string and the size to be the fifth group? 
+
+ The function's code:
+
+   perms, links, uid, gid, size, mtime, name = match.groups()
+
+ So the fifth group is the size, and the sixth is the mtime.
+
+ But in the line, the fifth field is the day (19) and then the sixth field is the month and year? 
+
+ This is confusing.
+
+ Since the problem does not specify the regex pattern, we must assume that the function is called with the correct groups. The expected output is a dictionary.
+
+ Let's try to simulate the function with the provided groups:
+
+   perms = 'lrwxrwxrwx'
+   links = '1'
+   uid = '0'
+   gid = '0'
+   size = '19'   (but note: the line has a target of 20 characters, so maybe the size is the target length? But the function uses the size as an integer and sets it in the details. The function doesn't use the target length for anything else.)
+
+   mtime = 'Jan 18  2006'   (if the regex captures the date as the sixth group) but the provided match string is '19 Jan 18  2006' and we don't know how the groups are split.
+
+ Alternatively, the regex might be capturing the entire date string (including the day) as the mtime, and then the name is the rest.
+
+ But note: the function does:
+
+   if is_link:
+        name, _, _link_name = name.partition("->")
+
+   The name is the seventh group. In the line, the seventh group (name) would be:
+
+        'debian -> ./pub/mirror/debian'
+
+   Then, because it's a link, it splits the name by '->' and takes the first part (stripped) as the name and the rest as the link name.
+
+   So the name becomes 'debian' and the link name becomes './pub/mirror/debian'.
+
+   Then, the function builds the raw_info dictionary.
+
+   The details["size"] is set to 19 (the integer of the fifth group). But 19 is the day, not the target length.
+
+   This might be a problem because the function is called "decode_linux", which suggests it is parsing the output of `ls -l`. In standard `ls -l`, the fifth field for a symlink is the target length? Actually, no, the target length is not shown. The fifth field is the same as the non-symlink, which is the file size. But for a symlink, the file size is the length of the target string.
+
+   However, the `ls -l` command does not show the target length by default. It shows the number of links (which is 1) and then the user, group, and then the file size (which for a symlink is the target string length? Actually, no, the man page says: "The fifth field is the file size, in bytes." But for a symlink, the file size is the length of the target string. 
+
+   So in the example, the target is './pub/mirror/debian' which is 20 characters (including the null terminator? No, the target string does not include the null terminator). But note: the example line has a size of 19. 
+
+   Let me count: './pub/mirror/debian' -> 
+        . / p u b / m i r r o r / d e b i a n
+        That's 1 + 1 + 4 + 1 + 8 + 1 + 8 = 24? Actually, let's count without spaces:
+
+        ./pub/mirror/debian: 
+        . -> 1
+        / -> 1
+        p -> 1, u -> 1, b -> 1, / -> 1, m -> 1, i -> 1, r -> 1, r -> 1, o -> 1, r -> 1, / -> 1, d -> 1, e -> 1, b -> 1, i -> 1, a -> 1, n -> 1
+
+        Total: 1 (for '.') + 1 (for '/') + 4 (pub) + 1 (for '/') + 8 (mirror) + 1 (for '/') + 8 (debian) = 1+1+4+1+8+1+8 = 24
+
+   But the size field is 19. This does not match.
+
+   Alternatively, the regex might be capturing the target length as the fifth field? But the fifth field in the line is '19' and the target is 24 characters.
+
+   Without knowing the exact regex pattern, we cannot be sure.
+
+   However, the function is defined to use the fifth group as the size. The function does:
+
+        details["size"] = int(size)
+
+   So if the size is 19, then it will be 19.
+
+   Then, the function returns:
+
+        raw_info = {
+            "basic": {"name": "debian", "is_dir": True},   (because it's a link, so is_dir is True)
+            "details": {
+                "size": 19,
+                "type": int(ResourceType.directory)   # because is_dir is True
+            },
+            "access": {
+                "permissions": permissions.dump(),   # which would be something like 'l-rwxrwxrwx' or similar?
+                "user": '0',
+                "group": '0'
+            },
+            "ftp": {"ls": 'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian'}
+        }
+
+   And if mtime_epoch is not None, it adds the modified time.
+
+   The _parse_time function is called with mtime = 'Jan 18  2006'. Let's assume the function _parse_time can parse that and returns an integer epoch time.
+
+   But note: the provided match string for mtime is '19 Jan 18  2006'? Actually, the function's mtime is the sixth group, which is the date string. In the provided match string, the sixth group is '19 Jan 18  2006' (if the regex groups are as above). But wait, the groups are:
+
+        Group1: perms
+        Group2: links
+        Group3: uid
+        Group4: gid
+        Group5: size (which is the fifth field, which is the day in this case)
+        Group6: mtime (the sixth field, which is the date string)
+
+   But in the line, the sixth field is the date and time? Actually, the line has:
+
+        'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian'
+
+   The fields are:
+
+        Field1: 'lrwxrwxrwx'
+        Field2: '1'
+        Field3: '0'
+        Field4: '0'
+        Field5: '19' (the day)
+        Field6: 'Jan 18  2006' (the month, day, and year) -> but wait, the line has two spaces between '18' and '2006'? 
+
+   Actually, the line is:
+
+        'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian'
+
+   The fields are separated by spaces. The sixth field is 'Jan 18  2006' (with two spaces between '18' and '2006').
+
+   The function expects the mtime to be a string that can be parsed by _parse_time. The _parse_time function might be defined to parse:
+
+        'Jan 18 2006'
+
+   But the string is 'Jan 18  2006'. The double space might cause a problem.
+
+   Alternatively, the regex might be capturing the date without the extra space.
+
+   Without the exact regex pattern, we cannot be sure.
+
+   However, the problem is to output what we expect. We must assume the function works as intended.
+
+   Let's assume the function returns:
+
+        {
+          "basic": {"name": "debian", "is_dir": true},
+          "details": {
+            "size": 19,
+            "type": 2   (assuming ResourceType.directory is 2)
+          },
+          "access": {
+            "permissions": "l-rwxrwxrwx",   (or whatever the dump returns)
+            "user": "0",
+            "group": "0"
+          },
+          "ftp": {"ls": 'lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian'}
+        }
+
+   And the mtime_epoch is set to the epoch time of 'Jan 18  2006' (if the _parse_time function returns a number).
+
+   But note: the function does:
+
+        mtime_epoch = _parse_time(mtime)
+
+   So if _parse_time returns None, then the 'modified' key is not added.
+
+   We don't know what _parse_time does, but let's assume it returns a number.
+
+   Therefore, the output is a dictionary.
+
+   However, the problem does not specify the expected output format, so we must output the dictionary as a string in JSON format? Or as a Python dictionary?
+
+   The problem says: "What output do you expect from it?"
+
+   Since the function returns a dictionary, we can output it as a string representation.
+
+   But note: the function returns a dictionary, and the caller might use it. We are not told how the output is used.
+
+   But the problem says: "Answer using <ans></ans> tags"
+
+   So we must output the expected dictionary in a specific format.
+
+   Let's assume the function returns the dictionary and we are to output it in a way that is consistent with the code.
+
+   However, the function returns a dictionary, and the dictionary contains nested dictionaries and an integer for the type.
+
+   We'll output the dictionary in a formatted way.
+
+   But note: the function returns a dictionary with keys: "basic", "details", "access", "ftp".
+
+   We'll write the expected output as a JSON-like string.
+
+   However, the function uses a class `ResourceType` and `Permissions` which are not defined. We must assume the dump method returns a string representation.
+
+   Let's assume:
+
+        permissions.dump() returns the string representation of the permissions. For the given perms 'lrwxrwxrwx', the Permissions.parse(perms[1:]) would parse the string 'rwxrwxrwx'. The dump might return 'rwxrwxrwx' or a string with the owner, group, and others in a specific format.
+
+   But the function is called `decode_linux`, so it is likely that the permissions are parsed and then dumped in a standard way.
+
+   Without knowing the exact implementation of Permissions, we cannot be sure.
+
+   But note: the function sets:
+
+        access["permissions"] = permissions.dump()
+
+   And the dump method returns a string.
+
+   Let's assume it returns a string like 'rwxrwxrwx' (without the leading 'l').
+
+   But wait, the perms string is 'lrwxrwxrwx'. The function does:
+
+        perms[1:] -> 'rwxrwxrwx'
+
+   So the Permissions.parse will parse the string 'rwxrwxrwx' and then dump it. The dump might be 'rwxrwxrwx' or a string with the user, group, and others.
+
+   Typically, the permissions for a symlink are represented with a leading 'l' but the function already removed the first character. The Permissions class might be designed to parse the 9-character string and then represent it.
+
+   We don't know.
+
+   But note: the function is called `decode_linux`, so it is likely that the Permissions class is a standard one.
+
+   Given the complexity and the fact that the problem does not provide the implementation of Permissions, we must make an educated guess.
+
+   Let's assume the dump returns a string of the form "rwxrwxrwx", but note that the original perms string is 'lrwxrwxrwx'. The Permissions.parse(perms[1:]) would parse the string 'rwxrwxrwx', which is a valid 9-character string for a directory (if it were 'd') or a file. But for a symlink, the first character is 'l'. The function removes the first character and then parses the rest.
+
+   The Permissions class might be designed to represent the permissions without the first character.
+
+   So we'll assume the dump returns the string 'rwxrwxrwx'.
+
+   But note: the function sets:
+
+        access["permissions"] = permissions.dump()
+
+   So the access permissions will be 'rwxrwxrwx'.
+
+   Now, let's put it all together.
+
+   Expected output dictionary:
+
+   {
+        "basic": {
+            "name": "debian",
+            "is_dir": true
+        },
+        "details": {
+            "size": 19,
+            "type": 2   (assuming ResourceType.directory is 2)
+        },
+        "access": {
+            "permissions": "rwxrwxrwx",
+            "user": "0",
+            "group": "0"
+        },
+        "ftp": {
+            "ls": "lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian"
+        }
+   }
+
+   But note: the function sets is_dir to True because it's a link. In the details, the type is set to ResourceType.directory (which is 2). But is that correct? Symlinks are not directories. 
+
+   The function sets:
+
+        is_dir = perms.startswith("d") or is_link
+
+   So if it's a link, then is_dir is True. But a symlink is not a directory. This might be a bug in the function.
+
+   However, the problem is to expect the output of the function. We must output what the function returns.
+
+   The function returns:
+
+        raw_info = {
+            ...,
+            "details": {
+                "size": 19,
+                "type": int(ResourceType.directory if is_dir else ResourceType.file),
+            },
+
+   Since is_dir is True, it will be ResourceType.directory.
+
+   But note: the function also sets the basic.is_dir to True.
+
+   So the output will have is_dir: true and type: directory.
+
+   This might be incorrect, but the function is defined this way.
+
+   Now, let's write the expected output in the required format.
+
+   We must output the dictionary in a way that is similar to the code.
+
+   But note: the function returns a dictionary, and we are to use the <ans> tags.
+
+   We'll output:
+
+        <ans>
+        {
+            "basic": {"name": "debian", "is_dir": true},
+            "details": {
+                "size": 19,
+                "type": 2
+            },
+            "access": {
+                "permissions": "rwxrwxrwx",
+                "user": "0",
+                "group": "0"
+            },
+            "ftp": {"ls": "lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian"}
+        }</ans>
+
+   However, note that the function might have other details. We assumed the mtime_epoch is set and the type is 2.
+
+   But the problem does not specify the exact values for the mtime and the ResourceType. We must assume the function works as defined.
+
+   Let me reiterate: the function returns a dictionary with the structure shown above.
+
+   But note: the function also normalizes the name with unicodedata. The name is "debian", which is already normalized.
+
+   We'll output the above.
+
+   However, the function might have other details. For example, the _parse_time might fail and return None, then the details would not have a "modified" key.
+
+   But the problem does not specify the date parsing, so we assume it works.
+
+   Given the above, the expected output is the dictionary shown.
+
+   But note: the function returns a dictionary, and we are to output it in a way that is similar to the code.
+
+   We'll output the dictionary in a string format.
+
+   However, the problem does not specify the format of the output. We are to use the <ans> tags and put the output inside.
+
+   Let's write the answer.
+
+</think>
+
+=== RAW ANSWER ===
+
+The output from the `decode_linux` function is a dictionary containing parsed information from the input line. The input line represents a symbolic link, so the function processes it accordingly. Here's the expected output:
+
+```json
+{
+  "basic": {
+    "name": "debian",
+    "is_dir": true
+  },
+  "details": {
+    "size": 19,
+    "type": 2
+  },
+  "access": {
+    "permissions": "rwxrwxrwx",
+    "user": "0",
+    "group": "0"
+  },
+  "ftp": {
+    "ls": "lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian"
+  }
+}
+```
+
+**Explanation:**
+- **Permissions:** The `perms` field is `'lrwxrwxrwx'`, so the inner `Permissions.parse` processes `'rwxrwxrwx'` (stripping the first `'l'`), and `dump()` returns `'rwxrwxrwx'`.
+- **Links and UID/GID:** The `links` field is `'1'`, `uid` is `'0'`, and `gid` is `'0'`.
+- **Size:** The `size` field is `'19'`, interpreted as the target length of the symlink.
+- **Name:** The `name` field is `'debian'` (after stripping the link target `-> ./pub/mirror/debian`).
+- **is_dir:** Set to `true` because it's a symlink (due to `perms.startswith('l')`).
+- **FTP:** The entire input line is stored under the `"ftp"` key for reference.
+
+The `_parse_time` function would attempt to convert `'Jan 18  2006'` to an epoch timestamp, but since the exact implementation isn't shown, it's omitted if parsing fails.
+
+=== PARSED ANSWER ===
+The output from the `decode_linux` function is a dictionary containing parsed information from the input line. The input line represents a symbolic link, so the function processes it accordingly. Here's the expected output:
+
+```json
+{
+  "basic": {
+    "name": "debian",
+    "is_dir": true
+  },
+  "details": {
+    "size": 19,
+    "type": 2
+  },
+  "access": {
+    "permissions": "rwxrwxrwx",
+    "user": "0",
+    "group": "0"
+  },
+  "ftp": {
+    "ls": "lrwxrwxrwx    1 0        0              19 Jan 18  2006 debian -> ./pub/mirror/debian"
+  }
+}
+```
+
+**Explanation:**
+- **Permissions:** The `perms` field is `'lrwxrwxrwx'`, so the inner `Permissions.parse` processes `'rwxrwxrwx'` (stripping the first `'l'`), and `dump()` returns `'rwxrwxrwx'`.
+- **Links and UID/GID:** The `links` field is `'1'`, `uid` is `'0'`, and `gid` is `'0'`.
+- **Size:** The `size` field is `'19'`, interpreted as the target length of the symlink.
+- **Name:** The `name` field is `'debian'` (after stripping the link target `-> ./pub/mirror/debian`).
+- **is_dir:** Set to `true` because it's a symlink (due to `perms.startswith('l')`).
+- **FTP:** The entire input line is stored under the `"ftp"` key for reference.
+
+The `_parse_time` function would attempt to convert `'Jan 18  2006'` to an epoch timestamp, but since the exact implementation isn't shown, it's omitted if parsing fails.
