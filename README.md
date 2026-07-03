@@ -13,7 +13,7 @@ This repository provides the code and resources for analyzing reasoning patterns
 We study four representative coding tasks: code generation, code execution reasoning, program debugging, and code translation. The repository is organized by research questions (RQ1-RQ3) with runnable scripts, benchmark adapters, intermediate results, and paper-ready visualization utilities.
 
 <p align="center">
-  <img src="assets/framework.png" alt="Reasoning-pattern analysis framework" width="750">
+  <img src="framework.png" alt="Reasoning-pattern analysis framework" width="750">
 </p>
 
 ## Repository Structure
@@ -48,7 +48,7 @@ ICSE_2027/
 │
 ├── utils/                                      # Shared API, runtime config, and JSONL helpers
 ├── visualization/                              # Paper-ready figures and tables
-├── assets/                                     # README assets
+├── framework.png                               # Overview figure
 └── README.md
 ```
 
@@ -133,5 +133,5 @@ The shared runtime loader resolves `BASE_URL`, `API_KEY`, and `MODEL` from eithe
 
 - Keep API keys, session tokens, and local paths out of version control. Use `.env` for local runtime configuration.
 - Large per-task text outputs, generated code, and raw JSONL traces can be regenerated and are ignored by default.
-- The paper workspace `_ICSE_2027__COT_Analysis/` is local-only; README assets that should render on GitHub are copied to `assets/`.
+- The paper workspace `_ICSE_2027__COT_Analysis/` is local-only; README uses the top-level `framework.png` for the overview figure.
 - If a top-level README becomes too long after adding full reproduction commands, split detailed commands into RQ-specific README files under the corresponding `rq*` directories.
