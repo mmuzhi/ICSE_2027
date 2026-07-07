@@ -245,7 +245,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=10,
+        default=30,
         help="Number of parallel workers",
     )
     parser.add_argument(
