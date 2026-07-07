@@ -17,6 +17,15 @@ from utils import api_defaults, append_result_to_file, load_existing_task_ids, s
 
 sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
 
+TASK_OUTPUT_DIRS = {
+    "generation": "Generate_COT",
+    "execution": "Execution_COT",
+    "debug": "Debug_COT",
+    "translation": "Translation_COT",
+}
+EXTRA_BODY = {"chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}}
+
+
 class SlidingWindowLimiter:
     def __init__(self, limit_count: int, window_minutes: int = 1):
         self.limit_count = limit_count
@@ -151,7 +160,7 @@ class COTSegmenter:
                         temperature=self.temperature,
                         max_tokens=self.max_tokens,
                         top_p=self.top_p,
-                        extra_body={"chat_template_kwargs": {"thinking": True}},
+                        extra_body=EXTRA_BODY,
                         stream=True
                     )
                     is_watched = self.watch_enabled and (self.watched_task_id is not None) and (task_id == self.watched_task_id)
@@ -163,7 +172,7 @@ class COTSegmenter:
                         temperature=self.temperature,
                         max_tokens=self.max_tokens,
                         top_p=self.top_p,
-                        extra_body={"chat_template_kwargs": {"thinking": True}},
+                        extra_body=EXTRA_BODY,
                         stream=False
                     )
                     full_content = resp.choices[0].message.content if resp and resp.choices else ""
@@ -217,7 +226,12 @@ def process_single_sample(segmenter: COTSegmenter, sample: dict, idx: int, proce
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="COT segmentation runner with Rate Limiting")
-    parser.add_argument("--num", type=int, default=None, help="Limit number of new COT tasks to process")
+    parser.add_argument("--task", choices=sorted(TASK_OUTPUT_DIRS), default="translation", help="RQ1 task to segment")
+    parser.add_argument("--trace-model", default="glm5.1", help="Trace-source model directory, e.g., r1, qwen, glm5.1")
+    parser.add_argument("--dataset-path", default=None, help="Override input results.jsonl path")
+    parser.add_argument("--output-dir", default=None, help="Override output directory")
+    parser.add_argument("--output-file", default=None, help="Override output segmented_results.jsonl path")
+    parser.add_argument("--num", type=int, default=-1, help="Limit number of new COT tasks to process")
     parser.add_argument("--rpm", type=int, default=30, help="Requests Count Limit (in the window)")
     parser.add_argument("--window", type=int, default=1, help="Time window in minutes (e.g. 5 means limit applies to 5 mins)")
     parser.add_argument("--prompt-file", default="segmentation_prompt.txt", help="Path to prompt file")
@@ -225,6 +239,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
     parser.add_argument("--no-watch", action="store_true", help="Do not live-print the first task's output")
     return parser.parse_args()
+
+
+def default_dataset_path(project_root: Path, task: str, trace_model: str) -> Path:
+    base = project_root / "data" / "derived_cot" / "rq1_traces" / task / trace_model
+    direct_path = base / "results.jsonl"
+    if direct_path.exists() or task != "generation":
+        return direct_path
+    return base / "v4_v6" / "results.jsonl"
+
 
 def main():
     args = parse_args()
@@ -242,10 +265,18 @@ def main():
     if not api_key:
         raise ValueError("Missing API key. Set API_KEY / <ALIAS>_API_KEY in .env.")
 
-    dataset_path = project_root / "data" / "derived_cot" / "rq1_traces" / "execution" / "qwen" / "results.jsonl"
-    output_dir = project_root / "data" / "derived_cot" / "rq1_segmented" / "Execution_COT" / "qwen"
-    output_dir.mkdir(exist_ok=True)
-    output_file = output_dir / "segmented_results.jsonl"
+    dataset_path = Path(args.dataset_path) if args.dataset_path else default_dataset_path(
+        project_root, args.task, args.trace_model
+    )
+    output_dir = Path(args.output_dir) if args.output_dir else (
+        project_root / "data" / "derived_cot" / "rq1_segmented" / TASK_OUTPUT_DIRS[args.task] / args.trace_model
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = Path(args.output_file) if args.output_file else output_dir / "segmented_results.jsonl"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Input results.jsonl not found: {dataset_path}")
 
     processed_ids = load_existing_task_ids(str(output_file))
     dataset = load_dataset(dataset_path)
@@ -258,6 +289,10 @@ def main():
     watched_task_id = dataset[0].get("task_id", "unknown_0")
 
     limiter = SlidingWindowLimiter(limit_count=args.rpm, window_minutes=args.window)
+    print(f"Input: {dataset_path}")
+    print(f"Output: {output_file}")
+    print(f"Trace model: {args.trace_model}")
+    print(f"Segmentation API model: {model}")
     print(f"Rate Limiter initialized: {args.rpm} requests / {args.window} minutes")
 
     segmenter = COTSegmenter(
