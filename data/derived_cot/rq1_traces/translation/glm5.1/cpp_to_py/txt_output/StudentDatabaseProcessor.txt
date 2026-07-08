@@ -1,0 +1,433 @@
+=== SOURCE CODE (cpp) ===
+
+#include <iostream>
+#include <sstream>
+
+#include <string>
+#include <map>
+#include <vector>
+#include <winsqlite/winsqlite3.h>
+
+class StudentDatabaseProcessor {
+public:
+    explicit StudentDatabaseProcessor(const std::string& database_name);
+    void create_student_table();
+    void insert_student(const std::map<std::string, std::string>& student_data);
+    std::vector<std::map<std::string, std::string>> search_student_by_name(const std::string& name);
+    void delete_student_by_name(const std::string& name);
+
+private:
+    std::string database_name;
+
+    void execute_query(const std::string& query, const std::vector<std::string>& params);
+    std::vector<std::vector<std::string>> query_result(const std::string& query, const std::vector<std::string>& params);
+};
+
+StudentDatabaseProcessor::StudentDatabaseProcessor(const std::string& database_name)
+    : database_name(database_name) {}
+
+void StudentDatabaseProcessor::create_student_table() {
+    std::string create_table_query = R"(
+        CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY,
+            name TEXT,
+            age INTEGER,
+            gender TEXT,
+            grade INTEGER
+        )
+    )";
+
+    execute_query(create_table_query, {});
+}
+
+void StudentDatabaseProcessor::insert_student(const std::map<std::string, std::string>& student_data) {
+    std::string insert_query = R"(
+        INSERT INTO students (name, age, gender, grade)
+        VALUES (?, ?, ?, ?)
+    )";
+
+    std::vector<std::string> params = {
+        student_data.at("name"),
+        student_data.at("age"),
+        student_data.at("gender"),
+        student_data.at("grade")
+    };
+
+    execute_query(insert_query, params);
+}
+
+std::vector<std::map<std::string, std::string>> StudentDatabaseProcessor::search_student_by_name(const std::string& name) {
+    std::string select_query = R"(
+        SELECT * FROM students WHERE name = ?
+    )";
+
+    std::vector<std::string> params = { name };
+    std::vector<std::vector<std::string>> results = query_result(select_query, params);
+
+    std::vector<std::map<std::string, std::string>> students;
+    for (const auto& row : results) {
+        std::map<std::string, std::string> student;
+        student["id"] = row[0];
+        student["name"] = row[1];
+        student["age"] = row[2];
+        student["gender"] = row[3];
+        student["grade"] = row[4];
+        students.push_back(student);
+    }
+
+    return students;
+}
+
+void StudentDatabaseProcessor::delete_student_by_name(const std::string& name) {
+    std::string delete_query = R"(
+        DELETE FROM students WHERE name = ?
+    )";
+
+    std::vector<std::string> params = { name };
+    execute_query(delete_query, params);
+}
+
+void StudentDatabaseProcessor::execute_query(const std::string& query, const std::vector<std::string>& params) {
+    sqlite3* conn;
+    sqlite3_open(database_name.c_str(), &conn);
+
+    sqlite3_stmt* stmt;
+    sqlite3_prepare_v2(conn, query.c_str(), -1, &stmt, nullptr);
+
+    for (size_t i = 0; i < params.size(); ++i) {
+        sqlite3_bind_text(stmt, static_cast<int>(i + 1), params[i].c_str(), -1, SQLITE_STATIC);
+    }
+
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    sqlite3_close(conn);
+}
+
+std::vector<std::vector<std::string>> StudentDatabaseProcessor::query_result(const std::string& query, const std::vector<std::string>& params) {
+    sqlite3* conn;
+    sqlite3_open(database_name.c_str(), &conn);
+
+    sqlite3_stmt* stmt;
+    sqlite3_prepare_v2(conn, query.c_str(), -1, &stmt, nullptr);
+
+    for (size_t i = 0; i < params.size(); ++i) {
+        sqlite3_bind_text(stmt, static_cast<int>(i + 1), params[i].c_str(), -1, SQLITE_STATIC);
+    }
+
+    std::vector<std::vector<std::string>> results;
+    int result = sqlite3_step(stmt);
+    while (result == SQLITE_ROW) {
+        std::vector<std::string> row;
+        for (int i = 0; i < sqlite3_column_count(stmt); ++i) {
+            row.push_back(reinterpret_cast<const char*>(sqlite3_column_text(stmt, i)));
+        }
+        results.push_back(row);
+        result = sqlite3_step(stmt);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(conn);
+
+    return results;
+}
+
+
+=== REASONING ===
+<think>
+Let me translate this C++ code to Python, keeping the behavior identical.
+
+The C++ code defines a `StudentDatabaseProcessor` class that interacts with a SQLite database. It:
+
+1. Takes a database name in the constructor
+2. Creates a student table
+3. Inserts students
+4. Searches students by name
+5. Deletes students by name
+
+Key behaviors to preserve:
+- All parameters are bound as text (sqlite3_bind_text)
+- Results are returned as strings
+- The `at()` method throws if key doesn't exist (Python's dict access does the same with KeyError)
+- The column order mapping: id, name, age, gender, grade
+- Each query opens and closes a new connection
+
+Let me write the Python equivalent using the `sqlite3` module.
+
+Important notes:
+- In C++, `student_data.at("name")` throws `std::out_of_range` if key doesn't exist. In Python, `student_data["name"]` raises `KeyError`. This is equivalent behavior.
+- The C++ code binds all parameters as text. In Python's sqlite3, we need to ensure parameters are passed as strings to maintain identical behavior.
+- The C++ code opens and closes a connection for each query. I'll replicate this.
+- `sqlite3_column_text` returns NULL for NULL values - in C++ this would be undefined behavior with reinterpret_cast. In Python, sqlite3 returns None for NULL columns. The C++ code doesn't handle this, so I'll just let Python do its thing (return None for NULLs, but since all columns have values in normal use, this should be fine).
+
+Actually, let me reconsider. The C++ code uses `sqlite3_column_text` and casts to `const char*`. If a column is NULL, this returns nullptr, and pushing that into a std::string would be undefined behavior. So the C++ code assumes no NULLs. In Python, I should convert None to some string or just let it be. To keep behavior identical, I'll convert results to strings.
+
+Actually, looking more carefully - the C++ code pushes `reinterpret_cast<const char*>(sqlite3_column_text(stmt, i))` into a `std::string`. If the value is NULL, sqlite3_column_text returns nullptr, and constructing a std::string from nullptr is undefined behavior (likely crash). So the C++ code assumes no NULL values.
+
+In Python, to match the behavior, I should convert all results to strings. If a column is NULL, it would be None in Python. I'll convert to string representation to match the C++ behavior as closely as possible, but since C++ would crash on NULL, I'll just convert to str which would give 'None'. Actually, let me just keep it simple and convert to strings.
+
+Wait, let me think about this more carefully. The C++ code stores everything as strings (std::vector<std::string>). In Python, sqlite3 returns native Python types (int for INTEGER, str for TEXT, etc.). To match the C++ behavior where everything is a string, I should convert all results to strings.
+
+Let me write the Python code:
+
+```python
+import sqlite3
+
+
+class StudentDatabaseProcessor:
+    def __init__(self, database_name):
+        self.database_name = database_name
+
+    def create_student_table(self):
+        create_table_query = """
+            CREATE TABLE IF NOT EXISTS students (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                age INTEGER,
+                gender TEXT,
+                grade INTEGER
+            )
+        """
+        self._execute_query(create_table_query, [])
+
+    def insert_student(self, student_data):
+        insert_query = """
+            INSERT INTO students (name, age, gender, grade)
+            VALUES (?, ?, ?, ?)
+        """
+        params = [
+            student_data["name"],
+            student_data["age"],
+            student_data["gender"],
+            student_data["grade"],
+        ]
+        self._execute_query(insert_query, params)
+
+    def search_student_by_name(self, name):
+        select_query = """
+            SELECT * FROM students WHERE name = ?
+        """
+        params = [name]
+        results = self._query_result(select_query, params)
+
+        students = []
+        for row in results:
+            student = {
+                "id": row[0],
+                "name": row[1],
+                "age": row[2],
+                "gender": row[3],
+                "grade": row[4],
+            }
+            students.append(student)
+
+        return students
+
+    def delete_student_by_name(self, name):
+        delete_query = """
+            DELETE FROM students WHERE name = ?
+        """
+        params = [name]
+        self._execute_query(delete_query, params)
+
+    def _execute_query(self, query, params):
+        conn = sqlite3.connect(self.database_name)
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+        conn.close()
+
+    def _query_result(self, query, params):
+        conn = sqlite3.connect(self.database_name)
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        results = []
+        for row in cursor.fetchall():
+            results.append([str(col) for col in row])
+        conn.close()
+        return results
+```
+
+Wait, I need to think about the parameter binding. In C++, all parameters are bound as text using `sqlite3_bind_text`. This means even integers are sent as text strings to SQLite, which then converts them. In Python's sqlite3, parameters are passed with their native Python types.
+
+To match the C++ behavior exactly, I should ensure all parameters are passed as strings. But actually, SQLite's type affinity system handles this - if you bind "25" as text for an INTEGER column, SQLite will still store it as an integer. The behavior should be the same.
+
+However, there's a subtle difference: in C++, all params are strings. In Python, if someone passes an integer in the student_data dict, it would be passed as an integer. But since the C++ code uses `std::map<std::string, std::string>`, all values are strings. In Python, the student_data dict values could be anything. To match the C++ behavior, I should convert params to strings.
+
+Actually, let me just convert all params to strings to match the C++ behavior of binding everything as text:
+
+```python
+params = [str(p) for p in params]
+```
+
+Hmm, but this might change behavior for edge cases. Let me just keep it as-is since the student_data is expected to have string values (matching the C++ `std::map<std::string, std::string>`).
+
+For the results, in C++ everything is stored as `std::string`. In Python, sqlite3 returns native types. I should convert to strings to match. Using `str()` would convert `25` to `"25"` and `"John"` to `"John"`, which matches the C++ behavior.
+
+Actually wait - for None values, `str(None)` gives `"None"` which is wrong. But as I noted, the C++ code would crash on NULL values, so this is an edge case that's already broken in C++. I'll handle it the same way - just convert to str.
+
+Let me finalize the code.
+</think>
+
+=== RAW ANSWER ===
+```python
+import sqlite3
+
+
+class StudentDatabaseProcessor:
+    def __init__(self, database_name):
+        self.database_name = database_name
+
+    def create_student_table(self):
+        create_table_query = """
+            CREATE TABLE IF NOT EXISTS students (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                age INTEGER,
+                gender TEXT,
+                grade INTEGER
+            )
+        """
+        self._execute_query(create_table_query, [])
+
+    def insert_student(self, student_data):
+        insert_query = """
+            INSERT INTO students (name, age, gender, grade)
+            VALUES (?, ?, ?, ?)
+        """
+        params = [
+            student_data["name"],
+            student_data["age"],
+            student_data["gender"],
+            student_data["grade"],
+        ]
+        self._execute_query(insert_query, params)
+
+    def search_student_by_name(self, name):
+        select_query = """
+            SELECT * FROM students WHERE name = ?
+        """
+        params = [name]
+        results = self._query_result(select_query, params)
+
+        students = []
+        for row in results:
+            student = {
+                "id": row[0],
+                "name": row[1],
+                "age": row[2],
+                "gender": row[3],
+                "grade": row[4],
+            }
+            students.append(student)
+
+        return students
+
+    def delete_student_by_name(self, name):
+        delete_query = """
+            DELETE FROM students WHERE name = ?
+        """
+        params = [name]
+        self._execute_query(delete_query, params)
+
+    def _execute_query(self, query, params):
+        conn = sqlite3.connect(self.database_name)
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+        conn.close()
+
+    def _query_result(self, query, params):
+        conn = sqlite3.connect(self.database_name)
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        results = []
+        for row in cursor.fetchall():
+            results.append([str(col) for col in row])
+        conn.close()
+        return results
+```
+
+Key translation notes:
+
+- **Connection lifecycle**: The C++ code opens/closes a new `sqlite3` connection for every query. The Python version replicates this exactly with `sqlite3.connect()` / `conn.close()` per call.
+- **Parameter binding as text**: C++ uses `sqlite3_bind_text` for all parameters. Python's `sqlite3` module handles type adaptation automatically, producing equivalent behavior since SQLite performs the same text→integer coercion on its end.
+- **Results as strings**: C++ stores all column values as `std::string` via `sqlite3_column_text`. The Python version converts every column to `str` to match, so `25` (INTEGER) becomes `"25"`, identical to the C++ behavior.
+- **`student_data.at()` → `student_data[]`**: Both throw an exception on missing keys (`std::out_of_range` vs `KeyError`), preserving the fail-fast behavior.
+- **`std::map` ordering**: C++ `std::map` is sorted by key; Python `dict` preserves insertion order. This doesn't affect behavior since the map is only used for key lookup, not iteration order.
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+
+
+class StudentDatabaseProcessor:
+    def __init__(self, database_name):
+        self.database_name = database_name
+
+    def create_student_table(self):
+        create_table_query = """
+            CREATE TABLE IF NOT EXISTS students (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                age INTEGER,
+                gender TEXT,
+                grade INTEGER
+            )
+        """
+        self._execute_query(create_table_query, [])
+
+    def insert_student(self, student_data):
+        insert_query = """
+            INSERT INTO students (name, age, gender, grade)
+            VALUES (?, ?, ?, ?)
+        """
+        params = [
+            student_data["name"],
+            student_data["age"],
+            student_data["gender"],
+            student_data["grade"],
+        ]
+        self._execute_query(insert_query, params)
+
+    def search_student_by_name(self, name):
+        select_query = """
+            SELECT * FROM students WHERE name = ?
+        """
+        params = [name]
+        results = self._query_result(select_query, params)
+
+        students = []
+        for row in results:
+            student = {
+                "id": row[0],
+                "name": row[1],
+                "age": row[2],
+                "gender": row[3],
+                "grade": row[4],
+            }
+            students.append(student)
+
+        return students
+
+    def delete_student_by_name(self, name):
+        delete_query = """
+            DELETE FROM students WHERE name = ?
+        """
+        params = [name]
+        self._execute_query(delete_query, params)
+
+    def _execute_query(self, query, params):
+        conn = sqlite3.connect(self.database_name)
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+        conn.close()
+
+    def _query_result(self, query, params):
+        conn = sqlite3.connect(self.database_name)
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        results = []
+        for row in cursor.fetchall():
+            results.append([str(col) for col in row])
+        conn.close()
+        return results

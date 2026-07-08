@@ -1,0 +1,938 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+public class Server {
+
+    private List<Integer> whiteList;
+    private Map<String, Object> sendStruct;
+    private Map<String, Object> receiveStruct;
+
+    public Server() {
+        this.whiteList = new ArrayList<>();
+        this.sendStruct = new HashMap<>();
+        this.receiveStruct = new HashMap<>();
+    }
+
+    public List<Integer> addWhiteList(int addr) {
+        if (whiteList.contains(addr)) {
+            return null;
+        } else {
+            whiteList.add(addr);
+            return whiteList;
+        }
+    }
+
+    public List<Integer> delWhiteList(int addr) {
+        if (!whiteList.contains(addr)) {
+            return null;
+        } else {
+            whiteList.remove(Integer.valueOf(addr));
+            return whiteList;
+        }
+    }
+
+    public Object recv(Map<String, Object> info) {
+        if (info == null || !info.containsKey("addr") || !info.containsKey("content")) {
+            return -1;
+        }
+        int addr = (int) info.get("addr");
+        String content = (String) info.get("content");
+        if (!whiteList.contains(addr)) {
+            return false;
+        } else {
+            receiveStruct.put("addr", addr);
+            receiveStruct.put("content", content);
+            return receiveStruct.get("content");
+        }
+    }
+
+    public String send(Map<String, Object> info) {
+        if (info == null || !info.containsKey("addr") || !info.containsKey("content")) {
+            return "info structure is not correct";
+        }
+        sendStruct.put("addr", info.get("addr"));
+        sendStruct.put("content", info.get("content"));
+        return null;
+    }
+
+    public Map<String, Object> show(String type) {
+        if ("send".equals(type)) {
+            return sendStruct;
+        } else if ("receive".equals(type)) {
+            return receiveStruct;
+        } else {
+            return null;
+        }
+    }
+}
+
+=== REASONING ===
+<think>
+The user wants to translate a Java class to C++.
+The class is `Server` with:
+- `List<Integer> whiteList`
+- `Map<String, Object> sendStruct`
+- `Map<String, Object> receiveStruct`
+
+In C++:
+- `List<Integer>` -> `std::vector<int>`
+- `Map<String, Object>` -> `std::map<std::string, std::any>` or `std::unordered_map<std::string, std::any>` or a custom variant type. Since Java's `Object` can hold `Integer` and `String`, `std::any` is the closest equivalent in C++17. Wait, the return type of `recv` is `Object`, which could return `-1` (Integer), `false` (Boolean), or `String`. `std::any` can hold all of these. Wait, `std::any` doesn't support implicit conversion from `-1` or `false` automatically in the same way, but we can just return `std::any(-1)`, `std::any(false)`, `std::any(content)`. Wait, `std::any` is C++17. Is there a better way? Maybe `std::variant<int, bool, std::string, std::map<std::string, std::any>>`? But `Object` in Java is a common base class. In C++, `std::any` is the exact equivalent for `Object`.
+
+Let's look at the methods:
+
+`List<Integer> addWhiteList(int addr)`:
+- returns `null` if `whiteList.contains(addr)`
+- else adds and returns `whiteList`
+In C++, we can return a pointer `std::vector<int>*` or `std::optional<std::reference_wrapper<std::vector<int>>>`. Since Java returns `null` or the list reference, returning a pointer is the closest. But pointers to members can be risky. Alternatively, `std::vector<int>* addWhiteList(int addr)` which returns `nullptr` or `&whiteList`. Let's use pointer to match Java's nullability and reference semantics. Or `std::optional<std::reference_wrapper<std::vector<int>>>`. A pointer is simpler and more idiomatic for "nullable reference" in C++.
+
+Wait, if we use `std::any` for `Object`, `std::map<std::string, std::any>` for `Map<String, Object>`.
+Let's check `recv(Map<String, Object> info)`:
+```java
+public Object recv(Map<String, Object> info) {
+    if (info == null || !info.containsKey("addr") || !info.containsKey("content")) {
+        return -1;
+    }
+    int addr = (int) info.get("addr");
+    String content = (String) info.get("content");
+    if (!whiteList.contains(addr)) {
+        return false;
+    } else {
+        receiveStruct.put("addr", addr);
+        receiveStruct.put("content", content);
+        return receiveStruct.get("content");
+    }
+}
+```
+In C++:
+```cpp
+std::any recv(const std::map<std::string, std::any>* info) {
+    if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+        return -1;
+    }
+    int addr = std::any_cast<int>(info->at("addr"));
+    std::string content = std::any_cast<std::string>(info->at("content"));
+    if (std::find(whiteList.begin(), whiteList.end(), addr) == whiteList.end()) {
+        return false;
+    } else {
+        receiveStruct["addr"] = addr;
+        receiveStruct["content"] = content;
+        return receiveStruct["content"];
+    }
+}
+```
+Wait, Java `Map` can be passed as null. In C++, we can pass `const std::map<std::string, std::any>*` or `std::optional<const std::map<std::string, std::any>&>`. Pointer is closer to Java's nullability.
+
+`send(Map<String, Object> info)`:
+```java
+public String send(Map<String, Object> info) {
+    if (info == null || !info.containsKey("addr") || !info.containsKey("content")) {
+        return "info structure is not correct";
+    }
+    sendStruct.put("addr", info.get("addr"));
+    sendStruct.put("content", info.get("content"));
+    return null;
+}
+```
+In C++:
+```cpp
+std::string* send(const std::map<std::string, std::any>* info) {
+    if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+        static std::string errorMsg = "info structure is not correct";
+        return &errorMsg; // Or return a pointer to a new string? 
+    }
+    sendStruct["addr"] = info->at("addr");
+    sendStruct["content"] = info->at("content");
+    return nullptr;
+}
+```
+Wait, returning a pointer to a static string is okay, but maybe `std::optional<std::string>`? But Java returns `String` which is a reference type. Returning `std::string*` or `const std::string*` is the closest. Wait, in Java, `String` is immutable, so returning a pointer to a static string is perfectly safe and matches the reference semantics. Or we could return `std::optional<std::string>` but it changes the type from a pointer to a value/optional. The prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions). Use idiomatic C++ only when it doesn't change behavior."
+
+Let's consider `std::any`. It requires C++17.
+Is there an alternative? `std::variant<int, bool, std::string, std::map<std::string, ...>>`? But `Object` can be anything. `std::any` is the exact match for `Object`.
+
+Let's refine the types:
+```cpp
+#include <vector>
+#include <map>
+#include <string>
+#include <any>
+#include <algorithm>
+
+class Server {
+private:
+    std::vector<int> whiteList;
+    std::map<std::string, std::any> sendStruct;
+    std::map<std::string, std::any> receiveStruct;
+
+public:
+    Server() = default;
+
+    std::vector<int>* addWhiteList(int addr) {
+        if (std::find(whiteList.begin(), whiteList.end(), addr) != whiteList.end()) {
+            return nullptr;
+        } else {
+            whiteList.push_back(addr);
+            return &whiteList;
+        }
+    }
+
+    std::vector<int>* delWhiteList(int addr) {
+        auto it = std::find(whiteList.begin(), whiteList.end(), addr);
+        if (it == whiteList.end()) {
+            return nullptr;
+        } else {
+            whiteList.erase(it);
+            return &whiteList;
+        }
+    }
+
+    std::any recv(const std::map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            return -1;
+        }
+        int addr = std::any_cast<int>(info->at("addr"));
+        std::string content = std::any_cast<std::string>(info->at("content"));
+        if (std::find(whiteList.begin(), whiteList.end(), addr) == whiteList.end()) {
+            return false;
+        } else {
+            receiveStruct["addr"] = addr;
+            receiveStruct["content"] = content;
+            return receiveStruct["content"];
+        }
+    }
+
+    const std::string* send(const std::map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            static const std::string errorMsg = "info structure is not correct";
+            return &errorMsg;
+        }
+        sendStruct["addr"] = info->at("addr");
+        sendStruct["content"] = info->at("content");
+        return nullptr;
+    }
+
+    std::map<std::string, std::any>* show(const std::string& type) {
+        if (type == "send") {
+            return &sendStruct;
+        } else if (type == "receive") {
+            return &receiveStruct;
+        } else {
+            return nullptr;
+        }
+    }
+};
+```
+
+Wait, in Java `show` takes `String type`. In C++, `const std::string& type` is idiomatic. If `type` is null in Java, it throws NullPointerException. In C++, passing `null` to `const std::string&` is undefined behavior (or a crash). To perfectly match Java, we might need `const std::string* type` to allow null checks, but Java's `"send".equals(type)` prevents NPE if `type` is null. In C++, `type == "send"` would crash if `type` is a null pointer. If we use `const std::string& type`, we can't pass null, which means we avoid the NPE by design. That's usually acceptable as it "doesn't change behavior" for valid inputs, but changes the exception to a compile error or UB. But wait, in Java, `show(null)` returns `null` because `"send".equals(null)` is false. If we take `const std::string* type`, we can check `if (type == nullptr) return nullptr;` then `if (*type == "send")`. Let's do that to be safe.
+
+Wait, `info` in `recv` and `send` is passed as `Map<String, Object> info`. In Java, this is nullable. So `const std::map<std::string, std::any>* info` is the right translation.
+
+Let's double check `whiteList.remove(Integer.valueOf(addr));` in Java. It removes the first occurrence of the `Integer` object. My C++ `std::find` and `erase` does exactly the same.
+
+Let's check `recv` return type. It returns `Object`. In C++, `std::any` is the closest. It can hold `int`, `bool`, `std::string`, `std::map<...>`. Wait, `receiveStruct.get("content")` is an `Object` containing a `String`. In C++, `receiveStruct["content"]` is `std::any` containing a `std::string`. Returning it as `std::any` perfectly matches Java's `Object` return type.
+
+Wait, `send` returns `String`. In C++, `const std::string*` or `std::string*` or `std::optional<std::string>`. Returning a pointer to a static string is a bit weird but matches Java's reference semantics. What if we return `std::optional<std::string>`? If `send` returns `null`, `std::optional` would be `std::nullopt`. If it returns the error string, it would contain the string. But `std::optional` returns by value, while Java returns a reference to a String. Does it matter? The prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)." Returning a pointer to a static string means the caller can compare pointers, which is exactly what Java does (though string interning makes it tricky). If we return `std::optional<std::string>`, we lose the reference semantics but it's more idiomatic C++. However, returning `const std::string*` is closer to Java's `String` (which is a reference type). Let's use `const std::string*`. Wait, returning `&errorMsg` is safe but the caller might delete it? No, it's `const`. What if we just return `std::string*`? `static std::string errorMsg = "..."; return &errorMsg;`
+
+Wait, in Java, `addWhiteList` returns `List<Integer>`. In C++, `std::vector<int>*`. The caller could delete it, but that's C++'s problem. To prevent deletion, we can return a reference and use `std::optional<std::reference_wrapper<...>>` for nullable references. But pointers are standard for nullable references in C++.
+
+Let's consider `std::any` vs `std::variant`. `std::any` requires C++17, but it's standard now.
+
+Wait, what if `info->at("addr")` is not an `int`? In Java, `(int) info.get("addr")` throws `ClassCastException`. In C++, `std::any_cast<int>` throws `std::bad_any_cast`. This matches the exception behavior perfectly! So `std::any` is definitely the right choice.
+
+Let's check `show` method:
+```java
+    public Map<String, Object> show(String type) {
+        if ("send".equals(type)) {
+            return sendStruct;
+        } else if ("receive".equals(type)) {
+            return receiveStruct;
+        } else {
+            return null;
+        }
+    }
+```
+If we use `const std::string* type`:
+```cpp
+    std::map<std::string, std::any>* show(const std::string* type) {
+        if (type == nullptr) return nullptr;
+        if (*type == "send") {
+            return &sendStruct;
+        } else if (*type == "receive") {
+            return &receiveStruct;
+        } else {
+            return nullptr;
+        }
+    }
+```
+Is it better to take `const std::string& type` and just not support null? In Java, objects are always passed by reference (which can be null). In C++, references can't be null. If we want to perfectly match Java's null-checking behavior, we should use pointers for nullable parameters. But `std::string*` requires the caller to take the address of their string, which is less idiomatic. However, the prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". So passing pointers for nullable objects is the safest way to preserve edge cases (like passing `null`).
+
+Wait, `Map<String, Object> info` is passed as a pointer `const std::map<std::string, std::any>* info`.
+Let's look at `recv` and `send`:
+```cpp
+    std::any recv(const std::map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            return -1;
+        }
+        ...
+```
+This perfectly matches `if (info == null || !info.containsKey("addr") || !info.containsKey("content"))`.
+
+Wait, `info->at("addr")` vs `info->find("addr")->second`. `at` throws `std::out_of_range` if not found, but we already checked with `find`. So `at` is safe and clean.
+
+Let's review the whole C++ code:
+```cpp
+#include <vector>
+#include <map>
+#include <string>
+#include <any>
+#include <algorithm>
+
+class Server {
+private:
+    std::vector<int> whiteList;
+    std::map<std::string, std::any> sendStruct;
+    std::map<std::string, std::any> receiveStruct;
+
+public:
+    Server() = default;
+
+    std::vector<int>* addWhiteList(int addr) {
+        if (std::find(whiteList.begin(), whiteList.end(), addr) != whiteList.end()) {
+            return nullptr;
+        } else {
+            whiteList.push_back(addr);
+            return &whiteList;
+        }
+    }
+
+    std::vector<int>* delWhiteList(int addr) {
+        auto it = std::find(whiteList.begin(), whiteList.end(), addr);
+        if (it == whiteList.end()) {
+            return nullptr;
+        } else {
+            whiteList.erase(it);
+            return &whiteList;
+        }
+    }
+
+    std::any recv(const std::map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            return -1;
+        }
+        int addr = std::any_cast<int>(info->at("addr"));
+        std::string content = std::any_cast<std::string>(info->at("content"));
+        if (std::find(whiteList.begin(), whiteList.end(), addr) == whiteList.end()) {
+            return false;
+        } else {
+            receiveStruct["addr"] = addr;
+            receiveStruct["content"] = content;
+            return receiveStruct["content"];
+        }
+    }
+
+    const std::string* send(const std::map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            static const std::string errorMsg = "info structure is not correct";
+            return &errorMsg;
+        }
+        sendStruct["addr"] = info->at("addr");
+        sendStruct["content"] = info->at("content");
+        return nullptr;
+    }
+
+    std::map<std::string, std::any>* show(const std::string* type) {
+        if (type == nullptr) {
+            return nullptr;
+        }
+        if (*type == "send") {
+            return &sendStruct;
+        } else if (*type == "receive") {
+            return &receiveStruct;
+        } else {
+            return nullptr;
+        }
+    }
+};
+```
+
+Wait, in Java, `send` returns `String`. So it returns a reference to a String. If we return `const std::string*`, it's a pointer to a static string. If the caller compares the returned pointer to `nullptr`, it works. If the caller reads the string, it works. This matches Java perfectly.
+
+Is there any issue with `std::any` containing `-1`? In C++, `-1` is an `int`. In Java, `-1` is an `int` which is autoboxed to `Integer`, which is an `Object`. `std::any` will store it as `int`. This is correct.
+`false` in Java is autoboxed to `Boolean`, which is an `Object`. `std::any` will store it as `bool`. This is correct.
+`receiveStruct["content"]` is `std::any` containing `std::string`. Returning it as `std::any` is correct.
+
+Wait, what if `info->at("addr")` is not an `int` but a `double`? In Java, `(int) info.get("addr")` would throw `ClassCastException` if it's not an `Integer` or if it's a `Double` (since `Double` cannot be cast to `Integer`). In C++, `std::any_cast<int>` will throw `std::bad_any_cast` if it's a `double`. This matches the exception behavior.
+
+What if `info->at("content")` is not a `String`? Java throws `ClassCastException`. C++ throws `std::bad_any_cast`. Matches.
+
+Wait, `show` returns `Map<String, Object>`. In C++, `std::map<std::string, std::any>*`. This matches. If the caller modifies the returned map, it modifies the internal map of `Server`, which is exactly what happens in Java.
+
+One minor point: `Server` class in Java is in `org.example` package. C++ doesn't have packages, so we just omit the package declaration, maybe add a namespace if we want, but it's not strictly necessary. I will omit the namespace to keep it simple, or add `namespace org { namespace example { ... } }`. The prompt doesn't specify. I'll just use `class Server`.
+
+Let's double check `delWhiteList`.
+Java:
+```java
+    public List<Integer> delWhiteList(int addr) {
+        if (!whiteList.contains(addr)) {
+            return null;
+        } else {
+            whiteList.remove(Integer.valueOf(addr));
+            return whiteList;
+        }
+    }
+```
+C++:
+```cpp
+    std::vector<int>* delWhiteList(int addr) {
+        auto it = std::find(whiteList.begin(), whiteList.end(), addr);
+        if (it == whiteList.end()) {
+            return nullptr;
+        } else {
+            whiteList.erase(it);
+            return &whiteList;
+        }
+    }
+```
+This is correct. `whiteList.remove(Integer.valueOf(addr))` removes the first occurrence of the element. `whiteList.erase(it)` removes the element found by `std::find`, which is the first occurrence.
+
+Wait, in Java `addWhiteList` returns `whiteList` after adding. My C++ code does:
+```cpp
+            whiteList.push_back(addr);
+            return &whiteList;
+```
+This is correct.
+
+Let's consider `show` taking `const std::string* type`. Is there a more idiomatic C++ way that doesn't change behavior?
+We could use `std::optional<std::string> type`, but the caller would have to wrap their string in an optional. A pointer is the standard C++ way to pass a nullable argument without transferring ownership.
+
+What about `send` returning `const std::string*`?
+Could we return `std::optional<std::string>`?
+If we return `std::optional<std::string>`, we return by value. In Java, `String` is immutable and passed by reference. Returning by value in C++ is often preferred for simple types, but it changes the semantics slightly (e.g., you can't check for identity, though string identity checks are rare and implementation-dependent in Java anyway). However, the prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". Returning a pointer to a static string allows the caller to do `if (res != nullptr)` which is analogous to `if (res != null)`. `std::optional` allows `if (res.has_value()`. Both are fine, but `const std::string*` is closer to the Java reference type. I will stick with `const std::string*`.
+
+Wait, if I return `const std::string*`, what if the caller expects to delete it? In Java, you don't delete objects. In C++, returning a pointer to a dynamically allocated string would leak memory. Returning a pointer to a static string is safe. Returning `std::optional<std::string>` avoids pointers entirely and is much more idiomatic C++. Let's think about this. Is `std::optional<std::string>` changing behavior?
+If the Java code returns `null`, C++ `std::optional` returns `std::nullopt`.
+If the Java code returns `"info structure is not correct"`, C++ `std::optional` returns `std::string("info structure is not correct")`.
+The only behavior difference would be reference semantics vs value semantics. Since `String` is immutable in Java, reference vs value semantics only differ if you use `==` for comparison instead of `.equals()`. In Java, using `==` for strings is a known anti-pattern, and the result is not guaranteed. So `std::optional<std::string>` is functionally identical for all practical purposes and much safer/more idiomatic in C++.
+However, the prompt says "Use idiomatic C++ only when it doesn't change behavior." Value semantics vs reference semantics is a behavior change (even if practically unnoticeable for immutable strings). To be absolutely safe and strictly adhere to "doesn't change behavior", returning a pointer is closer to Java's reference. But returning a pointer to a static variable might cause issues if someone tries to delete it. What if I return `std::shared_ptr<std::string>`? That's overkill.
+I'll use `const std::string*` and document it, or just use `std::optional<std::string>` because it's the idiomatic C++ way to represent a nullable value. Let's look at `addWhiteList` returning `List<Integer>`. If I return `std::optional<std::reference_wrapper<std::vector<int>>>`, it's very idiomatic C++ for a nullable reference. If I return `std::vector<int>*`, it's a raw pointer, which is less idiomatic but simpler.
+Let's use raw pointers for nullable object references, as it maps 1:1 with Java's nullable references and doesn't introduce `std::optional` value-semantics where Java has reference-semantics.
+
+Wait, for `send`, returning `const std::string*` is fine. I'll just use a static string.
+
+Let's check `receiveStruct.put("addr", addr);`
+In C++: `receiveStruct["addr"] = addr;`
+`addr` is `int`. It will be stored as `std::any` holding `int`.
+In Java, `addr` is `int`, autoboxed to `Integer`, stored as `Object`.
+This is a perfect match.
+
+What about `receiveStruct.put("content", content);`
+In C++: `receiveStruct["content"] = content;`
+`content` is `std::string`. Stored as `std::any` holding `std::string`.
+In Java, `content` is `String`, stored as `Object`.
+Perfect match.
+
+What about `sendStruct.put("addr", info.get("addr"));`
+In C++: `sendStruct["addr"] = info->at("addr");`
+`info->at("addr")` is `std::any`. It is copied into `sendStruct["addr"]`.
+In Java, `info.get("addr")` is `Object`. It is copied into `sendStruct`.
+Perfect match.
+
+Let's review the includes:
+```cpp
+#include <vector>
+#include <map>
+#include <string>
+#include <any>
+#include <algorithm>
+```
+
+Wait, `std::any_cast<int>` will throw `std::bad_any_cast` if the type doesn't match exactly.
+In Java, `(int) info.get("addr")` does unboxing. If `info.get("addr")` is `Integer`, it unboxes to `int`. If it's `Double`, it throws `ClassCastException`.
+In C++, if it's `double`, `std::any_cast<int>` throws `std::bad_any_cast`.
+This matches the exception behavior.
+
+Is there any edge case in `recv`?
+```java
+        if (info == null || !info.containsKey("addr") || !info.containsKey("content")) {
+            return -1;
+        }
+```
+In C++:
+```cpp
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            return -1;
+        }
+```
+If `info` is not null but `info.get("addr")` is null?
+In Java, `(int) info.get("addr")` will throw `NullPointerException` if `info.get("addr")` is null.
+In C++, `info->at("addr")` will return a `std::any`. If the `std::any` is empty (i.e., holds no value), `std::any_cast<int>` will throw `std::bad_any_cast`.
+Wait, Java's `NullPointerException` vs C++'s `std::bad_any_cast`. Both are exceptions, so the behavior of throwing an exception is preserved. The exact type of exception differs, which is unavoidable when mapping Java exceptions to C++.
+
+What if `info->at("addr")` doesn't exist? We already checked with `info->find("addr") != info->end()`, so it exists. If it exists but is empty `std::any`, `std::any_cast` throws.
+
+Let's consider `show` method:
+```java
+    public Map<String, Object> show(String type) {
+        if ("send".equals(type)) {
+            return sendStruct;
+        } else if ("receive".equals(type)) {
+            return receiveStruct;
+        } else {
+            return null;
+        }
+    }
+```
+If we use `const std::string* type`, we do:
+```cpp
+    std::map<std::string, std::any>* show(const std::string* type) {
+        if (type == nullptr) {
+            return nullptr;
+        }
+        if (*type == "send") {
+            return &sendStruct;
+        } else if (*type == "receive") {
+            return &receiveStruct;
+        } else {
+            return nullptr;
+        }
+    }
+```
+Wait, `"send".equals(type)` in Java returns `false` if `type` is `null`, and doesn't throw NPE.
+My C++ code checks `if (type == nullptr) return nullptr;` which perfectly matches Java's behavior of falling through to the `else` block and returning `null`.
+If `type` is not null, `*type == "send"` is evaluated. This is safe and matches `"send".equals(type)`.
+
+Is there any other way to pass `String type`?
+If we use `const std::string& type`, we can't pass `null`. The caller would have to ensure they don't pass `null`. In C++, passing `null` to a `const std::string&` typically results in a crash or compilation error (if it's a literal `nullptr`, it won't compile; if it's a dereferenced null pointer, it's UB). So using `const std::string*` is much safer and accurately reflects the nullable nature of Java references.
+
+Let's refine the C++ code:
+```cpp
+#include <vector>
+#include <map>
+#include <string>
+#include <any>
+#include <algorithm>
+
+class Server {
+private:
+    std::vector<int> whiteList;
+    std::map<std::string, std::any> sendStruct;
+    std::map<std::string, std::any> receiveStruct;
+
+public:
+    Server() = default;
+
+    std::vector<int>* addWhiteList(int addr) {
+        if (std::find(whiteList.begin(), whiteList.end(), addr) != whiteList.end()) {
+            return nullptr;
+        }
+        whiteList.push_back(addr);
+        return &whiteList;
+    }
+
+    std::vector<int>* delWhiteList(int addr) {
+        auto it = std::find(whiteList.begin(), whiteList.end(), addr);
+        if (it == whiteList.end()) {
+            return nullptr;
+        }
+        whiteList.erase(it);
+        return &whiteList;
+    }
+
+    std::any recv(const std::map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            return -1;
+        }
+        int addr = std::any_cast<int>(info->at("addr"));
+        std::string content = std::any_cast<std::string>(info->at("content"));
+        if (std::find(whiteList.begin(), whiteList.end(), addr) == whiteList.end()) {
+            return false;
+        }
+        receiveStruct["addr"] = addr;
+        receiveStruct["content"] = content;
+        return receiveStruct["content"];
+    }
+
+    const std::string* send(const std::map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            static const std::string errorMsg = "info structure is not correct";
+            return &errorMsg;
+        }
+        sendStruct["addr"] = info->at("addr");
+        sendStruct["content"] = info->at("content");
+        return nullptr;
+    }
+
+    std::map<std::string, std::any>* show(const std::string* type) {
+        if (type == nullptr) {
+            return nullptr;
+        }
+        if (*type == "send") {
+            return &sendStruct;
+        } else if (*type == "receive") {
+            return &receiveStruct;
+        }
+        return nullptr;
+    }
+};
+```
+
+Wait, in Java `addWhiteList` and `delWhiteList` return `List<Integer>`. In C++, returning `std::vector<int>*` exposes internal state and allows the caller to modify it. Java does exactly this: returns a reference to the internal list, allowing modification. So returning a pointer is the correct translation for preserving this side-effect behavior.
+
+What about `show` returning `Map<String, Object>`? Same thing, returning a pointer to the internal map allows modification, matching Java's behavior.
+
+Is there any issue with `std::any` and `receiveStruct["content"]`?
+`receiveStruct["content"]` returns a `std::any&`. The `recv` method returns `std::any`, so it returns a copy of the `std::any` object. In Java, `receiveStruct.get("content")` returns a reference to the `Object` (which is a `String`). Since `String` is immutable in Java, returning a reference vs returning a copy doesn't matter for mutation, but matters for identity. `std::any` holds the value, so returning `std::any` by value is fine.
+
+Wait, the Java `recv` method returns `Object`. In C++, it returns `std::any`.
+The Java `recv` method can return `-1` (Integer), `false` (Boolean), or `String`.
+In C++, `std::any` can hold `int`, `bool`, or `std::string`.
+This is a perfect match.
+
+One detail: `std::any_cast<int>(info->at("addr"))` - if `info->at("addr")` contains a `long` or `short`, it will throw. In Java, `(int)` would throw `ClassCastException` if it's not an `Integer`. So this matches.
+
+Another detail: `std::any_cast<std::string>(info->at("content"))` - if it contains a `const char*`, it will throw. In Java, `(String)` would throw `ClassCastException` if it's not a `String`. So this matches.
+
+Is there any need for `#include <stdexcept>`? `std::bad_any_cast` is in `<any>`. `std::out_of_range` is in `<stdexcept>`, but we don't rely on it since we check with `find`. `std::any_cast` throws `std::bad_any_cast`, which is in `<any>`.
+
+Let's review the prompt: "Translate the following Java code to C++. Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions). Use idiomatic C++ only when it doesn't change behavior."
+
+I think the translation is very solid. I will present the code clearly.
+
+```cpp
+#include <vector>
+#include <map>
+#include <string>
+#include <any>
+#include <algorithm>
+
+class Server {
+private:
+    std::vector<int> whiteList;
+    std::map<std::string, std::any> sendStruct;
+    std::map<std::string, std::any> receiveStruct;
+
+public:
+    Server() = default;
+
+    std::vector<int>* addWhiteList(int addr) {
+        if (std::find(whiteList.begin(), whiteList.end(), addr) != whiteList.end()) {
+            return nullptr;
+        }
+        whiteList.push_back(addr);
+        return &whiteList;
+    }
+
+    std::vector<int>* delWhiteList(int addr) {
+        auto it = std::find(whiteList.begin(), whiteList.end(), addr);
+        if (it == whiteList.end()) {
+            return nullptr;
+        }
+        whiteList.erase(it);
+        return &whiteList;
+    }
+
+    std::any recv(const std::map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            return -1;
+        }
+        int addr = std::any_cast<int>(info->at("addr"));
+        std::string content = std::any_cast<std::string>(info->at("content"));
+        if (std::find(whiteList.begin(), whiteList.end(), addr) == whiteList.end()) {
+            return false;
+        }
+        receiveStruct["addr"] = addr;
+        receiveStruct["content"] = content;
+        return receiveStruct["content"];
+    }
+
+    const std::string* send(const std::map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            static const std::string errorMsg = "info structure is not correct";
+            return &errorMsg;
+        }
+        sendStruct["addr"] = info->at("addr");
+        sendStruct["content"] = info->at("content");
+        return nullptr;
+    }
+
+    std::map<std::string, std::any>* show(const std::string* type) {
+        if (type == nullptr) {
+            return nullptr;
+        }
+        if (*type == "send") {
+            return &sendStruct;
+        } else if (*type == "receive") {
+            return &receiveStruct;
+        }
+        return nullptr;
+    }
+};
+```
+
+Wait, could `show` take `std::string_view` or `const std::string&` and we handle the null case differently?
+In C++, it is idiomatic to take `const std::string&` and assume it's not null. If someone passes a null pointer dereference, it's UB. But the prompt says "Keep behavior identical... edge cases, exceptions". In Java, passing `null` to `show` doesn't throw an exception, it just returns `null`. If we take `const std::string&`, passing a null pointer would cause a crash (UB), which changes the behavior. So taking `const std::string*` is the only way to perfectly preserve the null-checking behavior of Java.
+
+Similarly, for `info` in `recv` and `send`, passing `const std::map<...>*` allows checking for `nullptr` just like Java checks for `null`.
+
+One minor point: Java's `Map` is an interface, `HashMap` is the implementation. In C++, `std::map` is a tree-based map, `std::unordered_map` is a hash map. Since the Java code uses `HashMap`, `std::unordered_map` would be a closer match in terms of performance characteristics and iteration order (undefined vs sorted). However, `std::map` is often used as the default C++ map. I will use `std::map` as it is standard, but `std::unordered_map` is technically a closer match to `HashMap`. Let's use `std::unordered_map` to be precise about the "HashMap" choice in Java.
+Wait, `std::unordered_map` requires `<unordered_map>`. I'll use `std::unordered_map` since Java explicitly chose `HashMap` over `TreeMap`.
+
+Let's update the code to use `std::unordered_map`.
+
+```cpp
+#include <vector>
+#include <unordered_map>
+#include <string>
+#include <any>
+#include <algorithm>
+
+class Server {
+private:
+    std::vector<int> whiteList;
+    std::unordered_map<std::string, std::any> sendStruct;
+    std::unordered_map<std::string, std::any> receiveStruct;
+
+public:
+    Server() = default;
+
+    std::vector<int>* addWhiteList(int addr) {
+        if (std::find(whiteList.begin(), whiteList.end(), addr) != whiteList.end()) {
+            return nullptr;
+        }
+        whiteList.push_back(addr);
+        return &whiteList;
+    }
+
+    std::vector<int>* delWhiteList(int addr) {
+        auto it = std::find(whiteList.begin(), whiteList.end(), addr);
+        if (it == whiteList.end()) {
+            return nullptr;
+        }
+        whiteList.erase(it);
+        return &whiteList;
+    }
+
+    std::any recv(const std::unordered_map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            return -1;
+        }
+        int addr = std::any_cast<int>(info->at("addr"));
+        std::string content = std::any_cast<std::string>(info->at("content"));
+        if (std::find(whiteList.begin(), whiteList.end(), addr) == whiteList.end()) {
+            return false;
+        }
+        receiveStruct["addr"] = addr;
+        receiveStruct["content"] = content;
+        return receiveStruct["content"];
+    }
+
+    const std::string* send(const std::unordered_map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            static const std::string errorMsg = "info structure is not correct";
+            return &errorMsg;
+        }
+        sendStruct["addr"] = info->at("addr");
+        sendStruct["content"] = info->at("content");
+        return nullptr;
+    }
+
+    std::unordered_map<std::string, std::any>* show(const std::string* type) {
+        if (type == nullptr) {
+            return nullptr;
+        }
+        if (*type == "send") {
+            return &sendStruct;
+        } else if (*type == "receive") {
+            return &receiveStruct;
+        }
+        return nullptr;
+    }
+};
+```
+
+This looks very solid. `std::any` requires C++17 or later. This is standard in modern C++.
+I will add a brief explanation of the choices made (like `std::any` for `Object`, pointers for nullable references, and `std::unordered_map` for `HashMap`).
+</think>
+
+=== RAW ANSWER ===
+To translate the Java code to C++ while keeping the behavior identical, we need to address a few key differences between the languages:
+
+1. **`Object` type:** Java's `Object` can hold any reference type. In C++, the closest equivalent is `std::any` (introduced in C++17), which can safely hold values of any type (like `int`, `bool`, `std::string`, etc.) and throws `std::bad_any_cast` on type mismatches, mirroring Java's `ClassCastException`.
+2. **Nullable References:** Java objects can be `null`. C++ references cannot be null, so we must use pointers (`*`) for parameters and return types that are designed to handle nulls in the Java implementation. This preserves the exact null-checking behavior and edge cases.
+3. **`HashMap`:** Java's `HashMap` translates well to `std::unordered_map` in C++, as both provide hash-based key-value storage.
+4. **`ArrayList`:** Translates to `std::vector`. 
+5. **Memory Safety:** Returning pointers to internal members (like `whiteList` or `sendStruct`) mirrors Java's reference-return behavior, allowing the caller to directly modify the internal state just as they could in Java.
+
+Here is the translated C++ code:
+
+```cpp
+#include <vector>
+#include <unordered_map>
+#include <string>
+#include <any>
+#include <algorithm>
+
+class Server {
+private:
+    std::vector<int> whiteList;
+    std::unordered_map<std::string, std::any> sendStruct;
+    std::unordered_map<std::string, std::any> receiveStruct;
+
+public:
+    Server() = default;
+
+    std::vector<int>* addWhiteList(int addr) {
+        // whiteList.contains(addr) equivalent
+        if (std::find(whiteList.begin(), whiteList.end(), addr) != whiteList.end()) {
+            return nullptr;
+        } else {
+            whiteList.push_back(addr);
+            return &whiteList;
+        }
+    }
+
+    std::vector<int>* delWhiteList(int addr) {
+        auto it = std::find(whiteList.begin(), whiteList.end(), addr);
+        if (it == whiteList.end()) {
+            return nullptr;
+        } else {
+            // Removes the first occurrence of addr
+            whiteList.erase(it);
+            return &whiteList;
+        }
+    }
+
+    std::any recv(const std::unordered_map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            return -1;
+        }
+        
+        // std::any_cast throws std::bad_any_cast if the type doesn't match, 
+        // mirroring Java's ClassCastException behavior.
+        int addr = std::any_cast<int>(info->at("addr"));
+        std::string content = std::any_cast<std::string>(info->at("content"));
+        
+        if (std::find(whiteList.begin(), whiteList.end(), addr) == whiteList.end()) {
+            return false;
+        } else {
+            receiveStruct["addr"] = addr;
+            receiveStruct["content"] = content;
+            return receiveStruct["content"];
+        }
+    }
+
+    const std::string* send(const std::unordered_map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            static const std::string errorMsg = "info structure is not correct";
+            return &errorMsg;
+        }
+        sendStruct["addr"] = info->at("addr");
+        sendStruct["content"] = info->at("content");
+        return nullptr;
+    }
+
+    std::unordered_map<std::string, std::any>* show(const std::string* type) {
+        // Check for null to prevent dereferencing a null pointer, 
+        // mirroring Java's "send".equals(type) null-safe check.
+        if (type == nullptr) {
+            return nullptr;
+        }
+        
+        if (*type == "send") {
+            return &sendStruct;
+        } else if (*type == "receive") {
+            return &receiveStruct;
+        } else {
+            return nullptr;
+        }
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <vector>
+#include <unordered_map>
+#include <string>
+#include <any>
+#include <algorithm>
+
+class Server {
+private:
+    std::vector<int> whiteList;
+    std::unordered_map<std::string, std::any> sendStruct;
+    std::unordered_map<std::string, std::any> receiveStruct;
+
+public:
+    Server() = default;
+
+    std::vector<int>* addWhiteList(int addr) {
+        // whiteList.contains(addr) equivalent
+        if (std::find(whiteList.begin(), whiteList.end(), addr) != whiteList.end()) {
+            return nullptr;
+        } else {
+            whiteList.push_back(addr);
+            return &whiteList;
+        }
+    }
+
+    std::vector<int>* delWhiteList(int addr) {
+        auto it = std::find(whiteList.begin(), whiteList.end(), addr);
+        if (it == whiteList.end()) {
+            return nullptr;
+        } else {
+            // Removes the first occurrence of addr
+            whiteList.erase(it);
+            return &whiteList;
+        }
+    }
+
+    std::any recv(const std::unordered_map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            return -1;
+        }
+        
+        // std::any_cast throws std::bad_any_cast if the type doesn't match, 
+        // mirroring Java's ClassCastException behavior.
+        int addr = std::any_cast<int>(info->at("addr"));
+        std::string content = std::any_cast<std::string>(info->at("content"));
+        
+        if (std::find(whiteList.begin(), whiteList.end(), addr) == whiteList.end()) {
+            return false;
+        } else {
+            receiveStruct["addr"] = addr;
+            receiveStruct["content"] = content;
+            return receiveStruct["content"];
+        }
+    }
+
+    const std::string* send(const std::unordered_map<std::string, std::any>* info) {
+        if (info == nullptr || info->find("addr") == info->end() || info->find("content") == info->end()) {
+            static const std::string errorMsg = "info structure is not correct";
+            return &errorMsg;
+        }
+        sendStruct["addr"] = info->at("addr");
+        sendStruct["content"] = info->at("content");
+        return nullptr;
+    }
+
+    std::unordered_map<std::string, std::any>* show(const std::string* type) {
+        // Check for null to prevent dereferencing a null pointer, 
+        // mirroring Java's "send".equals(type) null-safe check.
+        if (type == nullptr) {
+            return nullptr;
+        }
+        
+        if (*type == "send") {
+            return &sendStruct;
+        } else if (*type == "receive") {
+            return &receiveStruct;
+        } else {
+            return nullptr;
+        }
+    }
+};

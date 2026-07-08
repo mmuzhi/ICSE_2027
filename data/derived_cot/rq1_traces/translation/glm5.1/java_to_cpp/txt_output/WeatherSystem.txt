@@ -1,0 +1,503 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.util.HashMap;
+import java.util.Map;
+
+class WeatherSystem {
+    private Double temperature;
+    private String weather;
+    private String city;
+    private Map<String, Map<String, Object>> weatherList;
+
+    public WeatherSystem(String city) {
+        this.city = city;
+        this.weatherList = new HashMap<>();
+    }
+
+    public void setCity(String city) {
+        this.city = city;
+    }
+
+    public String getCity() {
+        return this.city;
+    }
+
+    public void setTemperature(Double temperature) {
+        this.temperature = temperature;
+    }
+
+    public double celsiusToFahrenheit() {
+        return (this.temperature * 9 / 5) + 32;
+    }
+
+    public double fahrenheitToCelsius() {
+        return (this.temperature - 32) * 5 / 9;
+    }
+
+    public Object[] query(Map<String, Map<String, Object>> weatherList, String tmpUnits) {
+        this.weatherList = weatherList;
+        if (!weatherList.containsKey(this.city)) {
+            return new Object[]{false};
+        }
+
+        Map<String, Object> cityWeather = weatherList.get(this.city);
+        this.temperature = (Double) cityWeather.get("temperature");
+        this.weather = (String) cityWeather.get("weather");
+        String currentUnits = (String) cityWeather.get("temperature units");
+
+        if (!currentUnits.equals(tmpUnits)) {
+            if (tmpUnits.equals("celsius")) {
+                this.temperature = fahrenheitToCelsius();
+            } else if (tmpUnits.equals("fahrenheit")) {
+                this.temperature = celsiusToFahrenheit();
+            }
+        }
+
+        return new Object[]{this.temperature, this.weather};
+    }
+}
+
+=== REASONING ===
+<think>
+1.  **Understand the Goal:** Translate Java code to C++, keeping behavior identical, using idiomatic C++ only when it doesn't change behavior.
+
+2.  **Analyze the Java Code:**
+    *   **Package/Imports:** `org.example`, `java.util.HashMap`, `java.util.Map`. C++ equivalents: namespaces, `std::unordered_map`, `std::map` (HashMap implies unordered), `std::variant`, `std::any`, or `boost::any`. Since Java uses `Map<String, Object>`, C++ needs a way to represent `Object`. `std::any` is the closest standard C++ equivalent.
+    *   **Class `WeatherSystem`:**
+        *   `private Double temperature;` -> `std::optional<double>` or just `double` (Java `Double` is nullable, C++ `double` is not. But looking at usage, it's cast from `Object` to `Double`, so it holds a double value. Let's use `double` or `std::optional<double>`. Given Java's implicit nullability, `std::optional<double>` is safer, but simple `double` might suffice if we assume it's always set before read. Let's stick to `double` for simplicity unless null checks are present. Wait, `Double` is an object. Let's use `double` but initialize it. Actually, `std::any` handles this).
+        *   `private String weather;` -> `std::string weather;`
+        *   `private String city;` -> `std::string city;`
+        *   `private Map<String, Map<String, Object>> weatherList;` -> `std::unordered_map<std::string, std::unordered_map<std::string, std::any>> weatherList;`
+    *   **Constructor:**
+        *   `public WeatherSystem(String city)` -> Initializes `city` and `weatherList`.
+    *   **Methods:**
+        *   `setCity`, `getCity` -> standard setters/getters.
+        *   `setTemperature(Double)` -> `void setTemperature(double)`
+        *   `celsiusToFahrenheit()`, `fahrenheitToCelsius()` -> standard math. Note: Java uses `double` return types here, and `this.temperature` is a `Double` (auto-unboxed). C++ will just use `double`.
+        *   `query(Map<String, Map<String, Object>> weatherList, String tmpUnits)`:
+            *   Returns `Object[]`.
+            *   In C++, returning an array of `Object` is tricky. `std::vector<std::any>` or `std::tuple` or `std::variant`. Since the return type is `Object[]` in Java, it can hold `Boolean`, `Double`, `String`.
+            *   In C++, `std::vector<std::any>` is the closest to a heterogeneous list.
+            *   Logic:
+                *   `this.weatherList = weatherList;`
+                *   `if (!weatherList.containsKey(this.city)) return new Object[]{false};` -> `return {false};` (as `std::vector<std::any>`).
+                *   `Map<String, Object> cityWeather = weatherList.get(this.city);`
+                *   `this.temperature = (Double) cityWeather.get("temperature");` -> `std::any_cast<double>(cityWeather["temperature"])`
+                *   `this.weather = (String) cityWeather.get("weather");` -> `std::any_cast<std::string>(cityWeather["weather"])`
+                *   `String currentUnits = (String) cityWeather.get("temperature units");` -> `std::any_cast<std::string>(cityWeather["temperature units"])`
+                *   Unit conversion logic.
+                *   `return new Object[]{this.temperature, this.weather};` -> `return {this.temperature, this.weather};`
+
+3.  **Refining the C++ Translation:**
+
+    *   *The `Object` problem:* Java's `Object` is the root of all classes. C++ doesn't have this. `std::any` is the standard way to hold any type.
+    *   *The `Object[]` problem:* Returning `std::vector<std::any>`.
+        *   `return {false};` -> `std::vector<std::any> {std::any(false)}`. Wait, Java `false` is boxed to `Boolean` (which extends `Object`). In C++, `std::any(false)`.
+        *   `return {this.temperature, this.weather};` -> `std::vector<std::any> {std::any(this.temperature), std::any(this.weather)}`.
+    *   *Nullability of Java `Double` and `String`:*
+        *   If `cityWeather.get("temperature")` is missing in Java, `.get()` returns `null`, and `(Double)` casts it to `null`. Then `this.temperature = null`. Later `this.temperature * 9` throws `NullPointerException`.
+        *   In C++, `std::any_cast` will throw `std::bad_any_cast` if the key is missing (since `[]` returns a default-constructed `std::any`, which is empty).
+        *   To perfectly match Java's behavior (NPE on missing keys), we'd have to check and throw. But standard C++ translation usually assumes the inputs are valid as per the Java implicit contract, or we use `at()` which throws `std::out_of_range`. Java's `get` on Map returns null, not exception. Let's stick to the `[]` operator and `std::any_cast`. If the key is missing, `std::any_cast` throws, which is a form of exception, roughly equivalent to NPE in this context. To be safe and identical, we could check if the key exists or if `std::any` has a value. But `std::any_cast<double>(map["key"])` is the most direct translation.
+        *   Wait, Java `weatherList.get(this.city)` returns `null` if city is not in the map. We already check `containsKey`. So `cityWeather` is not null.
+        *   What if `cityWeather.get("temperature")` is missing? Java returns `null`, cast to `Double` is `null`, assigning to `this.temperature` makes it `null`. Then `this.temperature * 9` throws NPE. C++ `std::any_cast<double>(map["temperature"])` will throw `std::bad_any_cast` because `map["temperature"]` creates an empty `std::any`. This is reasonably identical behavior (exception on invalid state).
+
+    *   *Method Signatures:*
+        *   `query(Map<String, Map<String, Object>> weatherList, String tmpUnits)`
+        *   In C++, passing large maps by value copies them. Java passes references. To avoid unnecessary copies and match Java's reference semantics, we should pass by `const std::unordered_map<...>&`. But wait, the Java code does `this.weatherList = weatherList;`. If we pass by const ref, we can't assign it to a non-const member. So we pass by value (which makes a copy, matching Java's reference assignment semantics where the reference is copied, but the map is shared. Wait, Java shares the map! If you modify `weatherList` outside, `this.weatherList` sees it. If we pass by value in C++, it's a copy, breaking shared state. But wait, the method doesn't modify `weatherList`, just reads it. Still, to be strictly identical, maybe pass by `std::unordered_map<...>` and move it? Or just pass by value. Let's pass by value to be safe and simple, or pass by reference and copy. Passing by `const &` and copying inside is fine. Let's just pass by value, it's simpler and often optimized.
+
+    *   *Double vs double:*
+        *   Java `Double temperature;` is nullable. C++ `double temperature;` is not.
+        *   If we want to perfectly model the nullability, `std::optional<double>` is the way.
+        *   Let's use `std::optional<double>` for `temperature` and `std::optional<std::string>` for `weather`.
+        *   Actually, `celsiusToFahrenheit` returns `double` and accesses `this.temperature`. If `this.temperature` is null, Java throws NPE. If C++ uses `std::optional<double>`, `this.temperature.value()` throws `std::bad_optional_access`. This is a very close match!
+        *   Wait, `celsiusToFahrenheit()` does `this.temperature * 9`. In Java, auto-unboxing happens. If `this.temperature` is null, NPE. In C++, `*this.temperature * 9` or `this.temperature.value() * 9`. Let's just use `double` and assume the state is valid, as is typical for these translations, unless we want to be overly pedantic. Let's stick to `double` for simplicity, but `std::optional` is safer. I will use `double` and `std::string`, and if `std::any_cast` fails, it throws.
+
+    *   *String comparisons:*
+        *   `currentUnits.equals(tmpUnits)` -> `currentUnits == tmpUnits` (C++ `std::string` has `==`).
+        *   `tmpUnits.equals("celsius")` -> `tmpUnits == "celsius"`.
+
+    *   *Return type:*
+        *   Java: `Object[]`
+        *   C++: `std::vector<std::any>`
+        *   Let's define a type alias: `using Object = std::any;` and `using ObjectArray = std::vector<std::any>;`
+        *   This makes the translation very readable.
+
+    *   *Includes:*
+        *   `<string>`
+        *   `<unordered_map>`
+        *   `<any>`
+        *   `<vector>`
+        *   `<optional>` (if used)
+
+4.  **Drafting the Code:**
+
+    ```cpp
+    #include <string>
+    #include <unordered_map>
+    #include <any>
+    #include <vector>
+
+    class WeatherSystem {
+    private:
+        double temperature = 0.0; // Default initialization
+        std::string weather;
+        std::string city;
+        std::unordered_map<std::string, std::unordered_map<std::string, std::any>> weatherList;
+
+    public:
+        WeatherSystem(std::string city) : city(std::move(city)) {}
+
+        void setCity(std::string city) {
+            this->city = std::move(city);
+        }
+
+        std::string getCity() {
+            return this->city;
+        }
+
+        void setTemperature(double temperature) {
+            this->temperature = temperature;
+        }
+
+        double celsiusToFahrenheit() {
+            return (this->temperature * 9 / 5) + 32;
+        }
+
+        double fahrenheitToCelsius() {
+            return (this->temperature - 32) * 5 / 9;
+        }
+
+        std::vector<std::any> query(std::unordered_map<std::string, std::unordered_map<std::string, std::any>> weatherList, std::string tmpUnits) {
+            this->weatherList = std::move(weatherList);
+            if (this->weatherList.find(this->city) == this->weatherList.end()) {
+                return {false};
+            }
+
+            std::unordered_map<std::string, std::any>& cityWeather = this->weatherList.at(this->city);
+            this->temperature = std::any_cast<double>(cityWeather.at("temperature"));
+            this->weather = std::any_cast<std::string>(cityWeather.at("weather"));
+            std::string currentUnits = std::any_cast<std::string>(cityWeather.at("temperature units"));
+
+            if (currentUnits != tmpUnits) {
+                if (tmpUnits == "celsius") {
+                    this->temperature = fahrenheitToCelsius();
+                } else if (tmpUnits == "fahrenheit") {
+                    this->temperature = celsiusToFahrenheit();
+                }
+            }
+
+            return {this->temperature, this->weather};
+        }
+    };
+    ```
+
+5.  **Refining Details & Edge Cases:**
+    *   *Java `Double` vs C++ `double`*: In Java, `cityWeather.get("temperature")` returns an `Object`, which is cast to `Double`. The `Double` is auto-unboxed when assigned to `this.temperature` (which is `Double`, but auto-unboxed for math). Wait, `this.temperature` is declared as `Double` in Java!
+        ```java
+        private Double temperature;
+        ...
+        this.temperature = (Double) cityWeather.get("temperature");
+        ...
+        this.temperature = fahrenheitToCelsius(); // returns double, auto-boxed to Double
+        ```
+        If we use `double` in C++, it behaves the same mathematically, but doesn't hold null. Since `std::any_cast<double>` throws if the `any` is empty, and Java throws `NullPointerException` if it's null, the exception behavior is analogous. Using `double` is perfectly fine and more idiomatic C++.
+    *   *Java `weatherList.get(this.city)` vs C++ `[]` vs `at`*:
+        *   Java `get` returns `null` if key is absent. We check `containsKey` first, so it's safe.
+        *   In C++, `this->weatherList[this->city]` inserts a default-constructed value if absent, which we want to avoid. `this->weatherList.at(this->city)` throws `std::out_of_range` if absent. Since we check `find(...) != end()`, `at` is safe and doesn't modify the map.
+    *   *Java `cityWeather.get("temperature")` vs C++ `at("temperature")`*:
+        *   Same logic. Use `at()` to avoid insertion on missing keys.
+    *   *Return type `Object[]`*:
+        *   In Java, `new Object[]{false}` boxes `false` to `Boolean`.
+        *   In C++, `return {false};` creates `std::vector<std::any>` containing `std::any(false)`.
+        *   In Java, `new Object[]{this.temperature, this.weather}` boxes `temperature` to `Double` and uses `weather` (which is a `String` object).
+        *   In C++, `return {this->temperature, this->weather};` creates `std::vector<std::any>` containing `std::any(double)` and `std::any(std::string)`. This perfectly matches the heterogeneous container concept.
+    *   *Parameter passing*:
+        *   `query(...)` takes `weatherList` by value. In Java, references are passed by value. If the caller modifies the map after calling `query`, the Java version would see the modifications if it stored the reference *before* the modifications, but here it assigns `this.weatherList = weatherList;`. Since Java passes the reference, `this.weatherList` points to the exact same map object as the caller's. In C++, passing by value creates a copy.
+        *   If we want to perfectly emulate Java's reference-aliasing behavior, we should pass by `std::unordered_map<...>&`. However, `this->weatherList = weatherList;` in Java just copies the reference. In C++, `this->weatherList = weatherList;` copies the map (if passed by reference) or moves it (if passed by value and we use `std::move`).
+        *   Given the instructions "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)", if the caller mutates the map after calling `query`, Java's `WeatherSystem` would see the mutation, while C++ (with copy/move) would not.
+        *   To perfectly match Java's shared-state semantics, we could use `std::shared_ptr<std::unordered_map<...>>`. But that's over-engineering for a simple translation. Usually, passing by `const &` and copying is acceptable, or just passing by value. Let's pass by value and `std::move` it to avoid unnecessary copies, as it's idiomatic C++ and the shared-state mutation across threads/callers is a Java-specific artifact of reference semantics that C++ developers usually don't emulate with `shared_ptr` unless strictly required. I will pass by value and move it.
+        *   Wait, `std::move(weatherList)` inside `query` modifies the parameter. If the caller passed a variable, it's left in a moved-from state. Java doesn't do this. So passing by `const &` and assigning is safer to avoid surprising the caller.
+        *   Let's do:
+            ```cpp
+            std::vector<std::any> query(const std::unordered_map<std::string, std::unordered_map<std::string, std::any>>& weatherList, std::string tmpUnits) {
+                this->weatherList = weatherList; // Makes a copy, exactly like Java's reference assignment (but Java shares state, C++ copies. This is a fundamental language difference).
+                ...
+            }
+            ```
+            Actually, passing by value is fine. If the caller wants to keep their map, they can pass a copy. I'll pass by `const std::unordered_map<...>&` to avoid forcing a copy on the caller if they just want to query, but then we *must* copy it into `this->weatherList`. Let's just use `const &` for the parameter.
+
+    *   *Missing Keys in Java vs C++*:
+        *   If `cityWeather.get("temperature")` is missing in Java, it returns `null`. Casting `null` to `Double` gives `null`. Assigning to `this.temperature` makes it `null`. Then `this.temperature * 9` throws `NullPointerException`.
+        *   In C++, `cityWeather.at("temperature")` throws `std::out_of_range` if missing.
+        *   `std::any_cast<double>` throws `std::bad_any_cast` if the `std::any` is empty.
+        *   Both languages throw an exception (or error) for missing keys during processing. The exact type differs, but the behavior (crash on invalid data) is identical in spirit. I will use `at()` to be safe and avoid silently inserting empty `std::any`.
+
+    *   *String comparisons*:
+        *   Java: `currentUnits.equals(tmpUnits)` -> C++: `currentUnits == tmpUnits`
+        *   Java: `tmpUnits.equals("celsius")` -> C++: `tmpUnits == "celsius"`
+
+    *   *Null checks on `this.temperature`*:
+        *   In Java, `this.temperature` is a `Double`. If it's null, `this.temperature * 9` throws NPE.
+        *   In C++, `double` is uninitialized if we don't provide a default. I will initialize it to `0.0`. If we want to exactly match the NPE, `std::optional<double>` is the way. Let's use `std::optional<double>` for `temperature` and `std::optional<std::string>` for `weather` to perfectly capture the Java nullability.
+        *   Wait, `celsiusToFahrenheit()` returns `double`. If `this.temperature` is `std::optional<double>`, we have to do `this.temperature.value() * 9`. This is a bit verbose but more accurate to Java.
+        *   Let's just use `double` and `std::string`. The Java code uses `Double` and `String` (object types), but the only time they are null is if the map doesn't contain them, which results in an exception in both languages. Initializing `double temperature = 0.0;` is fine.
+
+6.  **Finalizing the Code Structure:**
+
+    ```cpp
+    #include <string>
+    #include <unordered_map>
+    #include <any>
+    #include <vector>
+
+    class WeatherSystem {
+    private:
+        double temperature = 0.0;
+        std::string weather;
+        std::string city;
+        std::unordered_map<std::string, std::unordered_map<std::string, std::any>> weatherList;
+
+    public:
+        explicit WeatherSystem(std::string city) : city(std::move(city)) {}
+
+        void setCity(std::string city) {
+            this->city = std::move(city);
+        }
+
+        std::string getCity() const {
+            return this->city;
+        }
+
+        void setTemperature(double temperature) {
+            this->temperature = temperature;
+        }
+
+        double celsiusToFahrenheit() const {
+            return (this->temperature * 9 / 5) + 32;
+        }
+
+        double fahrenheitToCelsius() const {
+            return (this->temperature - 32) * 5 / 9;
+        }
+
+        std::vector<std::any> query(const std::unordered_map<std::string, std::unordered_map<std::string, std::any>>& weatherList, const std::string& tmpUnits) {
+            this->weatherList = weatherList;
+            if (this->weatherList.find(this->city) == this->weatherList.end()) {
+                return {false};
+            }
+
+            const auto& cityWeather = this->weatherList.at(this->city);
+            this->temperature = std::any_cast<double>(cityWeather.at("temperature"));
+            this->weather = std::any_cast<std::string>(cityWeather.at("weather"));
+            std::string currentUnits = std::any_cast<std::string>(cityWeather.at("temperature units"));
+
+            if (currentUnits != tmpUnits) {
+                if (tmpUnits == "celsius") {
+                    this->temperature = fahrenheitToCelsius();
+                } else if (tmpUnits == "fahrenheit") {
+                    this->temperature = celsiusToFahrenheit();
+                }
+            }
+
+            return {this->temperature, this->weather};
+        }
+    };
+    ```
+
+7.  **Review against Constraints:**
+    *   *Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)*:
+        *   Inputs: Maps and strings map to `std::unordered_map` and `std::string`.
+        *   Outputs: `Object[]` maps to `std::vector<std::any>`. The contents are `bool` (from `false`), `double` (from `temperature`), `std::string` (from `weather`).
+        *   Side effects: `this->weatherList`, `this->temperature`, `this->weather` are updated.
+        *   Edge cases: Missing city in map returns `{false}`. Missing keys in inner map throw exceptions (Java NPE/bad cast, C++ `std::bad_any_cast`/`std::out_of_range`).
+    *   *Use idiomatic C++ only when it doesn't change behavior*:
+        *   Used `std::move` for string assignments to avoid unnecessary copies.
+        *   Used `const auto&` for map access to avoid copies.
+        *   Used `const` on methods that don't mutate state (though `celsiusToFahrenheit` and `fahrenheitToCelsius` technically *could* be const in C++, but in Java they aren't. Wait, in Java they aren't marked final, but they don't mutate. I'll add `const` to getter and conversion methods as it's idiomatic and doesn't change behavior).
+        *   Wait, `celsiusToFahrenheit()` and `fahrenheitToCelsius()` are called inside `query()` which is not const. If I make them const, it's fine. I will add `const` to them and `getCity()`.
+        *   Actually, let's keep the signatures as close as possible. Adding `const` is idiomatic and safe.
+
+8.  **Refining the `Object` representation:**
+    *   Java `Object` can hold `Boolean`, `Double`, `String`.
+    *   C++ `std::any` can hold `bool`, `double`, `std::string`.
+    *   In Java, `new Object[]{false}` boxes `false` to `Boolean`.
+    *   In C++, `return {false};` for a `std::vector<std::any>` will create an `any` holding a `bool`.
+    *   In Java, `new Object[]{this.temperature, this.weather}` boxes `temperature` (Double) and uses `weather` (String).
+    *   In C++, `return {this->temperature, this->weather};` creates `any` holding `double` and `std::string`.
+    *   This is a perfect behavioral match.
+
+9.  **Constructing the Final Output:**
+    *   Add necessary headers.
+    *   Provide the class definition.
+    *   Ensure proper namespace (omitted as Java package `org.example` usually translates to just the class in C++ unless specified, but I can wrap it in a namespace if desired. I'll omit namespace to keep it simple, or add `namespace org::example`). Let's add `namespace org::example` to be thorough.
+    *   Double check integer vs float division:
+        *   Java: `(this.temperature * 9 / 5) + 32` -> `this.temperature` is `Double`, so `9 / 5` is promoted to double division. Result is `double`.
+        *   C++: `(this->temperature * 9 / 5) + 32` -> `this->temperature` is `double`, so `9 / 5` is double division. Result is `double`. Identical.
+        *   Java: `(this.temperature - 32) * 5 / 9` -> `double` division.
+        *   C++: `(this->temperature - 32) * 5 / 9` -> `double` division. Identical.
+
+10. **Final Polish:** Check for any missing `std::` prefixes, include guards (not strictly necessary for a snippet but good practice), and correct references. The `query` method takes `weatherList` by const reference and copies it into the member variable. This matches Java's reference assignment behavior (where the reference is copied, though in C++ the whole map is copied, which is the closest safe equivalent without using `shared_ptr`). Using `shared_ptr` would perfectly emulate the shared mutability of Java's reference, but it's usually overkill and not idiomatic unless specifically requested. I'll stick to the copy semantics.
+
+    Wait, `std::any_cast<std::string>(cityWeather.at("weather"))` - if `weather` is stored as a C-style string literal in the map (e.g., `std::any("sunny")`), `std::any_cast<std::string>` will throw `std::bad_any_cast` because the type is `const char*`. This is a classic C++ `std::any` gotcha.
+    To be safe, we should cast to `std::string` but what if it was inserted as `const char*`?
+    In Java, you insert a `String`.
+    In C++, if the user populates the map with `std::string("sunny")`, it works. If they use `"sunny"`, it's `const char*`.
+    Since I am providing the class, I can document or assume the map is populated with `std::string`. I will use `std::any_cast<std::string>`.
+
+    Let's write out the final code.
+</think>
+
+=== RAW ANSWER ===
+To translate this Java code to C++, we need to handle a few key differences between the languages:
+
+1. **`Object` and `Object[]`**: C++ does not have a universal `Object` base class. We use `std::any` to represent `Object` and `std::vector<std::any>` to represent `Object[]`.
+2. **`Map<K, V>`**: We use `std::unordered_map`, which provides O(1) average time complexity for lookups, matching Java's `HashMap`.
+3. **`Double` vs `double`**: Java uses `Double` (nullable object), but auto-unboxes it for math operations. In C++, we use `double` directly. If a value is missing from the map, `std::any_cast` will throw `std::bad_any_cast`, which serves as the C++ equivalent to Java's `NullPointerException` in this context.
+4. **Reference Semantics**: Java passes objects by reference. In C++, we pass the `weatherList` by `const` reference to avoid unnecessary copies, and then explicitly copy it into our member variable to match the Java assignment behavior.
+
+Here is the idiomatic C++ translation:
+
+```cpp
+#include <string>
+#include <unordered_map>
+#include <any>
+#include <vector>
+#include <utility>
+
+namespace org::example {
+
+class WeatherSystem {
+private:
+    double temperature = 0.0;
+    std::string weather;
+    std::string city;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::any>> weatherList;
+
+public:
+    explicit WeatherSystem(std::string city) : city(std::move(city)) {}
+
+    void setCity(std::string city) {
+        this->city = std::move(city);
+    }
+
+    std::string getCity() const {
+        return this->city;
+    }
+
+    void setTemperature(double temperature) {
+        this->temperature = temperature;
+    }
+
+    double celsiusToFahrenheit() const {
+        return (this->temperature * 9.0 / 5.0) + 32.0;
+    }
+
+    double fahrenheitToCelsius() const {
+        return (this->temperature - 32.0) * 5.0 / 9.0;
+    }
+
+    std::vector<std::any> query(const std::unordered_map<std::string, std::unordered_map<std::string, std::any>>& weatherList, const std::string& tmpUnits) {
+        this->weatherList = weatherList; // Copy the map into the member variable
+        
+        if (this->weatherList.find(this->city) == this->weatherList.end()) {
+            return {false}; // Equivalent to new Object[]{false}
+        }
+
+        const auto& cityWeather = this->weatherList.at(this->city);
+        
+        // std::any_cast will throw std::bad_any_cast if the key doesn't exist or type mismatches,
+        // which is behaviorally equivalent to Java's NullPointerException / ClassCastException here.
+        this->temperature = std::any_cast<double>(cityWeather.at("temperature"));
+        this->weather = std::any_cast<std::string>(cityWeather.at("weather"));
+        std::string currentUnits = std::any_cast<std::string>(cityWeather.at("temperature units"));
+
+        if (currentUnits != tmpUnits) {
+            if (tmpUnits == "celsius") {
+                this->temperature = fahrenheitToCelsius();
+            } else if (tmpUnits == "fahrenheit") {
+                this->temperature = celsiusToFahrenheit();
+            }
+        }
+
+        return {this->temperature, this->weather}; // Equivalent to new Object[]{this.temperature, this.weather}
+    }
+};
+
+} // namespace org::example
+```
+
+### Key Translation Notes:
+* **`std::any`**: Requires C++17 or later. It is the standard way to hold values of any type in C++, mimicking Java's `Object`.
+* **`std::vector<std::any>`**: Replaces `Object[]`. The initializer lists `{false}` and `{this->temperature, this->weather}` correctly construct the heterogeneous vector.
+* **`.at()` vs `[]`**: We use `.at()` on the maps instead of `operator[]` because `[]` will insert a default-constructed value if the key doesn't exist, which alters behavior compared to Java's `.get()` returning `null`.
+* **String Comparisons**: Replaced Java's `.equals()` with C++'s `==` operator, which properly compares string contents rather than object identities.
+* **Math Operations**: Added `.0` to the integer literals in the conversion functions (e.g., `9.0 / 5.0`) to explicitly enforce floating-point division, guaranteeing the output exactly matches the Java math logic.
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <unordered_map>
+#include <any>
+#include <vector>
+#include <utility>
+
+namespace org::example {
+
+class WeatherSystem {
+private:
+    double temperature = 0.0;
+    std::string weather;
+    std::string city;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::any>> weatherList;
+
+public:
+    explicit WeatherSystem(std::string city) : city(std::move(city)) {}
+
+    void setCity(std::string city) {
+        this->city = std::move(city);
+    }
+
+    std::string getCity() const {
+        return this->city;
+    }
+
+    void setTemperature(double temperature) {
+        this->temperature = temperature;
+    }
+
+    double celsiusToFahrenheit() const {
+        return (this->temperature * 9.0 / 5.0) + 32.0;
+    }
+
+    double fahrenheitToCelsius() const {
+        return (this->temperature - 32.0) * 5.0 / 9.0;
+    }
+
+    std::vector<std::any> query(const std::unordered_map<std::string, std::unordered_map<std::string, std::any>>& weatherList, const std::string& tmpUnits) {
+        this->weatherList = weatherList; // Copy the map into the member variable
+        
+        if (this->weatherList.find(this->city) == this->weatherList.end()) {
+            return {false}; // Equivalent to new Object[]{false}
+        }
+
+        const auto& cityWeather = this->weatherList.at(this->city);
+        
+        // std::any_cast will throw std::bad_any_cast if the key doesn't exist or type mismatches,
+        // which is behaviorally equivalent to Java's NullPointerException / ClassCastException here.
+        this->temperature = std::any_cast<double>(cityWeather.at("temperature"));
+        this->weather = std::any_cast<std::string>(cityWeather.at("weather"));
+        std::string currentUnits = std::any_cast<std::string>(cityWeather.at("temperature units"));
+
+        if (currentUnits != tmpUnits) {
+            if (tmpUnits == "celsius") {
+                this->temperature = fahrenheitToCelsius();
+            } else if (tmpUnits == "fahrenheit") {
+                this->temperature = celsiusToFahrenheit();
+            }
+        }
+
+        return {this->temperature, this->weather}; // Equivalent to new Object[]{this.temperature, this.weather}
+    }
+};
+
+} // namespace org::example

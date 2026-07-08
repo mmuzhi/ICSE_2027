@@ -1,0 +1,373 @@
+=== SOURCE CODE (cpp) ===
+#include <iostream>
+#include <ctime>
+#include <string>
+#include <sstream> 
+
+#include <string>
+#include <unordered_map>
+
+struct User {
+    std::string name;
+    int level;
+    std::string address;
+};
+
+struct Authorization {
+    User user;
+    std::string jwt;
+};
+
+struct Request {
+    std::string path;
+    std::string method;
+    Authorization auth;
+};
+
+class AccessGatewayFilter {
+public:
+    AccessGatewayFilter() {}
+    bool filter(const Request& request);
+    bool is_start_with(const std::string& request_uri);
+    Authorization get_jwt_user(const Request& request);
+    void set_current_user_info_and_log(const User& user);
+};
+
+
+bool AccessGatewayFilter::filter(const Request& request) {
+    const std::string& request_uri = request.path;
+    const std::string& method = request.method;
+
+    if (is_start_with(request_uri)) {
+        return true;
+    }
+
+    try {
+        Authorization token = get_jwt_user(request);
+        User user = token.user;
+        if (user.level > 2) {
+            set_current_user_info_and_log(user);
+            return true;
+        }
+    }
+    catch (...) {
+        return false;
+    }
+    return false;
+}
+
+bool AccessGatewayFilter::is_start_with(const std::string& request_uri) {
+    static const std::string start_with[] = { "/api", "/login" };
+    for (const auto& s : start_with) {
+        if (request_uri.find(s) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Authorization AccessGatewayFilter::get_jwt_user(const Request& request) {
+    Authorization token = request.auth;
+    const User& user = token.user;
+
+    if (token.jwt.find(user.name) == 0) {
+        std::string jwt_str_date = token.jwt.substr(user.name.size());
+
+        std::time_t jwt_timestamp;
+        std::istringstream ss(jwt_str_date);
+        ss >> jwt_timestamp;
+
+        if (ss.fail()) {
+            return Authorization{};
+        }
+
+        std::time_t now = std::time(nullptr);
+        if (std::difftime(now, jwt_timestamp) >= 3 * 24 * 60 * 60) { 
+            return Authorization{};
+        }
+    }
+    return token;
+}
+
+void AccessGatewayFilter::set_current_user_info_and_log(const User& user) {
+    std::cout << user.name << " " << user.address << " " << std::time(nullptr) << std::endl;
+}
+
+
+=== REASONING ===
+<think>
+Let me translate this C++ code to Python carefully.
+
+Key things to note:
+1. The `User`, `Authorization`, and `Request` structs become dataclasses or simple classes.
+2. `is_start_with` checks if the request_uri starts with "/api" or "/login".
+3. `get_jwt_user` checks if the jwt starts with the user's name, then extracts a timestamp from the rest of the jwt string, checks if it's valid (parsing succeeds), and checks if the timestamp is within 3 days of now.
+4. `set_current_user_info_and_log` prints user info to stdout.
+5. The `filter` method catches all exceptions and returns false.
+
+Let me be careful about the details:
+
+- `token.jwt.find(user.name) == 0` → jwt starts with user.name
+- `jwt_str_date = token.jwt.substr(user.name.size())` → the rest of the jwt after the name
+- Parse jwt_str_date as a time_t (integer timestamp)
+- If parsing fails (`ss.fail()`), return empty Authorization
+- If `difftime(now, jwt_timestamp) >= 3 * 24 * 60 * 60` (3 days), return empty Authorization
+- Otherwise return the token
+
+In the `filter` method:
+- If `is_start_with` returns true, return true
+- Try to get jwt user, if user.level > 2, log and return true
+- Any exception → return false
+- Otherwise return false
+
+Let me write the Python code:
+
+```python
+import time
+import sys
+
+
+class User:
+    def __init__(self, name="", level=0, address=""):
+        self.name = name
+        self.level = level
+        self.address = address
+
+
+class Authorization:
+    def __init__(self, user=None, jwt=""):
+        self.user = user if user is not None else User()
+        self.jwt = jwt
+
+
+class Request:
+    def __init__(self, path="", method="", auth=None):
+        self.path = path
+        self.method = method
+        self.auth = auth if auth is not None else Authorization()
+
+
+class AccessGatewayFilter:
+    def filter(self, request):
+        request_uri = request.path
+        method = request.method
+
+        if self.is_start_with(request_uri):
+            return True
+
+        try:
+            token = self.get_jwt_user(request)
+            user = token.user
+            if user.level > 2:
+                self.set_current_user_info_and_log(user)
+                return True
+        except:
+            return False
+        return False
+
+    def is_start_with(self, request_uri):
+        start_with = ["/api", "/login"]
+        for s in start_with:
+            if request_uri.startswith(s):
+                return True
+        return False
+
+    def get_jwt_user(self, request):
+        token = request.auth
+        user = token.user
+
+        if token.jwt.startswith(user.name):
+            jwt_str_date = token.jwt[len(user.name):]
+
+            try:
+                jwt_timestamp = int(jwt_str_date)
+            except (ValueError, TypeError):
+                return Authorization()
+
+            now = int(time.time())
+            if now - jwt_timestamp >= 3 * 24 * 60 * 60:
+                return Authorization()
+
+        return token
+
+    def set_current_user_info_and_log(self, user):
+        print(f"{user.name} {user.address} {int(time.time())}")
+```
+
+Wait, let me think about the timestamp parsing more carefully. In C++, `std::time_t` is typically a `long` or `long long`. The `istringstream` extraction `ss >> jwt_timestamp` will parse it as an integer. In Python, `int()` should do the same.
+
+But what about edge cases? If `jwt_str_date` has leading/trailing whitespace, C++'s `istringstream` would handle it fine (skipping whitespace). Python's `int()` also handles leading/trailing whitespace. So that should be fine.
+
+What about if `jwt_str_date` is empty? In C++, reading into a time_t from an empty stream would fail (`ss.fail()` would be true). In Python, `int("")` raises ValueError, which we catch and return empty Authorization. Good.
+
+What about `difftime(now, jwt_timestamp)` - this returns `now - jwt_timestamp` as a double. In Python, we just do integer subtraction. The comparison `>= 3 * 24 * 60 * 60` should behave the same.
+
+One thing to be careful about: in C++, `std::time(nullptr)` returns `time_t` which is an integer type. In Python, `time.time()` returns a float. I should use `int(time.time())` to match the C++ behavior.
+
+Actually, looking more carefully at the C++ code for `get_jwt_user`:
+- `std::time_t now = std::time(nullptr);` - this is an integer
+- `std::difftime(now, jwt_timestamp)` - this returns a double representing `now - jwt_timestamp`
+
+The comparison `>= 3 * 24 * 60 * 60` with a double should be fine. In Python, using integer arithmetic should produce the same results for reasonable timestamps.
+
+Let me also think about the `Authorization{}` default constructor. In C++, this creates an Authorization with default-constructed User (empty name, level 0, empty address) and empty jwt string. My Python `Authorization()` does the same.
+
+I think the code is correct. Let me also make sure the `filter` method's exception handling matches. In C++, `catch (...)` catches all exceptions. In Python, bare `except:` does the same (though it's not idiomatic, it matches the C++ behavior).
+
+Actually, one more thing: in the C++ code, `get_jwt_user` doesn't throw exceptions - it returns `Authorization{}` on failure. So the try/catch in `filter` would only catch truly unexpected exceptions. But to keep behavior identical, I'll keep the bare except.
+
+Let me also double-check: when `get_jwt_user` returns an empty `Authorization{}`, the `user.level` would be 0, which is not > 2, so the filter would return False. That's consistent.
+
+The code looks good. Let me finalize it.
+</think>
+
+=== RAW ANSWER ===
+```python
+import time
+
+
+class User:
+    def __init__(self, name="", level=0, address=""):
+        self.name = name
+        self.level = level
+        self.address = address
+
+
+class Authorization:
+    def __init__(self, user=None, jwt=""):
+        self.user = user if user is not None else User()
+        self.jwt = jwt
+
+
+class Request:
+    def __init__(self, path="", method="", auth=None):
+        self.path = path
+        self.method = method
+        self.auth = auth if auth is not None else Authorization()
+
+
+class AccessGatewayFilter:
+    def filter(self, request):
+        request_uri = request.path
+        method = request.method
+
+        if self.is_start_with(request_uri):
+            return True
+
+        try:
+            token = self.get_jwt_user(request)
+            user = token.user
+            if user.level > 2:
+                self.set_current_user_info_and_log(user)
+                return True
+        except:
+            return False
+        return False
+
+    def is_start_with(self, request_uri):
+        start_with = ["/api", "/login"]
+        for s in start_with:
+            if request_uri.startswith(s):
+                return True
+        return False
+
+    def get_jwt_user(self, request):
+        token = request.auth
+        user = token.user
+
+        if token.jwt.startswith(user.name):
+            jwt_str_date = token.jwt[len(user.name):]
+
+            try:
+                jwt_timestamp = int(jwt_str_date)
+            except (ValueError, TypeError):
+                return Authorization()
+
+            now = int(time.time())
+            if now - jwt_timestamp >= 3 * 24 * 60 * 60:
+                return Authorization()
+
+        return token
+
+    def set_current_user_info_and_log(self, user):
+        print(f"{user.name} {user.address} {int(time.time())}")
+```
+
+Key translation decisions:
+- **Structs → Classes**: `User`, `Authorization`, `Request` become Python classes with default-constructing `__init__` methods matching C++ default construction semantics.
+- **`Authorization{}`**: Maps to `Authorization()` which creates a default `User()` (empty strings, level=0) and empty jwt — identical to C++ value-initialization.
+- **`istringstream >> time_t`**: Replaced with `int()` parsing, with `ValueError`/`TypeError` catching matching `ss.fail()`.
+- **`difftime`**: Replaced with integer subtraction (`now - jwt_timestamp`), producing the same result for integer timestamps.
+- **`time(nullptr)`**: Replaced with `int(time.time())` to match C++'s integer `time_t`.
+- **`catch (...)`**: Replaced with bare `except:` to catch all exceptions identically.
+- **`find(s) == 0`**: Replaced with idiomatic `startswith()`, which is behaviorally identical.
+
+=== TRANSLATED CODE (py) ===
+import time
+
+
+class User:
+    def __init__(self, name="", level=0, address=""):
+        self.name = name
+        self.level = level
+        self.address = address
+
+
+class Authorization:
+    def __init__(self, user=None, jwt=""):
+        self.user = user if user is not None else User()
+        self.jwt = jwt
+
+
+class Request:
+    def __init__(self, path="", method="", auth=None):
+        self.path = path
+        self.method = method
+        self.auth = auth if auth is not None else Authorization()
+
+
+class AccessGatewayFilter:
+    def filter(self, request):
+        request_uri = request.path
+        method = request.method
+
+        if self.is_start_with(request_uri):
+            return True
+
+        try:
+            token = self.get_jwt_user(request)
+            user = token.user
+            if user.level > 2:
+                self.set_current_user_info_and_log(user)
+                return True
+        except:
+            return False
+        return False
+
+    def is_start_with(self, request_uri):
+        start_with = ["/api", "/login"]
+        for s in start_with:
+            if request_uri.startswith(s):
+                return True
+        return False
+
+    def get_jwt_user(self, request):
+        token = request.auth
+        user = token.user
+
+        if token.jwt.startswith(user.name):
+            jwt_str_date = token.jwt[len(user.name):]
+
+            try:
+                jwt_timestamp = int(jwt_str_date)
+            except (ValueError, TypeError):
+                return Authorization()
+
+            now = int(time.time())
+            if now - jwt_timestamp >= 3 * 24 * 60 * 60:
+                return Authorization()
+
+        return token
+
+    def set_current_user_info_and_log(self, user):
+        print(f"{user.name} {user.address} {int(time.time())}")

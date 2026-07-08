@@ -1,0 +1,257 @@
+=== SOURCE CODE (cpp) ===
+
+#include <fstream>
+#include <sstream>
+#include <iostream>
+
+#include <string>
+#include <unordered_map>
+#include <nlohmann/json.hpp> 
+
+class CookiesUtil {
+public:
+    explicit CookiesUtil(const std::string& cookiesFile);
+
+    void get_cookies(const nlohmann::json& response);
+    nlohmann::json load_cookies();
+    bool _save_cookies();
+    void set_cookies(nlohmann::json& request);
+
+    std::string cookies_file;
+    std::unordered_map<std::string, std::string> cookies;
+};
+
+using json = nlohmann::json;
+
+CookiesUtil::CookiesUtil(const std::string& cookiesFile) : cookies_file(cookiesFile) {}
+
+void CookiesUtil::get_cookies(const nlohmann::json& response) {
+    if (response.contains("cookies")) {
+        cookies = response["cookies"].get<std::unordered_map<std::string, std::string>>();
+    }
+    _save_cookies();
+}
+
+
+json CookiesUtil::load_cookies() {
+    json cookiesData;
+    std::ifstream file(cookies_file);
+
+    if (file.is_open()) {
+        try {
+            file >> cookiesData;
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Error reading JSON file: " << e.what() << std::endl;
+        }
+    }
+
+    return cookiesData;
+}
+
+bool CookiesUtil::_save_cookies() {
+    json cookiesJson(cookies);
+    std::ofstream file(cookies_file);
+
+    if (file.is_open()) {
+        try {
+            file << cookiesJson.dump(4); 
+            return true;
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Error writing JSON file: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    return false;
+}
+
+void CookiesUtil::set_cookies(json& request) {
+    std::ostringstream oss;
+    for (const auto& [key, value] : cookies) {
+        if (oss.tellp() > 0) {
+            oss << "; ";
+        }
+        oss << key << "=" << value;
+    }
+    request["cookies"] = oss.str();
+}
+
+
+=== REASONING ===
+<think>
+Let me translate the C++ code to Python, keeping behavior identical.
+
+Key observations:
+1. `CookiesUtil` class with a cookies file path and a cookies dict
+2. `get_cookies` extracts cookies from a JSON response and saves them
+3. `load_cookies` reads cookies from a JSON file, returns empty dict-like if file doesn't exist
+4. `_save_cookies` writes cookies dict as JSON to file with indentation of 4
+5. `set_cookies` formats cookies as "key1=value1; key2=value2" string and sets it in request["cookies"]
+
+Important details:
+- `load_cookies` returns an empty json object (which is like an empty dict) if file can't be opened
+- `_save_cookies` returns True on success, False on failure
+- `set_cookies` iterates over the unordered_map - in C++, unordered_map iteration order is unspecified. In Python, dict maintains insertion order. However, since the C++ code uses unordered_map, the order is not guaranteed, so Python's dict order is fine (it's just a different unspecified order).
+- The `get` method extracts cookies from response["cookies"] which is expected to be an object with string key-value pairs
+- Error handling: prints to stderr on JSON parse/write errors
+
+Let me write the Python code:
+
+```python
+import json
+import sys
+
+
+class CookiesUtil:
+    def __init__(self, cookies_file):
+        self.cookies_file = cookies_file
+        self.cookies = {}
+
+    def get_cookies(self, response):
+        if "cookies" in response:
+            self.cookies = dict(response["cookies"])
+        self._save_cookies()
+
+    def load_cookies(self):
+        try:
+            with open(self.cookies_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            print(f"Error reading JSON file: {e}", file=sys.stderr)
+            return {}
+
+    def _save_cookies(self):
+        try:
+            with open(self.cookies_file, 'w') as f:
+                json.dump(self.cookies, f, indent=4)
+                return True
+        except Exception as e:
+            print(f"Error writing JSON file: {e}", file=sys.stderr)
+            return False
+
+    def set_cookies(self, request):
+        parts = []
+        for key, value in self.cookies.items():
+            parts.append(f"{key}={value}")
+        request["cookies"] = "; ".join(parts)
+```
+
+Wait, let me reconsider `load_cookies`. In the C++ code, if the file can't be opened, it returns an empty `json` object (which is `{}`). If the file is open but JSON parsing fails, it prints an error and returns the empty `json` object. Let me match that behavior more carefully.
+
+In C++:
+- If file doesn't exist / can't be opened: `cookiesData` is default-constructed (empty json object `{}`), returned as `{}`
+- If file opens but JSON parse fails: prints error, returns `cookiesData` which is still default-constructed `{}`
+
+In Python:
+- FileNotFoundError: return `{}`
+- JSON decode error: print error, return `{}`
+- Other exceptions: should also be caught
+
+Actually, looking more carefully at the C++ code: the `try-catch` is only around `file >> cookiesData`. If the file can't be opened, we skip the try block entirely and return empty json. If JSON parsing fails, we catch the exception, print error, and return empty json. This matches my Python code above.
+
+One subtle thing: in C++, `file >> cookiesData` could partially parse and then throw. In that case, `cookiesData` might be partially filled. But in practice, nlohmann::json's `>>` operator either succeeds completely or throws, leaving the json object unchanged (it's actually a bit implementation-defined, but typically if parsing fails, the json object is left in its original state). So returning empty `{}` on error is correct.
+
+My Python code looks correct. Let me also consider: in the C++ `_save_cookies`, if the file can't be opened, it returns false without printing anything. If the file opens but writing fails, it prints error and returns false. In Python, `open()` with 'w' will create the file if it doesn't exist, so it would only fail on permission issues etc. The behavior should be similar.
+
+Actually wait - in C++ `_save_cookies`, the catch block catches exceptions from `file << cookiesJson.dump(4)`. But `dump(4)` itself shouldn't throw (it's serializing to string). The `file <<` could throw if writing fails. In Python, `json.dump` could throw on serialization errors, and writing to the file could also fail. My catch-all `Exception` handler covers both cases.
+
+One more thing: the C++ code uses `cookiesJson.dump(4)` which produces a string with 4-space indentation, then writes it to the file. In Python, `json.dump(self.cookies, f, indent=4)` does the same thing.
+
+I think my translation is correct. Let me finalize it.
+</think>
+
+=== RAW ANSWER ===
+```python
+import json
+import sys
+
+
+class CookiesUtil:
+    def __init__(self, cookies_file):
+        self.cookies_file = cookies_file
+        self.cookies = {}
+
+    def get_cookies(self, response):
+        if "cookies" in response:
+            self.cookies = dict(response["cookies"])
+        self._save_cookies()
+
+    def load_cookies(self):
+        cookies_data = {}
+        try:
+            with open(self.cookies_file, "r") as f:
+                cookies_data = json.load(f)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Error reading JSON file: {e}", file=sys.stderr)
+        return cookies_data
+
+    def _save_cookies(self):
+        try:
+            with open(self.cookies_file, "w") as f:
+                json.dump(self.cookies, f, indent=4)
+                return True
+        except Exception as e:
+            print(f"Error writing JSON file: {e}", file=sys.stderr)
+            return False
+
+    def set_cookies(self, request):
+        parts = []
+        for key, value in self.cookies.items():
+            parts.append(f"{key}={value}")
+        request["cookies"] = "; ".join(parts)
+```
+
+Key translation notes:
+
+- **`std::unordered_map` → `dict`**: Python dicts are the natural equivalent. (C++ unordered_map has unspecified iteration order; Python dicts preserve insertion order, but since the C++ order is also non-deterministic, the behavior is equivalent in spirit.)
+- **`load_cookies`**: Returns `{}` if the file doesn't exist (matching C++ where `json cookiesData;` default-constructs to an empty object) or if parsing fails (matching the catch block that prints to stderr and returns the still-empty object).
+- **`_save_cookies`**: Returns `True` on success, `False` on failure (matching the C++ bool return). Errors during writing print to stderr.
+- **`json.dump(..., indent=4)`**: Matches `cookiesJson.dump(4)` producing 4-space-indented JSON.
+- **`set_cookies`**: Builds the `"key1=value1; key2=value2"` cookie string, matching the `std::ostringstream` logic with the `"; "` separator guard (`tellp() > 0`).
+
+=== TRANSLATED CODE (py) ===
+import json
+import sys
+
+
+class CookiesUtil:
+    def __init__(self, cookies_file):
+        self.cookies_file = cookies_file
+        self.cookies = {}
+
+    def get_cookies(self, response):
+        if "cookies" in response:
+            self.cookies = dict(response["cookies"])
+        self._save_cookies()
+
+    def load_cookies(self):
+        cookies_data = {}
+        try:
+            with open(self.cookies_file, "r") as f:
+                cookies_data = json.load(f)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Error reading JSON file: {e}", file=sys.stderr)
+        return cookies_data
+
+    def _save_cookies(self):
+        try:
+            with open(self.cookies_file, "w") as f:
+                json.dump(self.cookies, f, indent=4)
+                return True
+        except Exception as e:
+            print(f"Error writing JSON file: {e}", file=sys.stderr)
+            return False
+
+    def set_cookies(self, request):
+        parts = []
+        for key, value in self.cookies.items():
+            parts.append(f"{key}={value}")
+        request["cookies"] = "; ".join(parts)

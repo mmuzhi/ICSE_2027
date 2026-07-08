@@ -1,0 +1,1223 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+public class NumberConverter {
+
+    public static String decimalToBinary(int decimalNum) {
+        return Integer.toBinaryString(decimalNum);
+    }
+
+    public static int binaryToDecimal(String binaryNum) {
+        return Integer.parseInt(binaryNum, 2);
+    }
+
+    public static String decimalToOctal(int decimalNum) {
+        return Integer.toOctalString(decimalNum);
+    }
+
+    public static int octalToDecimal(String octalNum) {
+        return Integer.parseInt(octalNum, 8);
+    }
+
+    public static String decimalToHex(int decimalNum) {
+        return Integer.toHexString(decimalNum);
+    }
+
+    public static int hexToDecimal(String hexNum) {
+        return Integer.parseInt(hexNum, 16);
+    }
+}
+
+=== REASONING ===
+<think>
+The user wants to translate a Java class `NumberConverter` to C++.
+The Java class provides static methods to convert between decimal and binary/octal/hex strings.
+I need to keep the behavior identical, including edge cases and exceptions.
+
+Let's look at the Java methods:
+1. `decimalToBinary(int decimalNum)` -> `Integer.toBinaryString(decimalNum)`
+   In C++, `std::bitset<32>(decimalNum).to_string()` could be used, but `Integer.toBinaryString` drops leading zeros for positive numbers, but represents negative numbers in two's complement. Wait, `Integer.toBinaryString(-1)` is "11111111111111111111111111111111".
+   Actually, if we just want the exact behavior, we can use a stringstream or `std::format` (C++20).
+   Wait, `std::format("{:b}", decimalNum)` in C++20 produces the binary representation. For negative numbers, it might produce a minus sign. Let's check. `std::format("{:b}", -1)` produces "-1". But Java's `Integer.toBinaryString(-1)` produces "11111111111111111111111111111111".
+   So we need to handle negative numbers correctly.
+   Actually, `Integer.toBinaryString` takes an `int`, which is 32-bit. It returns the unsigned representation (two's complement).
+   In C++, we can cast to `uint32_t` and then format it, or use `std::bitset<32>` and strip leading zeros? No, Java's `Integer.toBinaryString` doesn't strip leading zeros for negative numbers. Wait, for positive numbers it DOES strip leading zeros. For 0 it returns "0".
+   Let's trace `Integer.toBinaryString`:
+   - `1` -> "1"
+   - `-1` -> "11111111111111111111111111111111"
+   - `0` -> "0"
+   So we can convert to `uint32_t`, then format as binary, then strip leading zeros, unless the value is 0.
+   Wait, if we use `std::bitset<32>(decimalNum).to_string()`, it gives 32 characters. We can strip leading zeros. But if it's 0, we should return "0".
+
+2. `binaryToDecimal(String binaryNum)` -> `Integer.parseInt(binaryNum, 2)`
+   In Java, `Integer.parseInt` throws `NumberFormatException` if the string is not a valid binary number or if it represents a number outside the 32-bit signed integer range.
+   In C++, we can use `std::stoul` with base 2, or `std::stoi`.
+   Wait, `Integer.parseInt("11111111111111111111111111111111", 2)` throws a `NumberFormatException` because it's treated as an unsigned value and overflows a 32-bit signed integer? No, wait.
+   Let's check Java: `Integer.parseInt("11111111111111111111111111111111", 2)` throws NumberFormatException because the value is 4294967295, which is > Integer.MAX_VALUE. Wait, does it?
+   Actually, `Integer.parseInt` parses the string as a signed integer. So "11111111111111111111111111111111" is 2^32-1, which overflows signed int.
+   Wait, `Integer.parseInt` allows a minus sign. It parses the magnitude.
+   If we want to mimic this, we can use `std::stoi` or `std::stoul` and check bounds.
+   Actually, C++ `std::stoi(binaryNum, nullptr, 2)` will parse it. If it overflows, it throws `std::out_of_range`.
+   Wait, does `std::stoi` handle 32-bit signed overflow the same way?
+   Let's check `std::stoi` behavior. It returns an `int`. If the value is out of range of `int`, it throws `std::out_of_range`. This matches Java's `NumberFormatException` (conceptually, we can map it or just let it throw).
+   Wait, in Java, `Integer.parseInt(binaryNum, 2)` for a 32-bit two's complement string like "11111111111111111111111111111110" will throw an exception because it's 4294967294, which is > 2147483647.
+   If we want exact identical behavior, we just use `std::stoi` and catch/throw, or just let `std::stoi` throw `std::invalid_argument` / `std::out_of_range`.
+   Wait, what if the string has leading spaces? `Integer.parseInt` does not allow leading spaces. `std::stoi` skips leading whitespace!
+   Ah! `std::stoi` skips whitespace. `Integer.parseInt` does not.
+   So we might need to write a custom parser or use `std::strtoul` and check for whitespace, or just use a strict parser.
+   Let's write a simple helper or use `std::stoi` after checking for whitespace? No, if there's whitespace, `Integer.parseInt` throws. `std::stoi` would succeed.
+   Wait, the prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". So we should probably throw if there's whitespace.
+   Actually, is it strictly necessary to replicate the exact exception type? Java throws `NumberFormatException`. C++ doesn't have that. We can throw `std::invalid_argument`.
+   Let's look at `std::stoi` carefully. It discards whitespace.
+   If we want exact behavior, we can use `std::from_chars` (C++17) which does NOT skip whitespace and does not allocate!
+   `std::from_chars` for base 2:
+   ```cpp
+   int value;
+   auto [ptr, ec] = std::from_chars(binaryNum.data(), binaryNum.data() + binaryNum.size(), value, 2);
+   if (ec == std::errc() && ptr == binaryNum.data() + binaryNum.size()) {
+       return value;
+   } else {
+       throw std::invalid_argument("Invalid input");
+   }
+   ```
+   Wait, `std::from_chars` for integers is available in C++17, but for bases other than 10, MSVC had it late, but GCC/Clang have it. It's generally fine.
+   Wait, `std::from_chars` parses as signed. So "11111111111111111111111111111111" would fail with `std::errc::result_out_of_range` because it's > INT_MAX.
+   This perfectly matches `Integer.parseInt`!
+   Let's double check `std::from_chars` behavior. It parses the string as an integer. If it overflows, it returns `std::errc::result_out_of_range`. If it has invalid characters, it returns `std::errc::invalid_argument`.
+   Wait, what about negative numbers? `Integer.parseInt("-1", 2)` throws `NumberFormatException` because '-' is not a valid binary digit. `std::from_chars` also rejects '-' for base 2! Wait, does it?
+   Let's check C++ standard for `std::from_chars`. "The pattern is the expected form of the subject sequence in the C locale... for base 2, it's `[0-1]+`". No minus sign.
+   Wait, does `Integer.parseInt` allow minus sign for binary?
+   Yes, `Integer.parseInt("-1", 2)` throws `NumberFormatException` because '-' is not a valid digit in base 2.
+   Wait, `Integer.parseInt("-10", 2)` throws `NumberFormatException`? Let me check.
+   Actually, Java `Integer.parseInt("-10", 2)` DOES parse! It returns -2.
+   Wait, Java `Integer.parseInt` allows a leading minus sign for ANY radix.
+   "The characters in the string must all be digits of the specified radix (as determined by whether Character.digit(char, radix) returns a nonnegative value), except that the first character may be an ASCII minus sign '-' ..."
+   So `Integer.parseInt("-10", 2)` returns -2.
+   Does `std::from_chars` handle minus sign for bases other than 10?
+   No, `std::from_chars` for bases other than 10 does NOT handle a minus sign! It only handles it for base 10.
+   So we have to handle the minus sign manually if we use `std::from_chars`, or use `std::stoi`.
+   Wait, `std::stoi` handles minus sign for any base!
+   Let's check `std::stoi("-10", nullptr, 2)`. It returns -2.
+   Does `std::stoi` skip whitespace? Yes.
+   Does Java `Integer.parseInt` skip whitespace? No, it throws `NumberFormatException`.
+   So we can trim or check for whitespace before calling `std::stoi`.
+   Actually, if we check for whitespace, what about `Integer.parseInt(" 10", 2)`? It throws.
+   What about `Integer.parseInt("+10", 2)`? It throws! Wait, does it?
+   Java `Integer.parseInt` allows '+' sign? No, `Integer.parseInt` DOES NOT allow '+' sign. It only allows '-'.
+   Wait, `Long.parseLong` and `Integer.parseInt` do NOT allow '+' sign.
+   `std::stoi` DOES allow '+' sign.
+   So `std::stoi` is not strictly identical.
+   Let's write a custom parsing function that mimics `Integer.parseInt` exactly.
+
+   Custom parser for `Integer.parseInt(String s, int radix)`:
+   ```cpp
+   int parseInt(const std::string& s, int radix) {
+       if (s.empty()) throw std::invalid_argument("Empty string");
+       int result = 0;
+       bool negative = false;
+       int i = 0;
+       if (s[0] == '-') {
+           negative = true;
+           i = 1;
+       } else if (s[0] == '+') {
+           throw std::invalid_argument("Sign character not allowed");
+       }
+       if (i == s.size()) throw std::invalid_argument("No digits");
+       
+       for (; i < s.size(); ++i) {
+           int digit = -1;
+           char c = s[i];
+           if (c >= '0' && c <= '9') digit = c - '0';
+           else if (c >= 'A' && c <= 'Z') digit = c - 'A' + 10;
+           else if (c >= 'a' && c <= 'z') digit = c - 'a' + 10;
+           
+           if (digit < 0 || digit >= radix) {
+               throw std::invalid_argument("Invalid character");
+           }
+           
+           if (result > (INT_MAX - digit) / radix) {
+               throw std::out_of_range("Overflow");
+           }
+           result = result * radix + digit;
+       }
+       return negative ? -result : result;
+   }
+   ```
+   Wait, `Integer.parseInt` overflow logic:
+   It checks if the value exceeds `Integer.MAX_VALUE` or `Integer.MIN_VALUE`.
+   The above custom logic `result > (INT_MAX - digit) / radix` works for positive accumulation.
+   If `negative` is true, the minimum value is `INT_MIN`, which is `-INT_MAX - 1`.
+   So if `negative` is true, we can accumulate as positive, and if `result > INT_MAX`, we throw. Wait, if `result == INT_MAX` and `negative` is true, `-result` is `-INT_MAX`, which is valid. But `-INT_MAX - 1` is also valid.
+   So for negative, the maximum allowed positive value is `INT_MAX + 1`. But `INT_MAX + 1` overflows `int`.
+   So we can accumulate in a `long long` or `unsigned int` and check bounds.
+   Wait, Java's `int` is strictly 32-bit. C++ `int` is typically 32-bit, but strictly at least 16-bit. To be identical, we should probably use `int32_t` from `<cstdint>`.
+   Let's use `int32_t` and `INT32_MAX` / `INT32_MIN`.
+
+   Let's refine the `parseInt` function:
+   ```cpp
+   #include <string>
+   #include <cstdint>
+   #include <stdexcept>
+
+   int32_t parseInt(const std::string& s, int radix) {
+       if (s.empty()) throw std::invalid_argument("No characters in string");
+       bool negative = false;
+       int i = 0;
+       if (s[0] == '-') {
+           negative = true;
+           i = 1;
+       }
+       if (i == s.size()) throw std::invalid_argument("No digits");
+       
+       int64_t result = 0;
+       for (; i < s.size(); ++i) {
+           int digit = -1;
+           char c = s[i];
+           if (c >= '0' && c <= '9') digit = c - '0';
+           else if (c >= 'A' && c <= 'Z') digit = c - 'A' + 10;
+           else if (c >= 'a' && c <= 'z') digit = c - 'a' + 10;
+           
+           if (digit < 0 || digit >= radix) {
+               throw std::invalid_argument("Invalid character");
+           }
+           
+           result = result * radix + digit;
+           if (negative) {
+               if (-result < INT32_MIN) throw std::out_of_range("Overflow");
+           } else {
+               if (result > INT32_MAX) throw std::out_of_range("Overflow");
+           }
+       }
+       return negative ? static_cast<int32_t>(-result) : static_cast<int32_t>(result);
+   }
+   ```
+   This perfectly mimics `Integer.parseInt` for our use cases (radix 2, 8, 16).
+   Wait, does Java's `Integer.parseInt` allow lowercase letters for hex? Yes, `Integer.parseInt("a", 16)` returns 10.
+   Does it allow uppercase? Yes.
+   Does `Integer.toHexString` return lowercase or uppercase? It returns lowercase!
+   Let's check `Integer.toHexString(10)` -> "a".
+   So our `parseInt` handles lowercase and uppercase, which matches Java.
+
+   Now, `decimalToBinary(int decimalNum)`:
+   Java's `Integer.toBinaryString(int i)`:
+   Returns a string representation of the integer argument as an unsigned integer in base 2.
+   It represents negative numbers in two's complement.
+   So `-1` -> "11111111111111111111111111111111"
+   `1` -> "1"
+   `0` -> "0"
+   How to implement this in C++?
+   ```cpp
+   std::string decimalToBinary(int32_t decimalNum) {
+       if (decimalNum == 0) return "0";
+       uint32_t num = static_cast<uint32_t>(decimalNum);
+       std::string result;
+       while (num > 0) {
+           result += (num % 2 == 0 ? '0' : '1');
+           num /= 2;
+       }
+       std::reverse(result.begin(), result.end());
+       return result;
+   }
+   ```
+   Wait, `Integer.toBinaryString(0)` returns "0". The above loop returns an empty string for 0. So we handle `decimalNum == 0` explicitly.
+   Wait, is `num % 2` correct for `uint32_t`? Yes.
+   This perfectly replicates `Integer.toBinaryString`.
+   Let's trace `decimalNum = -1`: `num` becomes `0xFFFFFFFF`.
+   Loop runs 32 times, appending '1'. Reverses to 32 '1's. Correct.
+   `decimalNum = 1`: `num` is 1. Loop runs once, appends '1'. Reverses to "1". Correct.
+
+   `decimalToOctal(int32_t decimalNum)`:
+   Same logic, but base 8.
+   ```cpp
+   std::string decimalToOctal(int32_t decimalNum) {
+       if (decimalNum == 0) return "0";
+       uint32_t num = static_cast<uint32_t>(decimalNum);
+       std::string result;
+       while (num > 0) {
+           result += static_cast<char>('0' + num % 8);
+           num /= 8;
+       }
+       std::reverse(result.begin(), result.end());
+       return result;
+   }
+   ```
+
+   `decimalToHex(int32_t decimalNum)`:
+   Same logic, but base 16. And Java's `Integer.toHexString` uses lowercase `a-f`.
+   ```cpp
+   std::string decimalToHex(int32_t decimalNum) {
+       if (decimalNum == 0) return "0";
+       uint32_t num = static_cast<uint32_t>(decimalNum);
+       std::string result;
+       while (num > 0) {
+           int digit = num % 16;
+           if (digit < 10) {
+               result += static_cast<char>('0' + digit);
+           } else {
+               result += static_cast<char>('a' + digit - 10);
+           }
+           num /= 16;
+       }
+       std::reverse(result.begin(), result.end());
+       return result;
+   }
+   ```
+
+   Let's double check Java's `Integer.toOctalString` and `Integer.toHexString`.
+   They both act on the unsigned representation (two's complement for negative).
+   For example, `Integer.toHexString(-1)` -> "ffffffff".
+   `Integer.toOctalString(-1)` -> "37777777777".
+   My implementation using `uint32_t` will produce exactly these strings.
+
+   Now, let's review the `parseInt` method for `binaryToDecimal`, `octalToDecimal`, `hexToDecimal`.
+   ```cpp
+   int32_t binaryToDecimal(const std::string& binaryNum) {
+       return parseInt(binaryNum, 2);
+   }
+
+   int32_t octalToDecimal(const std::string& octalNum) {
+       return parseInt(octalNum, 8);
+   }
+
+   int32_t hexToDecimal(const std::string& hexNum) {
+       return parseInt(hexNum, 16);
+   }
+   ```
+
+   Wait, what if someone passes a string with leading zeros? `parseInt` handles it correctly because `0` is a valid digit and doesn't change the value.
+   What if the string is just "0"? `parseInt` returns 0. Correct.
+   What about empty string? Throws `invalid_argument`. Java throws `NumberFormatException`. Correct.
+   What about invalid characters? Throws `invalid_argument`. Correct.
+   What about overflow? Throws `out_of_range`. Java throws `NumberFormatException` with overflow detail. Correct.
+
+   Let's refine `parseInt` to be as robust as possible.
+   ```cpp
+   int32_t parseInt(const std::string& s, int radix) {
+       if (s.empty()) {
+           throw std::invalid_argument("Empty string");
+       }
+       bool negative = false;
+       size_t i = 0;
+       if (s[0] == '-') {
+           negative = true;
+           i = 1;
+       }
+       if (i == s.size()) {
+           throw std::invalid_argument("No digits");
+       }
+       
+       int64_t result = 0;
+       for (; i < s.size(); ++i) {
+           int digit = -1;
+           char c = s[i];
+           if (c >= '0' && c <= '9') {
+               digit = c - '0';
+           } else if (c >= 'A' && c <= 'Z') {
+               digit = c - 'A' + 10;
+           } else if (c >= 'a' && c <= 'z') {
+               digit = c - 'a' + 10;
+           }
+           
+           if (digit < 0 || digit >= radix) {
+               throw std::invalid_argument("Invalid character");
+           }
+           
+           result = result * radix + digit;
+           if (negative) {
+               if (-result < INT32_MIN) {
+                   throw std::out_of_range("Overflow");
+               }
+           } else {
+               if (result > INT32_MAX) {
+                   throw std::out_of_range("Overflow");
+               }
+           }
+       }
+       return negative ? static_cast<int32_t>(-result) : static_cast<int32_t>(result);
+   }
+   ```
+
+   Wait, is there any edge case in Java's `Integer.parseInt` where it allows spaces? No.
+   Does it allow a '+' sign? No, `Integer.parseInt("+10", 2)` throws `NumberFormatException`. My code throws `invalid_argument`. Correct.
+   Does it allow multiple '-' signs? No, my code throws `invalid_argument` because the second '-' is an invalid character. Correct.
+   What about `Integer.parseInt("-0", 2)`? Returns 0. My code returns 0. Correct.
+
+   Let's double check the `decimalToBinary` method.
+   ```cpp
+   std::string decimalToBinary(int32_t decimalNum) {
+       if (decimalNum == 0) return "0";
+       uint32_t num = static_cast<uint32_t>(decimalNum);
+       std::string result;
+       while (num > 0) {
+           result += (num % 2 == 0 ? '0' : '1');
+           num /= 2;
+       }
+       std::reverse(result.begin(), result.end());
+       return result;
+   }
+   ```
+   Wait, can we use `std::bitset`?
+   ```cpp
+   std::string decimalToBinary(int32_t decimalNum) {
+       std::string s = std::bitset<32>(decimalNum).to_string();
+       size_t first_one = s.find('1');
+       if (first_one == std::string::npos) return "0";
+       return s.substr(first_one);
+   }
+   ```
+   This is much cleaner and avoids manual loop and reverse!
+   Let's trace `decimalNum = 0`:
+   `s` is "000...0". `find('1')` returns `npos`. Returns "0". Correct.
+   `decimalNum = 1`:
+   `s` is "000...1". `find('1')` returns 31. Returns `s.substr(31)` which is "1". Correct.
+   `decimalNum = -1`:
+   `s` is "111...1". `find('1')` returns 0. Returns `s.substr(0)` which is "111...1". Correct.
+
+   Can we do this for octal and hex?
+   No, `std::bitset` is only for binary.
+   But we can use `std::stringstream` or `snprintf`.
+   Wait, `snprintf` with `%o` and `%x` works for unsigned integers!
+   ```cpp
+   std::string decimalToOctal(int32_t decimalNum) {
+       if (decimalNum == 0) return "0";
+       char buf[32]; // 32 bits in octal is at most 11 digits + null
+       snprintf(buf, sizeof(buf), "%o", static_cast<uint32_t>(decimalNum));
+       return std::string(buf);
+   }
+
+   std::string decimalToHex(int32_t decimalNum) {
+       if (decimalNum == 0) return "0";
+       char buf[32];
+       snprintf(buf, sizeof(buf), "%x", static_cast<uint32_t>(decimalNum));
+       return std::string(buf);
+   }
+   ```
+   Let's check `snprintf` behavior.
+   For `0`, it returns "0", so the `if (decimalNum == 0) return "0";` is redundant but safe.
+   Wait, `snprintf` with `%o` and `%x` does not prepend "0" or "0x", which matches Java's `Integer.toOctalString` and `Integer.toHexString`.
+   And it uses lowercase for hex, which also matches Java!
+   Let's trace `decimalNum = -1`:
+   `static_cast<uint32_t>(-1)` is `0xFFFFFFFF`.
+   `snprintf(buf, sizeof(buf), "%x", 0xFFFFFFFF)` produces "ffffffff". Matches Java!
+   `snprintf(buf, sizeof(buf), "%o", 0xFFFFFFFF)` produces "37777777777". Matches Java!
+   This is extremely clean and leverages standard C libraries.
+
+   What about `decimalToBinary`? Can we use a similar approach?
+   `printf` doesn't have a binary format specifier until C++23 (`std::format` supports `{:b}`).
+   But `std::bitset` is C++11 and perfectly standard.
+   Let's use `std::bitset` for binary, and `snprintf` for octal and hex.
+
+   Wait, is `snprintf` guaranteed to not add prefixes? Yes, `%o` and `%x` do not add prefixes. `%#o` adds `0`, `%#x` adds `0x`. So `%o` and `%x` are exactly what we need.
+
+   Let's refine `parseInt` to be a private helper or just inside the class.
+   The Java code has a `public class NumberConverter` with `public static` methods.
+   In C++, we can create a `NumberConverter` class with `public static` methods, or just use a namespace. The prompt says "Translate the following Java code to C++", so keeping it as a class with static methods is the most direct translation.
+
+   ```cpp
+   #include <string>
+   #include <bitset>
+   #include <cstdint>
+   #include <cstdio>
+   #include <stdexcept>
+
+   class NumberConverter {
+   private:
+       static int32_t parseInt(const std::string& s, int radix) {
+           if (s.empty()) {
+               throw std::invalid_argument("Empty string");
+           }
+           bool negative = false;
+           size_t i = 0;
+           if (s[0] == '-') {
+               negative = true;
+               i = 1;
+           }
+           if (i == s.size()) {
+               throw std::invalid_argument("No digits");
+           }
+           
+           int64_t result = 0;
+           for (; i < s.size(); ++i) {
+               int digit = -1;
+               char c = s[i];
+               if (c >= '0' && c <= '9') {
+                   digit = c - '0';
+               } else if (c >= 'A' && c <= 'Z') {
+                   digit = c - 'A' + 10;
+               } else if (c >= 'a' && c <= 'z') {
+                   digit = c - 'a' + 10;
+               }
+               
+               if (digit < 0 || digit >= radix) {
+                   throw std::invalid_argument("Invalid character");
+               }
+               
+               result = result * radix + digit;
+               if (negative) {
+                   if (-result < INT32_MIN) {
+                       throw std::out_of_range("Overflow");
+                   }
+               } else {
+                   if (result > INT32_MAX) {
+                       throw std::out_of_range("Overflow");
+                   }
+               }
+           }
+           return negative ? static_cast<int32_t>(-result) : static_cast<int32_t>(result);
+       }
+
+   public:
+       static std::string decimalToBinary(int32_t decimalNum) {
+           std::string s = std::bitset<32>(static_cast<uint32_t>(decimalNum)).to_string();
+           size_t first_one = s.find('1');
+           if (first_one == std::string::npos) return "0";
+           return s.substr(first_one);
+       }
+
+       static int32_t binaryToDecimal(const std::string& binaryNum) {
+           return parseInt(binaryNum, 2);
+       }
+
+       static std::string decimalToOctal(int32_t decimalNum) {
+           if (decimalNum == 0) return "0";
+           char buf[16];
+           std::snprintf(buf, sizeof(buf), "%o", static_cast<uint32_t>(decimalNum));
+           return std::string(buf);
+       }
+
+       static int32_t octalToDecimal(const std::string& octalNum) {
+           return parseInt(octalNum, 8);
+       }
+
+       static std::string decimalToHex(int32_t decimalNum) {
+           if (decimalNum == 0) return "0";
+           char buf[16];
+           std::snprintf(buf, sizeof(buf), "%x", static_cast<uint32_t>(decimalNum));
+           return std::string(buf);
+       }
+
+       static int32_t hexToDecimal(const std::string& hexNum) {
+           return parseInt(hexNum, 16);
+       }
+   };
+   ```
+
+   Let's review the Java code again.
+   ```java
+   public static String decimalToBinary(int decimalNum) {
+       return Integer.toBinaryString(decimalNum);
+   }
+   ```
+   Java `int` is 32-bit signed. C++ `int32_t` is 32-bit signed. This matches perfectly.
+   Wait, what if the C++ environment doesn't have `int32_t`? It's standard since C++11. I will include `<cstdint>`.
+   What if `snprintf` is not safe? `snprintf` is standard C99 / C++11.
+
+   Is there any issue with `std::bitset<32>(static_cast<uint32_t>(decimalNum))`?
+   `std::bitset` constructor takes `unsigned long long`. `uint32_t` safely promotes to `unsigned long long`. This is perfectly fine.
+   Wait, `std::bitset<32>(decimalNum)` also works directly because `decimalNum` (which is `int32_t`) will be implicitly converted to `unsigned long long`. But `static_cast<uint32_t>(decimalNum)` ensures the two's complement bit pattern is preserved without sign extension issues on systems where `int` is not 32-bit, though `unsigned long long` can hold the full value anyway. Actually, passing `-1` as `int32_t` to `unsigned long long` results in `0xFFFFFFFFFFFFFFFF` if sign-extended, which would make `std::bitset<32>` take the lower 32 bits, which are all 1s. So `std::bitset<32>(-1)` is actually "11111111111111111111111111111111".
+   Wait, let's verify this.
+   If I pass `-1` (int32_t) to `std::bitset<32>`, it converts to `unsigned long long` which is `0xFFFFFFFFFFFFFFFF`. Then `std::bitset<32>` takes the lowest 32 bits, which are `0xFFFFFFFF`. So it works correctly even without the cast!
+   However, `static_cast<uint32_t>(decimalNum)` makes the intent clear and avoids relying on the truncation behavior of `std::bitset`, so it's better to keep it.
+
+   Let's consider `parseInt` again.
+   Java's `Integer.parseInt` allows leading zeros.
+   Does my `parseInt` allow them? Yes, `0` is a valid digit.
+   Does Java's `Integer.parseInt` allow uppercase letters for hex? Yes.
+   Does my `parseInt` allow them? Yes.
+   Does Java's `Integer.parseInt` allow lowercase letters for hex? Yes.
+   Does my `parseInt` allow them? Yes.
+
+   What about `Integer.parseInt("10000000000000000000000000000000", 2)`?
+   This is 2^31, which is 2147483648.
+   In Java, `Integer.parseInt("10000000000000000000000000000000", 2)` throws `NumberFormatException` because it overflows `int` (max value is 2^31 - 1).
+   My code:
+   `result` accumulates to 2147483648.
+   `negative` is false.
+   `result > INT32_MAX` (2147483647) is true.
+   Throws `std::out_of_range`. Correct.
+
+   What about `Integer.parseInt("-10000000000000000000000000000000", 2)`?
+   This is -2^31, which is -2147483648.
+   In Java, `Integer.parseInt("-10000000000000000000000000000000", 2)` returns -2147483648 (which is `Integer.MIN_VALUE`).
+   My code:
+   `result` accumulates to 2147483648.
+   `negative` is true.
+   `-result < INT32_MIN` (-2147483648 < -2147483648) is false.
+   So it does NOT throw.
+   Returns `static_cast<int32_t>(-result)`, which is `-2147483648`. Correct!
+
+   What about `Integer.parseInt("-10000000000000000000000000000001", 2)`?
+   This is -2^31 - 1, which is -2147483649.
+   In Java, it throws `NumberFormatException`.
+   My code:
+   `result` accumulates to 2147483649.
+   `negative` is true.
+   `-result < INT32_MIN` (-2147483649 < -2147483648) is true.
+   Throws `std::out_of_range`. Correct!
+
+   Wait, is there any case where `result * radix + digit` overflows `int64_t`?
+   `radix` is at most 16.
+   The string length for a 32-bit integer in base 2 is at most 32 + 1 (for '-') = 33 characters.
+   Even if someone passes a very long string, `int64_t` can hold up to 2^63 - 1.
+   A string of 64 '1's in base 2 would be 2^64 - 1, which overflows `int64_t`.
+   If the string is extremely long, `result * radix + digit` could overflow `int64_t`.
+   To be absolutely safe, I should check for `int64_t` overflow, or just check the length of the string.
+   Since `INT32_MAX` in base 2 is 31 '1's, any string longer than 31 digits (excluding '-') will definitely overflow or be very close to it.
+   Actually, if `result > INT32_MAX`, we already throw for positive numbers.
+   For negative numbers, we throw if `-result < INT32_MIN`.
+   If `result` overflows `int64_t`, it becomes negative, and the check might fail or behave unexpectedly.
+   To prevent `int64_t` overflow, I can check if `result > INT64_MAX / radix` before multiplying.
+   Or simpler: since the maximum valid length for a base-2 string is 33 characters ("-10000000000000000000000000000000"), if the string length exceeds, say, 33, I can just throw.
+   But what if the string is "0000000000000000000000000000000000000000001"? It's valid in Java!
+   So length check is not robust.
+   Let's add an overflow check for `int64_t`:
+   ```cpp
+   if (result > (INT64_MAX - digit) / radix) {
+       throw std::out_of_range("Overflow");
+   }
+   result = result * radix + digit;
+   ```
+   Wait, if `result` is large, but `negative` is true, it might still fit in `INT32_MIN`?
+   No, `INT32_MIN` is -2147483648. If `result` exceeds `INT64_MAX / radix`, it's way larger than `INT32_MIN`.
+   So if `result > (INT64_MAX - digit) / radix`, we can safely throw `std::out_of_range` immediately.
+   Let's verify:
+   `INT64_MAX / 16` is roughly 5.7e17.
+   `INT32_MAX` is 2.1e9.
+   If `result` is so large that it risks overflowing `int64_t`, it is definitely larger than `INT32_MAX` (2.1e9).
+   So it will definitely overflow `int32_t` as well.
+   Therefore, if `result > (INT64_MAX - digit) / radix`, we can just throw `std::out_of_range`.
+
+   Let's integrate this:
+   ```cpp
+   int64_t result = 0;
+   for (; i < s.size(); ++i) {
+       // ... digit parsing ...
+       
+       if (result > (INT64_MAX - digit) / radix) {
+           throw std::out_of_range("Overflow");
+       }
+       result = result * radix + digit;
+       
+       if (negative) {
+           if (-result < INT32_MIN) {
+               throw std::out_of_range("Overflow");
+           }
+       } else {
+           if (result > INT32_MAX) {
+               throw std::out_of_range("Overflow");
+           }
+       }
+   }
+   ```
+   Wait, what if `radix` is 2, `result` is 0, `digit` is 1. `(INT64_MAX - 1) / 2` is huge. `0 > huge` is false. Correct.
+   This completely protects against `int64_t` overflow and correctly handles all edge cases.
+
+   Let's double check `INT64_MAX` macro. It's in `<cstdint>`.
+   Wait, `INT64_MAX` might not be defined if `<cstdint>` doesn't expose it, but it's standard C++11. I will include `<cstdint>` and `<climits>`.
+
+   Let's review the `decimalToOctal` and `decimalToHex` methods.
+   ```cpp
+   static std::string decimalToOctal(int32_t decimalNum) {
+       if (decimalNum == 0) return "0";
+       char buf[16];
+       std::snprintf(buf, sizeof(buf), "%o", static_cast<uint32_t>(decimalNum));
+       return std::string(buf);
+   }
+   ```
+   Wait, `snprintf` is in `<cstdio>`.
+   Is there any issue with `snprintf` and `uint32_t`?
+   The format specifier `%o` expects an `unsigned int`.
+   Is `uint32_t` always `unsigned int`?
+   On most platforms, yes. But strictly speaking, it could be `unsigned long` or `unsigned short`.
+   To be perfectly portable, I should cast to `unsigned int` or use the correct format macro `PRIo32`.
+   Wait, `static_cast<uint32_t>(decimalNum)` might not match `%o` if `uint32_t` is `unsigned long`.
+   Let's use `std::stringstream` to avoid format specifier issues entirely.
+   ```cpp
+   #include <sstream>
+
+   static std::string decimalToOctal(int32_t decimalNum) {
+       if (decimalNum == 0) return "0";
+       std::stringstream ss;
+       ss << std::oct << static_cast<uint32_t>(decimalNum);
+       return ss.str();
+   }
+
+   static std::string decimalToHex(int32_t decimalNum) {
+       if (decimalNum == 0) return "0";
+       std::stringstream ss;
+       ss << std::hex << static_cast<uint32_t>(decimalNum);
+       return ss.str();
+   }
+   ```
+   Wait, `std::stringstream` is slower, but perfectly safe and standard C++.
+   Does `std::hex` produce lowercase? Yes, by default `std::hex` produces lowercase letters (a-f).
+   Does `std::oct` produce the correct string? Yes.
+   Let's trace `decimalNum = -1`:
+   `static_cast<uint32_t>(-1)` is 4294967295.
+   `std::oct` for 4294967295 is "37777777777". Correct.
+   `std::hex` for 4294967295 is "ffffffff". Correct.
+   This avoids `<cstdio>` and format specifier portability issues. I'll use `<sstream>`.
+
+   Wait, is there any case where `std::stringstream` would behave differently from Java?
+   Java `Integer.toHexString(0)` returns "0". My code has `if (decimalNum == 0) return "0";`, so it returns "0".
+   Wait, `std::stringstream ss; ss << std::hex << 0; ss.str()` is "0". So the `if` is not strictly necessary, but it's slightly faster and safe.
+   Let's just use `std::stringstream` without the `if` for simplicity?
+   ```cpp
+   static std::string decimalToOctal(int32_t decimalNum) {
+       std::stringstream ss;
+       ss << std::oct << static_cast<uint32_t>(decimalNum);
+       return ss.str();
+   }
+   ```
+   This is very clean.
+
+   What about `decimalToBinary`?
+   Can we use `std::stringstream` for binary?
+   No, `std::stringstream` doesn't support `std::bin`.
+   So `std::bitset` is the best choice for binary.
+   ```cpp
+   static std::string decimalToBinary(int32_t decimalNum) {
+       std::string s = std::bitset<32>(static_cast<uint32_t>(decimalNum)).to_string();
+       size_t first_one = s.find('1');
+       if (first_one == std::string::npos) return "0";
+       return s.substr(first_one);
+   }
+   ```
+   This is clean and perfectly matches Java's `Integer.toBinaryString`.
+
+   Let's review the whole class.
+
+   ```cpp
+   #include <string>
+   #include <bitset>
+   #include <cstdint>
+   #include <sstream>
+   #include <stdexcept>
+
+   class NumberConverter {
+   private:
+       static int32_t parseInt(const std::string& s, int radix) {
+           if (s.empty()) {
+               throw std::invalid_argument("Empty string");
+           }
+           bool negative = false;
+           size_t i = 0;
+           if (s[0] == '-') {
+               negative = true;
+               i = 1;
+           }
+           if (i == s.size()) {
+               throw std::invalid_argument("No digits");
+           }
+           
+           int64_t result = 0;
+           for (; i < s.size(); ++i) {
+               int digit = -1;
+               char c = s[i];
+               if (c >= '0' && c <= '9') {
+                   digit = c - '0';
+               } else if (c >= 'A' && c <= 'Z') {
+                   digit = c - 'A' + 10;
+               } else if (c >= 'a' && c <= 'z') {
+                   digit = c - 'a' + 10;
+               }
+               
+               if (digit < 0 || digit >= radix) {
+                   throw std::invalid_argument("Invalid character");
+               }
+               
+               if (result > (INT64_MAX - digit) / radix) {
+                   throw std::out_of_range("Overflow");
+               }
+               result = result * radix + digit;
+               
+               if (negative) {
+                   if (-result < INT32_MIN) {
+                       throw std::out_of_range("Overflow");
+                   }
+               } else {
+                   if (result > INT32_MAX) {
+                       throw std::out_of_range("Overflow");
+                   }
+               }
+           }
+           return negative ? static_cast<int32_t>(-result) : static_cast<int32_t>(result);
+       }
+
+   public:
+       static std::string decimalToBinary(int32_t decimalNum) {
+           std::string s = std::bitset<32>(static_cast<uint32_t>(decimalNum)).to_string();
+           size_t first_one = s.find('1');
+           if (first_one == std::string::npos) return "0";
+           return s.substr(first_one);
+       }
+
+       static int32_t binaryToDecimal(const std::string& binaryNum) {
+           return parseInt(binaryNum, 2);
+       }
+
+       static std::string decimalToOctal(int32_t decimalNum) {
+           std::stringstream ss;
+           ss << std::oct << static_cast<uint32_t>(decimalNum);
+           return ss.str();
+       }
+
+       static int32_t octalToDecimal(const std::string& octalNum) {
+           return parseInt(octalNum, 8);
+       }
+
+       static std::string decimalToHex(int32_t decimalNum) {
+           std::stringstream ss;
+           ss << std::hex << static_cast<uint32_t>(decimalNum);
+           return ss.str();
+       }
+
+       static int32_t hexToDecimal(const std::string& hexNum) {
+           return parseInt(hexNum, 16);
+       }
+   };
+   ```
+
+   Wait, what if `parseInt` gets a string like "0"?
+   `i` is 0, `s[0]` is '0', not '-'.
+   Loop runs for '0'. `digit` is 0.
+   `result` becomes 0.
+   Returns 0. Correct.
+
+   What if `parseInt` gets "-0"?
+   `negative` is true. `i` is 1.
+   Loop runs for '0'. `digit` is 0.
+   `result` becomes 0.
+   Returns `-0` which is 0. Correct.
+
+   What about `parseInt` with leading spaces?
+   `s[0]` is ' '. Not '-', not a digit.
+   `digit` becomes -1.
+   Throws `invalid_argument`. Correct (matches Java).
+
+   What about `parseInt` with trailing spaces?
+   `c` is ' '. `digit` becomes -1.
+   Throws `invalid_argument`. Correct (matches Java).
+
+   What about `parseInt` with '+' sign?
+   `s[0]` is '+'. Not '-'.
+   `i` is 0.
+   Loop runs for '+'. `digit` becomes -1.
+   Throws `invalid_argument`. Correct (matches Java).
+
+   Is there any issue with `std::bitset<32>(static_cast<uint32_t>(decimalNum)).to_string()`?
+   If `decimalNum` is `0`, `to_string()` returns 32 '0's.
+   `s.find('1')` returns `std::string::npos`.
+   Returns "0". Correct.
+
+   Is there any issue with `std::stringstream` and locale?
+   `std::stringstream` uses the global C++ locale by default, which might insert thousands separators in some locales!
+   Wait, does `std::oct` or `std::hex` insert thousands separators?
+   No, `std::dec` with `std::showbase` might, but normally integers don't have thousands separators in `std::stringstream` unless `std::locale` explicitly supports it and it's imbued, or `std::showbase` is on? No, C++ standard streams do NOT insert thousands separators by default. The default locale is "C", which has no thousands separators.
+   So `ss.str()` will just be the number. No worries.
+
+   Let's double check Java's `Integer.toBinaryString` for `Integer.MIN_VALUE`.
+   `Integer.MIN_VALUE` is -2147483648.
+   In two's complement, this is `10000000000000000000000000000000`.
+   My code:
+   `decimalNum` is -2147483648.
+   `static_cast<uint32_t>(-2147483648)` is 2147483648.
+   `std::bitset<32>(2147483648).to_string()` is "10000000000000000000000000000000".
+   `first_one` is 0.
+   Returns `s.substr(0)`, which is "10000000000000000000000000000000".
+   Matches Java exactly!
+
+   What about `Integer.toOctalString(Integer.MIN_VALUE)`?
+   -2147483648 in octal is 2147483648 in unsigned octal.
+   2147483648 / 8 = 268435456.
+   In Java, `Integer.toOctalString(-2147483648)` returns "20000000000".
+   My code:
+   `ss << std::oct << static_cast<uint32_t>(-2147483648);`
+   `static_cast<uint32_t>(-2147483648)` is 2147483648.
+   `std::oct` for 2147483648 is "20000000000".
+   Matches Java exactly!
+
+   What about `Integer.toHexString(Integer.MIN_VALUE)`?
+   Returns "80000000".
+   My code:
+   `ss << std::hex << static_cast<uint32_t>(-2147483648);`
+   Returns "80000000".
+   Matches Java exactly!
+
+   One more check on `parseInt`:
+   What if `binaryNum` is "10000000000000000000000000000000"?
+   This is 2147483648.
+   `result` becomes 2147483648.
+   `negative` is false.
+   `result > INT32_MAX` (2147483647).
+   Throws `out_of_range`.
+   Matches Java! (Java throws NumberFormatException).
+
+   What if `binaryNum` is "-10000000000000000000000000000000"?
+   This is -2147483648.
+   `result` becomes 2147483648.
+   `negative` is true.
+   `-result < INT32_MIN` (-2147483648 < -2147483648) is false.
+   Returns `-2147483648`.
+   Matches Java! (Java returns -2147483648).
+
+   What if `binaryNum` is "-10000000000000000000000000000001"?
+   This is -2147483649.
+   `result` becomes 2147483649.
+   `negative` is true.
+   `-result < INT32_MIN` (-2147483649 < -2147483648) is true.
+   Throws `out_of_range`.
+   Matches Java!
+
+   The logic is rock solid.
+
+   Are there any other methods in the Java code?
+   ```java
+   package org.example;
+
+   public class NumberConverter {
+
+       public static String decimalToBinary(int decimalNum) {
+           return Integer.toBinaryString(decimalNum);
+       }
+
+       public static int binaryToDecimal(String binaryNum) {
+           return Integer.parseInt(binaryNum, 2);
+       }
+
+       public static String decimalToOctal(int decimalNum) {
+           return Integer.toOctalString(decimalNum);
+       }
+
+       public static int octalToDecimal(String octalNum) {
+           return Integer.parseInt(octalNum, 8);
+       }
+
+       public static String decimalToHex(int decimalNum) {
+           return Integer.toHexString(decimalNum);
+       }
+
+       public static int hexToDecimal(String hexNum) {
+           return Integer.parseInt(hexNum, 16);
+       }
+   }
+   ```
+   I have covered all 6 methods.
+
+   Let's consider C++ namespaces instead of a class.
+   The prompt says "Translate the following Java code to C++".
+   In Java, a utility class with `public static` methods is the idiomatic way to group related functions.
+   In C++, a namespace is the idiomatic way. However, the prompt says "Use idiomatic C++ only when it doesn't change behavior."
+   Using a class with static methods doesn't change behavior and is a direct translation. It also allows the user to call `NumberConverter::decimalToBinary(...)` just like `NumberConverter.decimalToBinary(...)` in Java.
+   I will provide the class-based approach, as it mirrors the Java structure. I can also mention that a namespace would be idiomatic C++, but keeping the class is perfectly fine and maintains structural parity.
+
+   Wait, is there any issue with `std::stringstream` and `#include <sstream>`?
+   No, it's standard.
+
+   Let's review the `parseInt` logic one more time to ensure no subtle bugs.
+   ```cpp
+   if (c >= '0' && c <= '9') {
+       digit = c - '0';
+   } else if (c >= 'A' && c <= 'Z') {
+       digit = c - 'A' + 10;
+   } else if (c >= 'a' && c <= 'z') {
+       digit = c - 'a' + 10;
+   }
+   ```
+   This handles exactly the characters that Java's `Character.digit(c, radix)` handles for ASCII.
+   Java's `Character.digit` also handles full-width characters and other Unicode digits, but `Integer.parseInt` expects ASCII digits for bases > 10.
+   Wait, does `Integer.parseInt` accept full-width digits?
+   No, `Integer.parseInt` only accepts ASCII digits as determined by `Character.digit`.
+   Actually, `Character.digit` DOES handle some Unicode digits, but `Integer.parseInt` javadoc says: "Parses the string argument as a signed integer in the radix specified by the second argument. The characters in the string must all be digits of the specified radix...".
+   For practical purposes and identical behavior for standard inputs, the ASCII check is exactly what is needed.
+
+   Let's check `parseInt` with an empty string `""`.
+   `s.empty()` is true, throws `invalid_argument`. Java throws `NumberFormatException`. Matches.
+
+   What about `parseInt` with just `"-"`?
+   `s[0]` is '-'. `negative` is true. `i` is 1.
+   `i == s.size()` is true, throws `invalid_argument`. Java throws `NumberFormatException`. Matches.
+
+   What about `parseInt` with `null`?
+   In Java, `Integer.parseInt(null)` throws `NumberFormatException`.
+   In C++, passing `null` to `std::string` is not directly possible since `std::string` is a value type, but if constructed from `const char*`, passing `nullptr` is undefined behavior.
+   Since the C++ signature takes `const std::string&`, it's safe from `nullptr` at the call site.
+
+   What about `parseInt` with `radix` outside 2-36?
+   Java throws `NumberFormatException` if radix is outside `Character.MIN_RADIX` to `Character.MAX_RADIX` (2 to 36).
+   My `parseInt` doesn't check `radix` bounds. I should add a check for completeness, though the public methods only call it with 2, 8, 16.
+   ```cpp
+   if (radix < 2 || radix > 36) {
+       throw std::invalid_argument("Radix out of range");
+   }
+   ```
+   I'll add it to be safe.
+
+   ```cpp
+   static int32_t parseInt(const std::string& s, int radix) {
+       if (radix < 2 || radix > 36) {
+           throw std::invalid_argument("Radix out of range");
+       }
+       if (s.empty()) {
+           throw std::invalid_argument("Empty string");
+       }
+       // ...
+   }
+   ```
+
+   Is `INT64_MAX` available in `<cstdint>`? Yes.
+   Is `INT32_MAX` available in `<cstdint>`? Yes.
+   Is `INT32_MIN` available in `<cstdint>`? Yes.
+
+   One final check on `std::bitset`:
+   ```cpp
+   std::string s = std::bitset<32>(static_cast<uint32_t>(decimalNum)).to_string();
+   ```
+   Is `std::bitset<32>` guaranteed to produce a 32-character string? Yes.
+   Is `to_string()` guaranteed to be '0' and '1'? Yes.
+   Is `static_cast<uint32_t>(decimalNum)` guaranteed to preserve the bit pattern? Yes, standard guarantees that signed-to-unsigned conversion preserves the bit pattern (modulo 2^N).
+
+   What about `std::stringstream`?
+   ```cpp
+   std::stringstream ss;
+   ss << std::oct << static_cast<uint32_t>(decimalNum);
+   return ss.str();
+   ```
+   Is `static_cast<uint32_t>(decimalNum)` safe? Yes.
+   Does `std::oct` format correctly? Yes.
+   Does `std::hex` format correctly? Yes.
+   Is it lowercase? Yes, `std::hex` defaults to lowercase.
+
+   Everything looks solid. I will wrap the code in a clean C++ snippet.
+</think>
+
+=== RAW ANSWER ===
+To translate the Java `NumberConverter` class to C++, we need to carefully match the behavior of Java's `Integer` conversion methods, especially regarding how they handle negative numbers and parsing exceptions.
+
+### Key Behavioral Details Replicated:
+1. **Two's Complement for Negatives:** Java's `Integer.toBinaryString`, `Integer.toOctalString`, and `Integer.toHexString` treat the signed integer as an unsigned bit pattern (two's complement). For example, `-1` becomes `"ffffffff"` in hex. We achieve this in C++ by casting the `int32_t` to `uint32_t`.
+2. **Leading Zeros:** Java's conversion methods strip leading zeros for positive numbers but preserve all digits for negative numbers (e.g., `-1` in binary is 32 '1's). We use `std::bitset` for binary to naturally handle the 32-bit representation and strip leading zeros, and `std::stringstream` for octal and hex.
+3. **Strict Parsing:** Java's `Integer.parseInt` strictly validates the input. It disallows whitespace, plus signs (`+`), and characters outside the valid radix range. It also throws an exception on overflow. We implement a custom `parseInt` helper to accurately mirror this strict behavior, throwing `std::invalid_argument` and `std::out_of_range` to parallel Java's `NumberFormatException`.
+
+### C++ Code
+
+```cpp
+#include <string>
+#include <bitset>
+#include <cstdint>
+#include <sstream>
+#include <stdexcept>
+
+class NumberConverter {
+private:
+    // Helper method to replicate the strict parsing behavior of Integer.parseInt(String, radix)
+    static int32_t parseInt(const std::string& s, int radix) {
+        if (radix < 2 || radix > 36) {
+            throw std::invalid_argument("Radix out of range");
+        }
+        if (s.empty()) {
+            throw std::invalid_argument("Empty string");
+        }
+
+        bool negative = false;
+        size_t i = 0;
+        
+        if (s[0] == '-') {
+            negative = true;
+            i = 1;
+        }
+        
+        if (i == s.size()) {
+            throw std::invalid_argument("No digits to parse");
+        }
+
+        int64_t result = 0;
+        for (; i < s.size(); ++i) {
+            int digit = -1;
+            char c = s[i];
+            
+            if (c >= '0' && c <= '9') {
+                digit = c - '0';
+            } else if (c >= 'A' && c <= 'Z') {
+                digit = c - 'A' + 10;
+            } else if (c >= 'a' && c <= 'z') {
+                digit = c - 'a' + 10;
+            }
+
+            // Disallow invalid characters, plus signs, and whitespace
+            if (digit < 0 || digit >= radix) {
+                throw std::invalid_argument("Invalid character in input string");
+            }
+
+            // Check for int64_t overflow before multiplying/adding
+            if (result > (INT64_MAX - digit) / radix) {
+                throw std::out_of_range("Input string too long");
+            }
+            
+            result = result * radix + digit;
+
+            // Check for 32-bit signed bounds
+            if (negative) {
+                if (-result < INT32_MIN) {
+                    throw std::out_of_range("Result out of range for int32_t");
+                }
+            } else {
+                if (result > INT32_MAX) {
+                    throw std::out_of_range("Result out of range for int32_t");
+                }
+            }
+        }
+
+        return negative ? static_cast<int32_t>(-result) : static_cast<int32_t>(result);
+    }
+
+public:
+    static std::string decimalToBinary(int32_t decimalNum) {
+        // std::bitset constructs from unsigned bits, perfectly mimicking Java's two's complement representation
+        std::string s = std::bitset<32>(static_cast<uint32_t>(decimalNum)).to_string();
+        
+        // Strip leading zeros for positive numbers, but keep at least one digit if the number is 0
+        size_t first_one = s.find('1');
+        if (first_one == std::string::npos) {
+            return "0";
+        }
+        return s.substr(first_one);
+    }
+
+    static int32_t binaryToDecimal(const std::string& binaryNum) {
+        return parseInt(binaryNum, 2);
+    }
+
+    static std::string decimalToOctal(int32_t decimalNum) {
+        std::stringstream ss;
+        // Casting to uint32_t mimics Java's unsigned interpretation for negative decimals
+        ss << std::oct << static_cast<uint32_t>(decimalNum);
+        return ss.str();
+    }
+
+    static int32_t octalToDecimal(const std::string& octalNum) {
+        return parseInt(octalNum, 8);
+    }
+
+    static std::string decimalToHex(int32_t decimalNum) {
+        std::stringstream ss;
+        // Casting to uint32_t mimics Java's unsigned interpretation for negative decimals
+        ss << std::hex << static_cast<uint32_t>(decimalNum);
+        return ss.str();
+    }
+
+    static int32_t hexToDecimal(const std::string& hexNum) {
+        return parseInt(hexNum, 16);
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <string>
+#include <bitset>
+#include <cstdint>
+#include <sstream>
+#include <stdexcept>
+
+class NumberConverter {
+private:
+    // Helper method to replicate the strict parsing behavior of Integer.parseInt(String, radix)
+    static int32_t parseInt(const std::string& s, int radix) {
+        if (radix < 2 || radix > 36) {
+            throw std::invalid_argument("Radix out of range");
+        }
+        if (s.empty()) {
+            throw std::invalid_argument("Empty string");
+        }
+
+        bool negative = false;
+        size_t i = 0;
+        
+        if (s[0] == '-') {
+            negative = true;
+            i = 1;
+        }
+        
+        if (i == s.size()) {
+            throw std::invalid_argument("No digits to parse");
+        }
+
+        int64_t result = 0;
+        for (; i < s.size(); ++i) {
+            int digit = -1;
+            char c = s[i];
+            
+            if (c >= '0' && c <= '9') {
+                digit = c - '0';
+            } else if (c >= 'A' && c <= 'Z') {
+                digit = c - 'A' + 10;
+            } else if (c >= 'a' && c <= 'z') {
+                digit = c - 'a' + 10;
+            }
+
+            // Disallow invalid characters, plus signs, and whitespace
+            if (digit < 0 || digit >= radix) {
+                throw std::invalid_argument("Invalid character in input string");
+            }
+
+            // Check for int64_t overflow before multiplying/adding
+            if (result > (INT64_MAX - digit) / radix) {
+                throw std::out_of_range("Input string too long");
+            }
+            
+            result = result * radix + digit;
+
+            // Check for 32-bit signed bounds
+            if (negative) {
+                if (-result < INT32_MIN) {
+                    throw std::out_of_range("Result out of range for int32_t");
+                }
+            } else {
+                if (result > INT32_MAX) {
+                    throw std::out_of_range("Result out of range for int32_t");
+                }
+            }
+        }
+
+        return negative ? static_cast<int32_t>(-result) : static_cast<int32_t>(result);
+    }
+
+public:
+    static std::string decimalToBinary(int32_t decimalNum) {
+        // std::bitset constructs from unsigned bits, perfectly mimicking Java's two's complement representation
+        std::string s = std::bitset<32>(static_cast<uint32_t>(decimalNum)).to_string();
+        
+        // Strip leading zeros for positive numbers, but keep at least one digit if the number is 0
+        size_t first_one = s.find('1');
+        if (first_one == std::string::npos) {
+            return "0";
+        }
+        return s.substr(first_one);
+    }
+
+    static int32_t binaryToDecimal(const std::string& binaryNum) {
+        return parseInt(binaryNum, 2);
+    }
+
+    static std::string decimalToOctal(int32_t decimalNum) {
+        std::stringstream ss;
+        // Casting to uint32_t mimics Java's unsigned interpretation for negative decimals
+        ss << std::oct << static_cast<uint32_t>(decimalNum);
+        return ss.str();
+    }
+
+    static int32_t octalToDecimal(const std::string& octalNum) {
+        return parseInt(octalNum, 8);
+    }
+
+    static std::string decimalToHex(int32_t decimalNum) {
+        std::stringstream ss;
+        // Casting to uint32_t mimics Java's unsigned interpretation for negative decimals
+        ss << std::hex << static_cast<uint32_t>(decimalNum);
+        return ss.str();
+    }
+
+    static int32_t hexToDecimal(const std::string& hexNum) {
+        return parseInt(hexNum, 16);
+    }
+};

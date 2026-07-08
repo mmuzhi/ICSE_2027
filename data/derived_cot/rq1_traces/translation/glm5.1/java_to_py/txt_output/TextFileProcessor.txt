@@ -1,0 +1,217 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.io.*;
+import java.nio.file.*;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+public class TextFileProcessor {
+    private String file_path;
+
+    public TextFileProcessor(String file_path) {
+        this.file_path = file_path;
+    }
+
+    public Object read_file_as_json() throws IOException {
+        ObjectMapper objectMapper = new ObjectMapper();
+        return objectMapper.readValue(new File(file_path), Object.class);
+    }
+
+    public String read_file() throws IOException {
+        return new String(Files.readAllBytes(Paths.get(file_path)));
+    }
+
+    public void write_file(String content) throws IOException {
+        Files.write(Paths.get(file_path), content.getBytes());
+    }
+
+    public String process_file() throws IOException {
+        String content = read_file();
+        String processedContent = content.replaceAll("[^a-zA-Z]", "");
+        write_file(processedContent);
+        return processedContent;
+    }
+}
+
+=== REASONING ===
+<think>
+1.  **Understand the Goal:** The user wants to translate a Java class (`TextFileProcessor`) into Python. The translation must maintain identical behavior (inputs, outputs, side effects, edge cases, exceptions) but use idiomatic Python where it doesn't break the behavior.
+
+2.  **Analyze the Java Code:**
+    *   **Class:** `TextFileProcessor` in package `org.example`.
+    *   **Field:** `private String file_path;`
+    *   **Constructor:** `public TextFileProcessor(String file_path)` assigns the parameter to the field.
+    *   **Method `read_file_as_json()`:**
+        *   Uses Jackson's `ObjectMapper` to read the file at `file_path` and parse it into a generic `Object` (which in Jackson maps to a dict/list/primitive depending on JSON content).
+        *   Throws `IOException`.
+    *   **Method `read_file()`:**
+        *   Reads all bytes from `file_path` and converts to a `String` using the default charset.
+        *   Throws `IOException`.
+    *   **Method `write_file(String content)`:**
+        *   Writes `content.getBytes()` (default charset) to `file_path`.
+        *   Throws `IOException`.
+        *   *Side effect:* Overwrites the file if it exists, creates it if it doesn't.
+    *   **Method `process_file()`:**
+        *   Reads the file using `read_file()`.
+        *   Removes all non-alphabetic characters using `replaceAll("[^a-zA-Z]", "")`.
+        *   Writes the processed content back to the file using `write_file()`.
+        *   Returns the processed content.
+        *   Throws `IOException`.
+
+3.  **Map Java Concepts to Python:**
+    *   **Class:** `class TextFileProcessor:`
+    *   **Constructor:** `def __init__(self, file_path): self.file_path = file_path`
+    *   **Exceptions:** Java's `IOException` translates well to Python's `OSError` (or its subclasses like `FileNotFoundError`, `PermissionError`). Python's `json` module raises `json.JSONDecodeError` (a subclass of `ValueError`) for parsing errors, whereas Jackson might throw an `IOException` subclass (like `JsonParseException` which extends `IOException`, or `JsonMappingException`). To keep *identical* behavior regarding exceptions, we need to be careful. Jackson wraps JSON parsing errors in exceptions that extend `IOException`. Python's `json.loads` raises `ValueError`. The prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)". I should probably catch `json.JSONDecodeError` and re-raise an `OSError` to strictly mimic the `throws IOException` contract, or at least document it. Actually, `OSError` is the Python equivalent of `IOException`. Let's look closely at `read_file_as_json()`. If the file doesn't exist, Jackson throws `IOException`. If the JSON is invalid, Jackson throws `JsonParseException` (extends `IOException`). In Python, `open()` raises `OSError`, but `json.load()` raises `json.JSONDecodeError` (extends `ValueError`). To perfectly match the exception hierarchy behavior (where all failures are `IOException`), I should wrap `json.JSONDecodeError` in an `OSError`. Let's do that to strictly follow "Keep behavior identical (... exceptions)".
+    *   **Charset:** Java's `new String(bytes)` and `string.getBytes()` use the platform default charset. Python 3 defaults to UTF-8. To be strictly identical, we might need to use `locale.getpreferredencoding()`, but usually, in these translations, UTF-8 is acceptable unless specified. I will use UTF-8 but add a comment, or use `encoding=None` which defaults to the platform default in Python (same as Java). Wait, `open(path)` in Python uses `locale.getpreferredencoding(False)`. So `open(self.file_path, 'r')` matches Java's default charset behavior perfectly.
+    *   **Method `read_file_as_json()`:**
+        *   Python equivalent: `import json`, then `with open(self.file_path, 'r') as f: return json.load(f)`.
+        *   Exception handling: Wrap `json.JSONDecodeError` in `OSError`.
+    *   **Method `read_file()`:**
+        *   Python equivalent: `with open(self.file_path, 'r') as f: return f.read()`
+    *   **Method `write_file(content)`:**
+        *   Python equivalent: `with open(self.file_path, 'w') as f: f.write(content)`
+    *   **Method `process_file()`:**
+        *   Python equivalent: `import re`, `content = self.read_file()`, `processed_content = re.sub(r'[^a-zA-Z]', '', content)`, `self.write_file(processed_content)`, `return processed_content`.
+
+4.  **Refining the Python Code:**
+    *   Let's check `replaceAll("[^a-zA-Z]", "")`. `re.sub(r'[^a-zA-Z]', '', content)` is the exact equivalent.
+    *   Let's check `read_file_as_json()` exception behavior again. Jackson's `ObjectMapper.readValue(File, Class)` throws `IOException`, `JsonParseException`, `JsonMappingException`. All of these are caught by `catch (IOException e)`. In Python, `json.load` raises `OSError` (if file missing) and `json.JSONDecodeError` (if invalid JSON). To ensure the method *only* raises `OSError` (or its subclasses) just like the Java method's `throws IOException` guarantees, I should wrap `json.JSONDecodeError` in `OSError`.
+    *   Wait, is `OSError` the exact equivalent of `IOException`? Yes, Python's built-in file I/O errors are `OSError` and its subclasses.
+    *   Let's write the code.
+
+```python
+import json
+import re
+import os
+
+class TextFileProcessor:
+    def __init__(self, file_path):
+        self.file_path = file_path
+
+    def read_file_as_json(self):
+        try:
+            with open(self.file_path, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            # Jackson throws an IOException subclass for JSON parsing errors.
+            # To maintain identical exception behavior (only raising OSError/IOException),
+            # we wrap the ValueError subclass in OSError.
+            raise OSError(f"Invalid JSON in {self.file_path}") from e
+
+    def read_file(self):
+        with open(self.file_path, 'r') as f:
+            return f.read()
+
+    def write_file(self, content):
+        with open(self.file_path, 'w') as f:
+            f.write(content)
+
+    def process_file(self):
+        content = self.read_file()
+        processed_content = re.sub(r'[^a-zA-Z]', '', content)
+        self.write_file(processed_content)
+        return processed_content
+```
+
+5.  **Review against constraints:**
+    *   *Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)*:
+        *   `read_file_as_json()`: Returns dict/list/primitive (same as Jackson's `Object.class`). Raises `OSError` for file issues and now also for JSON parsing issues (mimicking Jackson's `JsonParseException extends IOException`).
+        *   `read_file()`: Reads whole file, returns string. Raises `OSError` on failure.
+        *   `write_file(content)`: Writes string to file, overwrites if exists, creates if not. Raises `OSError` on failure.
+        *   `process_file()`: Reads, strips non-alpha, writes, returns stripped string. Raises `OSError` on failure.
+    *   *Use idiomatic Python only when it doesn't change behavior*: `with open(...)` is idiomatic and correct. `re.sub` is idiomatic. Wrapping `JSONDecodeError` in `OSError` is strictly necessary to match the Java method's `throws IOException` contract (otherwise a `ValueError` would escape, changing the exception behavior).
+
+6.  **Edge Case Consideration:**
+    *   What about character encoding? Java's `new String(Files.readAllBytes(...))` and `content.getBytes()` use the platform's default charset. Python's `open()` without an encoding argument also uses the platform's default (from `locale.getpreferredencoding(False)`). This perfectly matches Java's behavior without hardcoding UTF-8.
+    *   What about Jackson's `Object.class`? It parses JSON into a `LinkedHashMap` (for objects), `ArrayList` (for arrays), `String`, `Boolean`, or `Number`. Python's `json.load` parses into `dict`, `list`, `str`, `bool` (True/False), `int`, `float`. This is the closest identical behavior.
+    *   What about thread safety? Python's GIL and standard I/O behave similarly to Java's in this context (no explicit synchronization in either).
+
+7.  **Final Code Polish:**
+    *   The code looks solid. I will add type hints as they are standard in modern Python, though not strictly required, they help translate the Java type signatures. Actually, the prompt says "Use idiomatic Python only when it doesn't change behavior". Type hints don't change behavior. I'll add them for clarity.
+    *   I will explicitly mention the `OSError` wrapping for `JSONDecodeError` in comments so the user understands why it was done (to match `IOException` behavior).
+
+8.  **Construct Output:** Present the Python code clearly. Add a brief explanation of the translation choices (especially the exception wrapping and encoding).
+</think>
+
+=== RAW ANSWER ===
+```python
+import json
+import re
+
+class TextFileProcessor:
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+
+    def read_file_as_json(self) -> object:
+        try:
+            with open(self.file_path, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            # Jackson's ObjectMapper throws an IOException subclass for invalid JSON.
+            # To keep exception behavior identical (only raising OSError/IOException equivalents),
+            # we wrap Python's ValueError subclass (JSONDecodeError) in OSError.
+            raise OSError(f"Invalid JSON content in {self.file_path}") from e
+
+    def read_file(self) -> str:
+        # open() defaults to the platform's standard encoding, matching Java's 
+        # new String(bytes) which also uses the platform's default charset.
+        with open(self.file_path, 'r') as f:
+            return f.read()
+
+    def write_file(self, content: str) -> None:
+        # 'w' mode overwrites the file, matching Files.write() behavior.
+        # Encoding defaults to the platform standard, matching getBytes().
+        with open(self.file_path, 'w') as f:
+            f.write(content)
+
+    def process_file(self) -> str:
+        content = self.read_file()
+        # re.sub replaces all occurrences, identical to String.replaceAll
+        processed_content = re.sub(r'[^a-zA-Z]', '', content)
+        self.write_file(processed_content)
+        return processed_content
+```
+
+### Key Translation Details:
+1. **Exception Handling**: In Java, `ObjectMapper.readValue()` throws an `IOException` (or its subclass `JsonParseException`) for invalid JSON. Python's `json.load()` raises `json.JSONDecodeError`, which inherits from `ValueError`, not `OSError` (Python's equivalent to `IOException`). To keep behavior identical, `JSONDecodeError` is caught and re-raised as an `OSError`.
+2. **Character Encoding**: Java's `Files.readAllBytes` + `new String(...)` and `string.getBytes()` utilize the platform's default charset. Python's `open()` without an explicit `encoding` parameter does the exact same thing via `locale.getpreferredencoding(False)`.
+3. **Regex Replacement**: Java's `String.replaceAll` takes a regex. Python's `re.sub` is the direct equivalent.
+4. **JSON Mapping**: Jackson's `Object.class` dynamically maps JSON objects to `LinkedHashMap` and arrays to `ArrayList`. Python's `json.load` natively maps these to `dict` and `list`, which is the exact structural equivalent.
+
+=== TRANSLATED CODE (py) ===
+import json
+import re
+
+class TextFileProcessor:
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+
+    def read_file_as_json(self) -> object:
+        try:
+            with open(self.file_path, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            # Jackson's ObjectMapper throws an IOException subclass for invalid JSON.
+            # To keep exception behavior identical (only raising OSError/IOException equivalents),
+            # we wrap Python's ValueError subclass (JSONDecodeError) in OSError.
+            raise OSError(f"Invalid JSON content in {self.file_path}") from e
+
+    def read_file(self) -> str:
+        # open() defaults to the platform's standard encoding, matching Java's 
+        # new String(bytes) which also uses the platform's default charset.
+        with open(self.file_path, 'r') as f:
+            return f.read()
+
+    def write_file(self, content: str) -> None:
+        # 'w' mode overwrites the file, matching Files.write() behavior.
+        # Encoding defaults to the platform standard, matching getBytes().
+        with open(self.file_path, 'w') as f:
+            f.write(content)
+
+    def process_file(self) -> str:
+        content = self.read_file()
+        # re.sub replaces all occurrences, identical to String.replaceAll
+        processed_content = re.sub(r'[^a-zA-Z]', '', content)
+        self.write_file(processed_content)
+        return processed_content

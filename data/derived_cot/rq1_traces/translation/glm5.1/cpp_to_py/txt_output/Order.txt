@@ -1,0 +1,384 @@
+=== SOURCE CODE (cpp) ===
+#include <vector>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+
+struct Dish {
+    std::string dish;
+    double price;
+    int count;
+};
+
+class Order {
+public:
+    Order();
+    bool add_dish(const Dish& dish);
+    double calculate_total() const;
+    double checkout();
+
+    std::vector<Dish> menu;
+    std::vector<Dish> selected_dishes;
+    std::unordered_map<std::string, double> sales;
+};
+
+Order::Order() {}
+
+
+bool Order::add_dish(const Dish& dish) {
+    for (auto& menu_dish : menu) {
+        if (dish.dish == menu_dish.dish) {
+            if (menu_dish.count < dish.count) {
+                return false;
+            }
+            else {
+                menu_dish.count -= dish.count;
+                break;
+            }
+        }
+    }
+    selected_dishes.push_back(dish);
+    return true;
+}
+
+
+double Order::calculate_total() const {
+    double total = 0;
+    for (const auto& dish : selected_dishes) {
+        auto it = sales.find(dish.dish);
+        if (it != sales.end()) {
+            total += dish.price * dish.count * it->second;
+        }
+    }
+    return total;
+}
+
+
+double Order::checkout() {
+    if (selected_dishes.empty()) {
+        return 0;
+    }
+    double total = calculate_total();
+    selected_dishes.clear();
+    return total;
+}
+
+
+=== REASONING ===
+<think>
+Let me translate the C++ code to Python carefully.
+
+The C++ code has:
+1. A `Dish` struct with `dish` (string), `price` (double), `count` (int)
+2. An `Order` class with:
+   - `menu` (vector of Dish)
+   - `selected_dishes` (vector of Dish)
+   - `sales` (unordered_map<string, double>)
+   - `add_dish(dish)` - checks if dish exists in menu with enough count, decrements menu count, adds to selected_dishes
+   - `calculate_total()` - sums price * count * sales[dish.dish] for dishes that have a sale
+   - `checkout()` - returns total and clears selected_dishes
+
+Key behavioral details:
+- `add_dish`: iterates through menu, finds matching dish name, checks if menu count >= requested count, decrements menu count, adds dish to selected_dishes. If no matching dish found in menu, it still adds to selected_dishes (the for loop completes without break, so it falls through to push_back). Wait, let me re-read...
+
+```cpp
+bool Order::add_dish(const Dish& dish) {
+    for (auto& menu_dish : menu) {
+        if (dish.dish == menu_dish.dish) {
+            if (menu_dish.count < dish.count) {
+                return false;
+            }
+            else {
+                menu_dish.count -= dish.count;
+                break;
+            }
+        }
+    }
+    selected_dishes.push_back(dish);
+    return true;
+}
+```
+
+If the dish is found in menu and count is sufficient, it decrements and breaks, then adds to selected_dishes and returns true.
+If the dish is found in menu but count is insufficient, returns false.
+If the dish is NOT found in menu, the loop completes without breaking, and it still adds to selected_dishes and returns true. This is an interesting edge case - it allows adding dishes not on the menu.
+
+- `calculate_total`: Only adds to total if the dish name exists in the `sales` map. Dishes without a sale entry are not counted at all (not even at full price).
+
+- `checkout`: Returns 0 if selected_dishes is empty, otherwise returns calculate_total() and clears selected_dishes.
+
+Let me write the Python translation:
+
+```python
+class Dish:
+    def __init__(self, dish="", price=0.0, count=0):
+        self.dish = dish
+        self.price = price
+        self.count = count
+
+
+class Order:
+    def __init__(self):
+        self.menu = []
+        self.selected_dishes = []
+        self.sales = {}
+
+    def add_dish(self, dish):
+        for menu_dish in self.menu:
+            if dish.dish == menu_dish.dish:
+                if menu_dish.count < dish.count:
+                    return False
+                else:
+                    menu_dish.count -= dish.count
+                    break
+        self.selected_dishes.append(dish)
+        return True
+
+    def calculate_total(self):
+        total = 0.0
+        for dish in self.selected_dishes:
+            if dish.dish in self.sales:
+                total += dish.price * dish.count * self.sales[dish.dish]
+        return total
+
+    def checkout(self):
+        if not self.selected_dishes:
+            return 0
+        total = self.calculate_total()
+        self.selected_dishes.clear()
+        return total
+```
+
+Wait, I need to think about whether `Dish` should be a dataclass or a simple class. Since the C++ code uses a struct with default constructor, I'll keep it simple. But I should make sure the Dish objects are mutable (since `add_dish` modifies `menu_dish.count`).
+
+In Python, using a regular class with instance attributes works fine for mutability.
+
+Let me also consider: in C++, `Dish` has a default constructor that initializes `dish` to empty string, `price` to 0.0, and `count` to 0. I'll replicate that with default parameters.
+
+Actually, looking more carefully at the `for` loop with `break` - in Python, `for...else` handles the "loop completed without break" case, but here the behavior after the loop is the same regardless of whether we broke or not (we always append). So no special handling needed.
+
+One thing to note: in C++, `selected_dishes.push_back(dish)` copies the dish. In Python, `self.selected_dishes.append(dish)` would append a reference. If the same dish object is passed multiple times, modifications to it would affect all references. However, in C++, each `push_back` creates a copy. To match behavior exactly, I should consider this. But since the C++ code passes `const Dish&` and stores copies, and the Python code would store references, there could be a difference if someone modifies the dish after adding it.
+
+To be safe and match C++ behavior (copy semantics), I could create a copy. But the problem says "Use idiomatic Python only when it doesn't change behavior." In typical usage, this wouldn't matter. But to be truly identical, I should copy. Let me add a copy mechanism.
+
+Actually, let me think about this more carefully. The `Dish` in C++ is passed by const reference and `push_back` copies it. So modifications to the original after `add_dish` don't affect what's stored. In Python, if someone does:
+
+```python
+d = Dish("pizza", 10.0, 2)
+order.add_dish(d)
+d.count = 5  # This would affect the dish in selected_dishes in Python but not in C++
+```
+
+To be safe, I'll use `copy.copy` or create a new Dish. Let me use a simple approach - I'll make Dish copyable or just create a new instance.
+
+Actually, the simplest approach that matches behavior is to create a copy in `add_dish`:
+
+```python
+import copy
+self.selected_dishes.append(copy.copy(dish))
+```
+
+But that might be overkill. The problem says "Keep behavior identical" though. Let me include it to be safe.
+
+Hmm, but also for `menu` - the menu dishes are modified in place (count decremented), which works the same in both languages since we're modifying the object directly.
+
+Let me finalize:
+
+```python
+import copy
+
+
+class Dish:
+    def __init__(self, dish="", price=0.0, count=0):
+        self.dish = dish
+        self.price = price
+        self.count = count
+
+
+class Order:
+    def __init__(self):
+        self.menu = []
+        self.selected_dishes = []
+        self.sales = {}
+
+    def add_dish(self, dish):
+        for menu_dish in self.menu:
+            if dish.dish == menu_dish.dish:
+                if menu_dish.count < dish.count:
+                    return False
+                else:
+                    menu_dish.count -= dish.count
+                    break
+        self.selected_dishes.append(copy.copy(dish))
+        return True
+
+    def calculate_total(self):
+        total = 0.0
+        for dish in self.selected_dishes:
+            if dish.dish in self.sales:
+                total += dish.price * dish.count * self.sales[dish.dish]
+        return total
+
+    def checkout(self):
+        if not self.selected_dishes:
+            return 0
+        total = self.calculate_total()
+        self.selected_dishes.clear()
+        return total
+```
+
+Wait, actually I'm overthinking the copy thing. The C++ code copies because that's how C++ value semantics work. In Python, the idiomatic approach is reference semantics. The problem says "Use idiomatic Python only when it doesn't change behavior." If the user of the class modifies the dish after adding it, the behavior would differ. But that's more about how the class is used rather than the class itself.
+
+I think including `copy.copy` is the right call to keep behavior identical. Let me keep it.
+
+Actually, let me reconsider. The `copy` module adds overhead. An alternative is to just create a new Dish:
+
+```python
+self.selected_dishes.append(Dish(dish.dish, dish.price, dish.count))
+```
+
+This is simpler and doesn't require importing copy. Let me use this approach.
+
+Final version:
+
+```python
+class Dish:
+    def __init__(self, dish="", price=0.0, count=0):
+        self.dish = dish
+        self.price = price
+        self.count = count
+
+
+class Order:
+    def __init__(self):
+        self.menu = []
+        self.selected_dishes = []
+        self.sales = {}
+
+    def add_dish(self, dish):
+        for menu_dish in self.menu:
+            if dish.dish == menu_dish.dish:
+                if menu_dish.count < dish.count:
+                    return False
+                else:
+                    menu_dish.count -= dish.count
+                    break
+        self.selected_dishes.append(Dish(dish.dish, dish.price, dish.count))
+        return True
+
+    def calculate_total(self):
+        total = 0.0
+        for dish in self.selected_dishes:
+            if dish.dish in self.sales:
+                total += dish.price * dish.count * self.sales[dish.dish]
+        return total
+
+    def checkout(self):
+        if not self.selected_dishes:
+            return 0
+        total = self.calculate_total()
+        self.selected_dishes.clear()
+        return total
+```
+
+This looks good. Let me double-check each method:
+
+1. `add_dish`: Iterates menu, finds matching dish name, checks count, decrements if sufficient, breaks, then appends a copy to selected_dishes. Returns False if count insufficient. If dish not in menu, still appends. ✓
+
+2. `calculate_total`: Sums price * count * sales[dish_name] only for dishes with a sale entry. ✓
+
+3. `checkout`: Returns 0 if empty, otherwise returns total and clears. ✓
+
+Looks correct.
+</think>
+
+=== RAW ANSWER ===
+```python
+class Dish:
+    def __init__(self, dish="", price=0.0, count=0):
+        self.dish = dish
+        self.price = price
+        self.count = count
+
+
+class Order:
+    def __init__(self):
+        self.menu = []
+        self.selected_dishes = []
+        self.sales = {}
+
+    def add_dish(self, dish):
+        for menu_dish in self.menu:
+            if dish.dish == menu_dish.dish:
+                if menu_dish.count < dish.count:
+                    return False
+                else:
+                    menu_dish.count -= dish.count
+                    break
+        # Copy semantics: C++ push_back copies the dish
+        self.selected_dishes.append(Dish(dish.dish, dish.price, dish.count))
+        return True
+
+    def calculate_total(self):
+        total = 0.0
+        for dish in self.selected_dishes:
+            if dish.dish in self.sales:
+                total += dish.price * dish.count * self.sales[dish.dish]
+        return total
+
+    def checkout(self):
+        if not self.selected_dishes:
+            return 0
+        total = self.calculate_total()
+        self.selected_dishes.clear()
+        return total
+```
+
+Key translation notes:
+
+- **`Dish` struct → `Dish` class**: C++ struct with default values maps to a Python class with default arguments in `__init__`.
+- **Copy semantics**: C++ `push_back` copies the `Dish` object. To preserve this behavior, `add_dish` constructs a new `Dish` instead of appending the reference — preventing external mutations from affecting stored data.
+- **`unordered_map` → `dict`**: `sales.find()` / `it != sales.end()` check translates to `in` membership test.
+- **`unordered_set`**: Included in the C++ headers but unused in the logic, so omitted.
+- **`vector::clear()` → `list::clear()`**: Both exist and behave identically.
+- **Edge case preserved**: If a dish name isn't found in `menu`, the loop completes without breaking and the dish is still added to `selected_dishes` (matching the C++ fallthrough behavior).
+
+=== TRANSLATED CODE (py) ===
+class Dish:
+    def __init__(self, dish="", price=0.0, count=0):
+        self.dish = dish
+        self.price = price
+        self.count = count
+
+
+class Order:
+    def __init__(self):
+        self.menu = []
+        self.selected_dishes = []
+        self.sales = {}
+
+    def add_dish(self, dish):
+        for menu_dish in self.menu:
+            if dish.dish == menu_dish.dish:
+                if menu_dish.count < dish.count:
+                    return False
+                else:
+                    menu_dish.count -= dish.count
+                    break
+        # Copy semantics: C++ push_back copies the dish
+        self.selected_dishes.append(Dish(dish.dish, dish.price, dish.count))
+        return True
+
+    def calculate_total(self):
+        total = 0.0
+        for dish in self.selected_dishes:
+            if dish.dish in self.sales:
+                total += dish.price * dish.count * self.sales[dish.dish]
+        return total
+
+    def checkout(self):
+        if not self.selected_dishes:
+            return 0
+        total = self.calculate_total()
+        self.selected_dishes.clear()
+        return total

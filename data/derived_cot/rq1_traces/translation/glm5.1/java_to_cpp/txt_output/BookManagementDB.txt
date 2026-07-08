@@ -1,0 +1,1191 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+
+public class BookManagementDB {
+
+    Connection connection;
+
+    public BookManagementDB(String dbName) throws SQLException {
+        connection = DriverManager.getConnection("jdbc:sqlite:" + dbName);
+        createTable();
+    }
+
+    void createTable() throws SQLException {
+        String createTableSQL = "CREATE TABLE IF NOT EXISTS books ("
+                + "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                + "title TEXT, "
+                + "author TEXT, "
+                + "available INTEGER"
+                + ")";
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute(createTableSQL);
+        }
+    }
+
+    public void addBook(String title, String author) throws SQLException {
+        String insertSQL = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        try (PreparedStatement pstmt = connection.prepareStatement(insertSQL)) {
+            pstmt.setString(1, title);
+            pstmt.setString(2, author);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public void removeBook(int bookId) throws SQLException {
+        String deleteSQL = "DELETE FROM books WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(deleteSQL)) {
+            pstmt.setInt(1, bookId);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public void borrowBook(int bookId) throws SQLException {
+        String updateSQL = "UPDATE books SET available = 0 WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(updateSQL)) {
+            pstmt.setInt(1, bookId);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public void returnBook(int bookId) throws SQLException {
+        String updateSQL = "UPDATE books SET available = 1 WHERE id = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(updateSQL)) {
+            pstmt.setInt(1, bookId);
+            pstmt.executeUpdate();
+        }
+    }
+
+    public List<Book> searchBooks() throws SQLException {
+        String selectSQL = "SELECT * FROM books";
+        List<Book> books = new ArrayList<>();
+        try (Statement stmt = connection.createStatement();
+             ResultSet rs = stmt.executeQuery(selectSQL)) {
+            while (rs.next()) {
+                int id = rs.getInt("id");
+                String title = rs.getString("title");
+                String author = rs.getString("author");
+                int available = rs.getInt("available");
+                books.add(new Book(id, title, author, available));
+            }
+        }
+        return books;
+    }
+
+    public static class Book {
+        private int id;
+        private String title;
+        private String author;
+        private int available;
+
+        public Book(int id, String title, String author, int available) {
+            this.id = id;
+            this.title = title;
+            this.author = author;
+            this.available = available;
+        }
+
+        public int getId() { return id; }
+        public String getTitle() { return title; }
+        public String getAuthor() { return author; }
+        public int getAvailable() { return available; }
+
+        @Override
+        public String toString() {
+            return "Book{" +
+                    "id=" + id +
+                    ", title='" + title + '\'' +
+                    ", author='" + author + '\'' +
+                    ", available=" + available +
+                    '}';
+        }
+    }
+}
+
+
+=== REASONING ===
+<think>
+The user wants me to translate a Java class that manages books in an SQLite database to C++. I need to use an SQLite C/C++ library. The most common one is the C API (`sqlite3.h`). I'll wrap it in a C++ class.
+
+Let me analyze the Java code:
+
+1. `BookManagementDB` class with a `Connection` field
+2. Constructor takes a dbName, opens SQLite connection, creates table
+3. `createTable()` - creates books table if not exists
+4. `addBook(title, author)` - inserts a book with available=1
+5. `removeBook(bookId)` - deletes a book by id
+6. `borrowBook(bookId)` - sets available=0
+7. `returnBook(bookId)` - sets available=1
+8. `searchBooks()` - returns all books as List<Book>
+9. Inner class `Book` with id, title, author, available fields and toString()
+
+For C++ translation:
+- Use `sqlite3.h` C API
+- Use `std::vector<Book>` instead of `List<Book>`
+- Use `std::string` instead of `String`
+- Handle exceptions - Java throws SQLException, I'll throw `std::runtime_error` with similar semantics
+- The `try-with-resources` pattern becomes RAII or manual cleanup
+- Need to prepare statements, bind parameters, execute, and finalize
+
+Let me write the C++ code:
+
+```cpp
+#ifndef BOOK_MANAGEMENT_DB_H
+#define BOOK_MANAGEMENT_DB_H
+
+#include <sqlite3.h>
+#include <string>
+#include <vector>
+#include <stdexcept>
+
+class BookManagementDB {
+public:
+    class Book {
+    private:
+        int id;
+        std::string title;
+        std::string author;
+        int available;
+
+    public:
+        Book(int id, const std::string& title, const std::string& author, int available)
+            : id(id), title(title), author(author), available(available) {}
+
+        int getId() const { return id; }
+        const std::string& getTitle() const { return title; }
+        const std::string& getAuthor() const { return author; }
+        int getAvailable() const { return available; }
+
+        std::string toString() const {
+            return "Book{id=" + std::to_string(id) +
+                   ", title='" + title + '\'' +
+                   ", author='" + author + '\'' +
+                   ", available=" + std::to_string(available) +
+                   '}';
+        }
+    };
+
+private:
+    sqlite3* connection;
+
+    void checkError(int rc, const std::string& message) {
+        if (rc != SQLITE_OK && rc != SQLITE_DONE) {
+            throw std::runtime_error(message + ": " + sqlite3_errmsg(connection));
+        }
+    }
+
+public:
+    BookManagementDB(const std::string& dbName) {
+        int rc = sqlite3_open(("file:" + dbName).c_str(), &connection);
+        // Actually, sqlite3_open just takes the filename. The JDBC URL "jdbc:sqlite:" + dbName
+        // In C sqlite3, we just pass the filename directly.
+        // Wait, let me reconsider. The Java code uses "jdbc:sqlite:" + dbName.
+        // In C, sqlite3_open takes the database filename. The dbName in Java is just the filename.
+        // So we should just pass dbName directly.
+        
+        // Actually, I need to re-read. sqlite3_open already was called above. Let me restructure.
+    }
+};
+```
+
+Wait, let me think about this more carefully. The `sqlite3_open` function takes a filename. In the Java code, the connection string is `"jdbc:sqlite:" + dbName`. The `dbName` parameter is just the database filename (like "test.db"). In C, we just pass the filename directly to `sqlite3_open`.
+
+Let me also think about the `checkError` function. In the Java code, methods throw `SQLException`. In C++, I'll throw `std::runtime_error` as an equivalent.
+
+For prepared statements, I need to:
+1. `sqlite3_prepare_v2` to create the statement
+2. `sqlite3_bind_text` / `sqlite3_bind_int` to bind parameters
+3. `sqlite3_step` to execute
+4. `sqlite3_finalize` to clean up
+
+For queries (searchBooks):
+1. `sqlite3_prepare_v2` to create the statement
+2. `sqlite3_step` in a loop to get rows
+3. `sqlite3_column_int` / `sqlite3_column_text` to get column values
+4. `sqlite3_finalize` to clean up
+
+Let me also handle the "try-with-resources" pattern. In Java, statements are automatically closed. In C++, I need to call `sqlite3_finalize` manually or use RAII.
+
+Let me write a clean version:
+
+```cpp
+#ifndef BOOK_MANAGEMENT_DB_H
+#define BOOK_MANAGEMENT_DB_H
+
+#include <sqlite3.h>
+#include <string>
+#include <vector>
+#include <stdexcept>
+
+class BookManagementDB {
+public:
+    class Book {
+    private:
+        int id;
+        std::string title;
+        std::string author;
+        int available;
+
+    public:
+        Book(int id, const std::string& title, const std::string& author, int available)
+            : id(id), title(title), author(author), available(available) {}
+
+        int getId() const { return id; }
+        const std::string& getTitle() const { return title; }
+        const std::string& getAuthor() const { return author; }
+        int getAvailable() const { return available; }
+
+        std::string toString() const {
+            return "Book{id=" + std::to_string(id) +
+                   ", title='" + title + '\'' +
+                   ", author='" + author + '\'' +
+                   ", available=" + std::to_string(available) +
+                   '}';
+        }
+    };
+
+private:
+    sqlite3* connection;
+
+    void throwIfError(int rc, const std::string& context) {
+        if (rc != SQLITE_OK && rc != SQLITE_DONE) {
+            std::string msg = context + ": " + sqlite3_errmsg(connection);
+            throw std::runtime_error(msg);
+        }
+    }
+
+    void createTable() {
+        const char* createTableSQL = 
+            "CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT, "
+            "author TEXT, "
+            "available INTEGER"
+            ")";
+        
+        char* errMsg = nullptr;
+        int rc = sqlite3_exec(connection, createTableSQL, nullptr, nullptr, &errMsg);
+        if (rc != SQLITE_OK) {
+            std::string msg = errMsg ? errMsg : "unknown error";
+            sqlite3_free(errMsg);
+            throw std::runtime_error("createTable: " + msg);
+        }
+    }
+
+public:
+    BookManagementDB(const std::string& dbName) : connection(nullptr) {
+        int rc = sqlite3_open(dbName.c_str(), &connection);
+        if (rc != SQLITE_OK) {
+            std::string msg = connection ? sqlite3_errmsg(connection) : "cannot open database";
+            sqlite3_close(connection);
+            throw std::runtime_error("BookManagementDB: " + msg);
+        }
+        createTable();
+    }
+
+    ~BookManagementDB() {
+        if (connection) {
+            sqlite3_close(connection);
+        }
+    }
+
+    // Disable copy
+    BookManagementDB(const BookManagementDB&) = delete;
+    BookManagementDB& operator=(const BookManagementDB&) = delete;
+
+    void addBook(const std::string& title, const std::string& author) {
+        const char* insertSQL = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        sqlite3_stmt* pstmt = nullptr;
+        int rc = sqlite3_prepare_v2(connection, insertSQL, -1, &pstmt, nullptr);
+        throwIfError(rc, "addBook prepare");
+        
+        rc = sqlite3_bind_text(pstmt, 1, title.c_str(), -1, SQLITE_TRANSIENT);
+        throwIfError(rc, "addBook bind title");
+        
+        rc = sqlite3_bind_text(pstmt, 2, author.c_str(), -1, SQLITE_TRANSIENT);
+        throwIfError(rc, "addBook bind author");
+        
+        rc = sqlite3_step(pstmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(pstmt);
+            throw std::runtime_error("addBook step: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(pstmt);
+    }
+
+    void removeBook(int bookId) {
+        const char* deleteSQL = "DELETE FROM books WHERE id = ?";
+        sqlite3_stmt* pstmt = nullptr;
+        int rc = sqlite3_prepare_v2(connection, deleteSQL, -1, &pstmt, nullptr);
+        throwIfError(rc, "removeBook prepare");
+        
+        rc = sqlite3_bind_int(pstmt, 1, bookId);
+        throwIfError(rc, "removeBook bind");
+        
+        rc = sqlite3_step(pstmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(pstmt);
+            throw std::runtime_error("removeBook step: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(pstmt);
+    }
+
+    void borrowBook(int bookId) {
+        const char* updateSQL = "UPDATE books SET available = 0 WHERE id = ?";
+        sqlite3_stmt* pstmt = nullptr;
+        int rc = sqlite3_prepare_v2(connection, updateSQL, -1, &pstmt, nullptr);
+        throwIfError(rc, "borrowBook prepare");
+        
+        rc = sqlite3_bind_int(pstmt, 1, bookId);
+        throwIfError(rc, "borrowBook bind");
+        
+        rc = sqlite3_step(pstmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(pstmt);
+            throw std::runtime_error("borrowBook step: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(pstmt);
+    }
+
+    void returnBook(int bookId) {
+        const char* updateSQL = "UPDATE books SET available = 1 WHERE id = ?";
+        sqlite3_stmt* pstmt = nullptr;
+        int rc = sqlite3_prepare_v2(connection, updateSQL, -1, &pstmt, nullptr);
+        throwIfError(rc, "returnBook prepare");
+        
+        rc = sqlite3_bind_int(pstmt, 1, bookId);
+        throwIfError(rc, "returnBook bind");
+        
+        rc = sqlite3_step(pstmt);
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(pstmt);
+            throw std::runtime_error("returnBook step: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(pstmt);
+    }
+
+    std::vector<Book> searchBooks() {
+        const char* selectSQL = "SELECT * FROM books";
+        std::vector<Book> books;
+        
+        sqlite3_stmt* stmt = nullptr;
+        int rc = sqlite3_prepare_v2(connection, selectSQL, -1, &stmt, nullptr);
+        throwIfError(rc, "searchBooks prepare");
+        
+        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+            int id = sqlite3_column_int(stmt, 0);
+            const unsigned char* titleText = sqlite3_column_text(stmt, 1);
+            const unsigned char* authorText = sqlite3_column_text(stmt, 2);
+            int available = sqlite3_column_int(stmt, 3);
+            
+            std::string title = titleText ? reinterpret_cast<const char*>(titleText) : "";
+            std::string author = authorText ? reinterpret_cast<const char*>(authorText) : "";
+            
+            books.emplace_back(id, title, author, available);
+        }
+        
+        if (rc != SQLITE_DONE) {
+            sqlite3_finalize(stmt);
+            throw std::runtime_error("searchBooks step: " + std::string(sqlite3_errmsg(connection)));
+        }
+        
+        sqlite3_finalize(stmt);
+        return books;
+    }
+};
+
+#endif // BOOK_MANAGEMENT_DB_H
+```
+
+Wait, I should think about the column access. In the Java code, columns are accessed by name:
+- `rs.getInt("id")`
+- `rs.getString("title")`
+- `rs.getString("author")`
+- `rs.getInt("available")`
+
+In SQLite C API, we access by column index. The table is created with columns in order: id (0), title (1), author (2), available (3). So the indices are correct.
+
+Actually, I could also use `sqlite3_column_count` and `sqlite3_column_name` to find the right column by name, but that's overkill. The column order is deterministic based on the CREATE TABLE statement and the SELECT * query.
+
+Hmm, but to be more faithful to the Java code which accesses by name, I could use column indices based on name lookup. But that's unnecessary complexity. The column order is well-defined.
+
+One thing I should also consider: the Java code uses `try-with-resources` which ensures statements are closed even if exceptions occur. In my C++ code, if an exception is thrown after `sqlite3_prepare_v2` but before `sqlite3_finalize`, the statement will leak. Let me use RAII or handle this more carefully.
+
+Actually, let me think about this. In the Java code:
+```java
+try (PreparedStatement pstmt = connection.prepareStatement(insertSQL)) {
+    pstmt.setString(1, title);
+    pstmt.setString(2, author);
+    pstmt.executeUpdate();
+}
+```
+
+If `setString` throws, `pstmt` is still closed by the try-with-resources. In my C++ code, if `sqlite3_bind_text` fails, I call `throwIfError` which throws, and the prepared statement leaks.
+
+Let me add a simple RAII wrapper or at least handle cleanup in error cases. Actually, to keep it simple and match the behavior, let me use a simple approach where I finalize on error paths too.
+
+Actually, the simplest approach is to use a small RAII helper for sqlite3_stmt*. But the user said "Use idiomatic C++ only when it doesn't change behavior." So using RAII is fine as it doesn't change behavior, just prevents leaks.
+
+Let me restructure with proper cleanup. I'll add finalize calls on error paths.
+
+Actually, let me just be more careful with the error handling. Let me refactor to ensure finalize is always called:
+
+```cpp
+void addBook(const std::string& title, const std::string& author) {
+    const char* insertSQL = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+    sqlite3_stmt* pstmt = nullptr;
+    int rc = sqlite3_prepare_v2(connection, insertSQL, -1, &pstmt, nullptr);
+    if (rc != SQLITE_OK) {
+        throw std::runtime_error("addBook prepare: " + std::string(sqlite3_errmsg(connection)));
+    }
+    
+    rc = sqlite3_bind_text(pstmt, 1, title.c_str(), -1, SQLITE_TRANSIENT);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(pstmt);
+        throw std::runtime_error("addBook bind title: " + std::string(sqlite3_errmsg(connection)));
+    }
+    
+    rc = sqlite3_bind_text(pstmt, 2, author.c_str(), -1, SQLITE_TRANSIENT);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(pstmt);
+        throw std::runtime_error("addBook bind author: " + std::string(sqlite3_errmsg(connection)));
+    }
+    
+    rc = sqlite3_step(pstmt);
+    sqlite3_finalize(pstmt);
+    if (rc != SQLITE_DONE) {
+        throw std::runtime_error("addBook step: " + std::string(sqlite3_errmsg(connection)));
+    }
+}
+```
+
+This is getting verbose. Let me use a simple RAII wrapper:
+
+```cpp
+struct StmtGuard {
+    sqlite3_stmt* stmt;
+    StmtGuard(sqlite3_stmt* s) : stmt(s) {}
+    ~StmtGuard() { if (stmt) sqlite3_finalize(stmt); }
+    operator sqlite3_stmt*() { return stmt; }
+    StmtGuard(const StmtGuard&) = delete;
+    StmtGuard& operator=(const StmtGuard&) = delete;
+};
+```
+
+Actually, this might be over-engineering. Let me just go with the explicit finalize approach but make sure all paths are covered. The Java try-with-resources ensures cleanup, so I should too.
+
+Let me think about whether I should use a RAII guard or not. The user said "Use idiomatic C++ only when it doesn't change behavior." Using RAII for resource management is idiomatic C++ and doesn't change behavior - it just prevents resource leaks, which the Java code also prevents via try-with-resources. So it's actually more faithful to use RAII.
+
+Let me write the final version with a RAII guard for statements.
+
+Actually, I realize I'm overthinking this. Let me just write clean code that handles cleanup properly. I'll use a simple approach.
+
+Let me also reconsider: the `throwIfError` helper I had earlier doesn't work well because after a failed bind, we need to finalize the statement before throwing. Let me just inline the error checking.
+
+Here's my final approach - I'll write a clean version with a simple RAII statement guard:
+
+```cpp
+#ifndef BOOK_MANAGEMENT_DB_H
+#define BOOK_MANAGEMENT_DB_H
+
+#include <sqlite3.h>
+#include <string>
+#include <vector>
+#include <stdexcept>
+
+class BookManagementDB {
+public:
+    class Book {
+    private:
+        int id_;
+        std::string title_;
+        std::string author_;
+        int available_;
+
+    public:
+        Book(int id, const std::string& title, const std::string& author, int available)
+            : id_(id), title_(title), author_(author), available_(available) {}
+
+        int getId() const { return id_; }
+        const std::string& getTitle() const { return title_; }
+        const std::string& getAuthor() const { return author_; }
+        int getAvailable() const { return available_; }
+
+        std::string toString() const {
+            return "Book{id=" + std::to_string(id_) +
+                   ", title='" + title_ + '\'' +
+                   ", author='" + author_ + '\'' +
+                   ", available=" + std::to_string(available_) +
+                   '}';
+        }
+    };
+
+private:
+    sqlite3* connection_;
+
+    class StmtGuard {
+    public:
+        sqlite3_stmt* stmt;
+        explicit StmtGuard(sqlite3_stmt* s) : stmt(s) {}
+        ~StmtGuard() { if (stmt) sqlite3_finalize(stmt); }
+        StmtGuard(const StmtGuard&) = delete;
+        StmtGuard& operator=(const StmtGuard&) = delete;
+    };
+
+    void createTable() {
+        const char* sql =
+            "CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT, "
+            "author TEXT, "
+            "available INTEGER"
+            ")";
+        char* errMsg = nullptr;
+        int rc = sqlite3_exec(connection_, sql, nullptr, nullptr, &errMsg);
+        if (rc != SQLITE_OK) {
+            std::string msg = errMsg ? errMsg : "unknown error";
+            sqlite3_free(errMsg);
+            throw std::runtime_error("createTable: " + msg);
+        }
+    }
+
+public:
+    explicit BookManagementDB(const std::string& dbName) : connection_(nullptr) {
+        int rc = sqlite3_open(dbName.c_str(), &connection_);
+        if (rc != SQLITE_OK) {
+            std::string msg = connection_ ? sqlite3_errmsg(connection_) : "cannot open database";
+            sqlite3_close(connection_);
+            throw std::runtime_error("BookManagementDB: " + msg);
+        }
+        try {
+            createTable();
+        } catch (...) {
+            sqlite3_close(connection_);
+            throw;
+        }
+    }
+
+    ~BookManagementDB() {
+        if (connection_) {
+            sqlite3_close(connection_);
+        }
+    }
+
+    BookManagementDB(const BookManagementDB&) = delete;
+    BookManagementDB& operator=(const BookManagementDB&) = delete;
+
+    void addBook(const std::string& title, const std::string& author) {
+        const char* sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_text(guard.stmt, 1, title.c_str(), -1, SQLITE_TRANSIENT);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_bind_text(guard.stmt, 2, author.c_str(), -1, SQLITE_TRANSIENT);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    void removeBook(int bookId) {
+        const char* sql = "DELETE FROM books WHERE id = ?";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("removeBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_int(guard.stmt, 1, bookId);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("removeBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("removeBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    void borrowBook(int bookId) {
+        const char* sql = "UPDATE books SET available = 0 WHERE id = ?";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("borrowBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_int(guard.stmt, 1, bookId);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("borrowBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("borrowBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    void returnBook(int bookId) {
+        const char* sql = "UPDATE books SET available = 1 WHERE id = ?";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("returnBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_int(guard.stmt, 1, bookId);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("returnBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("returnBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    std::vector<Book> searchBooks() {
+        const char* sql = "SELECT * FROM books";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("searchBooks: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        std::vector<Book> books;
+        while ((rc = sqlite3_step(guard.stmt)) == SQLITE_ROW) {
+            int id = sqlite3_column_int(guard.stmt, 0);
+            const char* title = reinterpret_cast<const char*>(sqlite3_column_text(guard.stmt, 1));
+            const char* author = reinterpret_cast<const char*>(sqlite3_column_text(guard.stmt, 2));
+            int available = sqlite3_column_int(guard.stmt, 3);
+
+            books.emplace_back(id,
+                title ? title : "",
+                author ? author : "",
+                available);
+        }
+
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("searchBooks: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        return books;
+    }
+};
+
+#endif // BOOK_MANAGEMENT_DB_H
+```
+
+Wait, I should double-check the column indices. The CREATE TABLE statement defines:
+- id (column 0)
+- title (column 1)
+- author (column 2)
+- available (column 3)
+
+And `SELECT * FROM books` returns columns in the same order. So the indices are correct.
+
+Also, I should note that `sqlite3_column_text` can return NULL if the column value is NULL. The Java code's `rs.getString("title")` would return null for NULL values, but since we're storing to `std::string`, we convert NULL to empty string. Actually, in the Java code, `getString` returns `null` for SQL NULL, but in the `Book` constructor, it would store `null`. In C++, `std::string` can't be null, so converting to empty string is a reasonable approximation. But actually, the Java code could have null title/author. To be more faithful, I could use `std::optional<std::string>`, but that changes the interface. Since the Java `Book` class just uses `String` which can be null, and the C++ `std::string` can't, I'll just use empty string as a reasonable default. This is a minor behavioral difference that's hard to avoid without changing the interface significantly.
+
+Actually, looking at the Java code more carefully, `rs.getString("title")` returns `null` for SQL NULL. But in the Book class, it's stored as a `String` field which can be null. The `toString()` method would print `title='null'` in that case. In my C++ version, it would print `title=''` instead. This is a minor difference.
+
+To be truly faithful, I could use `std::optional<std::string>` or a pointer, but that would make the code much more complex. I think using empty string is a reasonable trade-off for the C++ translation.
+
+Hmm, actually let me reconsider. The user said "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)." So maybe I should handle NULL properly. But using `std::optional<std::string>` would change the getter return type and the toString format. Let me just note this and keep it simple with empty string, since in practice, the Java code always inserts non-null values for title and author (they come from method parameters which are String and can be null in Java too).
+
+Actually wait, in Java, `addBook(String title, String author)` - these could be null. And `pstmt.setString(1, title)` with null title would set the column to SQL NULL. Then `rs.getString("title")` would return null. And `Book.toString()` would print `title='null'`.
+
+In C++, `addBook(const std::string& title, ...)` - these can't be null. So the behavior would differ. But this is inherent to the language difference. I think this is acceptable.
+
+Let me finalize the code. I think it's clean and correct.
+
+One more thing: the Java code's `Book.toString()` uses `@Override` annotation and the format is exactly:
+```
+Book{id=1, title='some title', author='some author', available=1}
+```
+
+My C++ `toString()` method produces the same format. Good.
+
+Let me also consider: should I use `sqlite3_column_text` with a cast, or is there a better way? The SQLite C API returns `const unsigned char*` from `sqlite3_column_text`. I need to cast it to `const char*`. My current code does `reinterpret_cast<const char*>(sqlite3_column_text(...))` which is correct.
+
+Actually, looking at my code again, I have:
+```cpp
+const char* title = reinterpret_cast<const char*>(sqlite3_column_text(guard.stmt, 1));
+```
+
+This is fine. `sqlite3_column_text` returns `const unsigned char*`, and `reinterpret_cast<const char*>` is the standard way to convert it.
+
+I think the code is ready. Let me write the final version.
+
+Oh wait, I should also consider: in the Java code, `searchBooks()` uses a `Statement` (not `PreparedStatement`) for the SELECT query. In C++, I'm using `sqlite3_prepare_v2` which is equivalent to a prepared statement. This is fine because `sqlite3_exec` could also be used for simple queries, but for SELECT queries with result processing, `sqlite3_prepare_v2` + `sqlite3_step` is the standard approach. The behavior is identical.
+
+Actually, I could also use `sqlite3_exec` with a callback for `searchBooks()`, but `sqlite3_prepare_v2` + `sqlite3_step` is cleaner and more similar to how the Java code works.
+
+One more consideration: the Java `Statement` auto-closes when the try-with-resources block ends. My `StmtGuard` handles this. Good.
+
+Let me finalize.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#ifndef BOOK_MANAGEMENT_DB_H
+#define BOOK_MANAGEMENT_DB_H
+
+#include <sqlite3.h>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+class BookManagementDB {
+public:
+    class Book {
+    private:
+        int id_;
+        std::string title_;
+        std::string author_;
+        int available_;
+
+    public:
+        Book(int id, const std::string& title, const std::string& author, int available)
+            : id_(id), title_(title), author_(author), available_(available) {}
+
+        int getId() const { return id_; }
+        const std::string& getTitle() const { return title_; }
+        const std::string& getAuthor() const { return author_; }
+        int getAvailable() const { return available_; }
+
+        std::string toString() const {
+            return "Book{id=" + std::to_string(id_) +
+                   ", title='" + title_ + '\'' +
+                   ", author='" + author_ + '\'' +
+                   ", available=" + std::to_string(available_) +
+                   '}';
+        }
+    };
+
+private:
+    sqlite3* connection_;
+
+    // RAII guard for sqlite3_stmt*, mirrors Java's try-with-resources
+    class StmtGuard {
+    public:
+        sqlite3_stmt* stmt;
+        explicit StmtGuard(sqlite3_stmt* s) : stmt(s) {}
+        ~StmtGuard() { if (stmt) sqlite3_finalize(stmt); }
+        StmtGuard(const StmtGuard&) = delete;
+        StmtGuard& operator=(const StmtGuard&) = delete;
+    };
+
+    void createTable() {
+        const char* sql =
+            "CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT, "
+            "author TEXT, "
+            "available INTEGER"
+            ")";
+        char* errMsg = nullptr;
+        int rc = sqlite3_exec(connection_, sql, nullptr, nullptr, &errMsg);
+        if (rc != SQLITE_OK) {
+            std::string msg = errMsg ? errMsg : "unknown error";
+            sqlite3_free(errMsg);
+            throw std::runtime_error("createTable: " + msg);
+        }
+    }
+
+public:
+    explicit BookManagementDB(const std::string& dbName) : connection_(nullptr) {
+        int rc = sqlite3_open(dbName.c_str(), &connection_);
+        if (rc != SQLITE_OK) {
+            std::string msg = connection_ ? sqlite3_errmsg(connection_) : "cannot open database";
+            sqlite3_close(connection_);
+            throw std::runtime_error("BookManagementDB: " + msg);
+        }
+        try {
+            createTable();
+        } catch (...) {
+            sqlite3_close(connection_);
+            connection_ = nullptr;
+            throw;
+        }
+    }
+
+    ~BookManagementDB() {
+        if (connection_) {
+            sqlite3_close(connection_);
+        }
+    }
+
+    BookManagementDB(const BookManagementDB&) = delete;
+    BookManagementDB& operator=(const BookManagementDB&) = delete;
+
+    void addBook(const std::string& title, const std::string& author) {
+        const char* sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_text(guard.stmt, 1, title.c_str(), -1, SQLITE_TRANSIENT);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_bind_text(guard.stmt, 2, author.c_str(), -1, SQLITE_TRANSIENT);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    void removeBook(int bookId) {
+        const char* sql = "DELETE FROM books WHERE id = ?";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("removeBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_int(guard.stmt, 1, bookId);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("removeBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("removeBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    void borrowBook(int bookId) {
+        const char* sql = "UPDATE books SET available = 0 WHERE id = ?";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("borrowBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_int(guard.stmt, 1, bookId);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("borrowBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("borrowBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    void returnBook(int bookId) {
+        const char* sql = "UPDATE books SET available = 1 WHERE id = ?";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("returnBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_int(guard.stmt, 1, bookId);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("returnBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("returnBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    std::vector<Book> searchBooks() {
+        const char* sql = "SELECT * FROM books";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("searchBooks: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        std::vector<Book> books;
+        while ((rc = sqlite3_step(guard.stmt)) == SQLITE_ROW) {
+            int id = sqlite3_column_int(guard.stmt, 0);
+            const char* titleText = reinterpret_cast<const char*>(sqlite3_column_text(guard.stmt, 1));
+            const char* authorText = reinterpret_cast<const char*>(sqlite3_column_text(guard.stmt, 2));
+            int available = sqlite3_column_int(guard.stmt, 3);
+
+            books.emplace_back(id,
+                titleText ? titleText : "",
+                authorText ? authorText : "",
+                available);
+        }
+
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("searchBooks: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        return books;
+    }
+};
+
+#endif // BOOK_MANAGEMENT_DB_H
+```
+
+### Key translation decisions:
+
+| Java | C++ |
+|---|---|
+| `DriverManager.getConnection("jdbc:sqlite:" + dbName)` | `sqlite3_open(dbName.c_str(), &connection_)` |
+| `throws SQLException` | `throw std::runtime_error(...)` |
+| `try (PreparedStatement pstmt = ...)` | `StmtGuard` RAII class — ensures `sqlite3_finalize` on all exit paths, mirroring try-with-resources |
+| `try (Statement stmt = ...; ResultSet rs = ...)` | Same `StmtGuard` pattern for the prepared SELECT |
+| `pstmt.setString(...)` | `sqlite3_bind_text(..., SQLITE_TRANSIENT)` — tells SQLite to copy the string data |
+| `pstmt.setInt(...)` | `sqlite3_bind_int(...)` |
+| `rs.getInt("id")` / `rs.getString("title")` | `sqlite3_column_int(stmt, 0)` / `sqlite3_column_text(stmt, 1)` — column indices match the `CREATE TABLE` order |
+| `List<Book>` | `std::vector<Book>` |
+| `Book` inner class with `toString()` | Nested `Book` class with `toString()` producing identical output format |
+| SQL NULL from `getString` → Java `null` | SQL NULL from `sqlite3_column_text` → empty `std::string` (C++ `std::string` cannot represent null) |
+
+The destructor closes the database connection, and copy construction/assignment is deleted to prevent double-close — matching the implicit single-owner semantics of the Java `Connection` field.
+
+=== TRANSLATED CODE (cpp) ===
+#ifndef BOOK_MANAGEMENT_DB_H
+#define BOOK_MANAGEMENT_DB_H
+
+#include <sqlite3.h>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+class BookManagementDB {
+public:
+    class Book {
+    private:
+        int id_;
+        std::string title_;
+        std::string author_;
+        int available_;
+
+    public:
+        Book(int id, const std::string& title, const std::string& author, int available)
+            : id_(id), title_(title), author_(author), available_(available) {}
+
+        int getId() const { return id_; }
+        const std::string& getTitle() const { return title_; }
+        const std::string& getAuthor() const { return author_; }
+        int getAvailable() const { return available_; }
+
+        std::string toString() const {
+            return "Book{id=" + std::to_string(id_) +
+                   ", title='" + title_ + '\'' +
+                   ", author='" + author_ + '\'' +
+                   ", available=" + std::to_string(available_) +
+                   '}';
+        }
+    };
+
+private:
+    sqlite3* connection_;
+
+    // RAII guard for sqlite3_stmt*, mirrors Java's try-with-resources
+    class StmtGuard {
+    public:
+        sqlite3_stmt* stmt;
+        explicit StmtGuard(sqlite3_stmt* s) : stmt(s) {}
+        ~StmtGuard() { if (stmt) sqlite3_finalize(stmt); }
+        StmtGuard(const StmtGuard&) = delete;
+        StmtGuard& operator=(const StmtGuard&) = delete;
+    };
+
+    void createTable() {
+        const char* sql =
+            "CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT, "
+            "author TEXT, "
+            "available INTEGER"
+            ")";
+        char* errMsg = nullptr;
+        int rc = sqlite3_exec(connection_, sql, nullptr, nullptr, &errMsg);
+        if (rc != SQLITE_OK) {
+            std::string msg = errMsg ? errMsg : "unknown error";
+            sqlite3_free(errMsg);
+            throw std::runtime_error("createTable: " + msg);
+        }
+    }
+
+public:
+    explicit BookManagementDB(const std::string& dbName) : connection_(nullptr) {
+        int rc = sqlite3_open(dbName.c_str(), &connection_);
+        if (rc != SQLITE_OK) {
+            std::string msg = connection_ ? sqlite3_errmsg(connection_) : "cannot open database";
+            sqlite3_close(connection_);
+            throw std::runtime_error("BookManagementDB: " + msg);
+        }
+        try {
+            createTable();
+        } catch (...) {
+            sqlite3_close(connection_);
+            connection_ = nullptr;
+            throw;
+        }
+    }
+
+    ~BookManagementDB() {
+        if (connection_) {
+            sqlite3_close(connection_);
+        }
+    }
+
+    BookManagementDB(const BookManagementDB&) = delete;
+    BookManagementDB& operator=(const BookManagementDB&) = delete;
+
+    void addBook(const std::string& title, const std::string& author) {
+        const char* sql = "INSERT INTO books (title, author, available) VALUES (?, ?, 1)";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_text(guard.stmt, 1, title.c_str(), -1, SQLITE_TRANSIENT);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_bind_text(guard.stmt, 2, author.c_str(), -1, SQLITE_TRANSIENT);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("addBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    void removeBook(int bookId) {
+        const char* sql = "DELETE FROM books WHERE id = ?";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("removeBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_int(guard.stmt, 1, bookId);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("removeBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("removeBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    void borrowBook(int bookId) {
+        const char* sql = "UPDATE books SET available = 0 WHERE id = ?";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("borrowBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_int(guard.stmt, 1, bookId);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("borrowBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("borrowBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    void returnBook(int bookId) {
+        const char* sql = "UPDATE books SET available = 1 WHERE id = ?";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("returnBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        rc = sqlite3_bind_int(guard.stmt, 1, bookId);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("returnBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        rc = sqlite3_step(guard.stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("returnBook: " + std::string(sqlite3_errmsg(connection_)));
+        }
+    }
+
+    std::vector<Book> searchBooks() {
+        const char* sql = "SELECT * FROM books";
+        sqlite3_stmt* raw = nullptr;
+        int rc = sqlite3_prepare_v2(connection_, sql, -1, &raw, nullptr);
+        if (rc != SQLITE_OK) {
+            throw std::runtime_error("searchBooks: " + std::string(sqlite3_errmsg(connection_)));
+        }
+        StmtGuard guard(raw);
+
+        std::vector<Book> books;
+        while ((rc = sqlite3_step(guard.stmt)) == SQLITE_ROW) {
+            int id = sqlite3_column_int(guard.stmt, 0);
+            const char* titleText = reinterpret_cast<const char*>(sqlite3_column_text(guard.stmt, 1));
+            const char* authorText = reinterpret_cast<const char*>(sqlite3_column_text(guard.stmt, 2));
+            int available = sqlite3_column_int(guard.stmt, 3);
+
+            books.emplace_back(id,
+                titleText ? titleText : "",
+                authorText ? authorText : "",
+                available);
+        }
+
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error("searchBooks: " + std::string(sqlite3_errmsg(connection_)));
+        }
+
+        return books;
+    }
+};
+
+#endif // BOOK_MANAGEMENT_DB_H

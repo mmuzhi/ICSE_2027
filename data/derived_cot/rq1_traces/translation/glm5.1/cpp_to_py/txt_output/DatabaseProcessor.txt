@@ -1,0 +1,650 @@
+=== SOURCE CODE (cpp) ===
+
+#include <stdexcept>
+
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <winsqlite/winsqlite3.h>
+
+class DatabaseProcessor {
+public:
+    explicit DatabaseProcessor(const std::string& database_name);
+
+    void create_table(const std::string& table_name, const std::string& key1, const std::string& key2);
+    void insert_into_database(const std::string& table_name, const std::vector<std::unordered_map<std::string, std::string>>& data);
+    std::vector<std::vector<std::string>> search_database(const std::string& table_name, const std::string& name);
+    void delete_from_database(const std::string& table_name, const std::string& name);
+
+private:
+    std::string database_name;
+    sqlite3* open_database();
+};
+
+DatabaseProcessor::DatabaseProcessor(const std::string& database_name)
+    : database_name(database_name) {}
+
+sqlite3* DatabaseProcessor::open_database() {
+    sqlite3* db;
+    if (sqlite3_open(database_name.c_str(), &db) != SQLITE_OK) {
+        throw std::runtime_error("Failed to open database");
+    }
+    return db;
+}
+
+void DatabaseProcessor::create_table(const std::string& table_name, const std::string& key1, const std::string& key2) {
+    sqlite3* db = open_database();
+    std::string create_table_query = "CREATE TABLE IF NOT EXISTS " + table_name + " (id INTEGER PRIMARY KEY, " + key1 + " TEXT, " + key2 + " INTEGER)";
+    char* err_msg = nullptr;
+    if (sqlite3_exec(db, create_table_query.c_str(), nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        std::string error_msg = "Failed to create table: " + std::string(err_msg);
+        sqlite3_free(err_msg);
+        sqlite3_close(db);
+        throw std::runtime_error(error_msg);
+    }
+    sqlite3_close(db);
+}
+
+void DatabaseProcessor::insert_into_database(const std::string& table_name, const std::vector<std::unordered_map<std::string, std::string>>& data) {
+    sqlite3* db = open_database();
+    sqlite3_stmt* stmt;
+    std::string insert_query = "INSERT INTO " + table_name + " (name, age) VALUES (?, ?)";
+    if (sqlite3_prepare_v2(db, insert_query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        std::string error_msg = "Failed to prepare statement: " + std::string(sqlite3_errmsg(db));
+        sqlite3_close(db);
+        throw std::runtime_error(error_msg);
+    }
+
+    for (const auto& item : data) {
+        sqlite3_bind_text(stmt, 1, item.at("name").c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 2, std::stoi(item.at("age")));
+
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            std::string error_msg = "Failed to execute statement: " + std::string(sqlite3_errmsg(db));
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+            throw std::runtime_error(error_msg);
+        }
+        sqlite3_reset(stmt);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+}
+
+std::vector<std::vector<std::string>> DatabaseProcessor::search_database(const std::string& table_name, const std::string& name) {
+    sqlite3* db;
+    sqlite3_stmt* stmt;
+    std::vector<std::vector<std::string>> result;
+
+    int rc = sqlite3_open(database_name.c_str(), &db);
+    if (rc != SQLITE_OK) {
+        sqlite3_close(db);
+        return result;
+    }
+
+    std::string query = "SELECT * FROM " + table_name + " WHERE name = ?";
+    rc = sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        sqlite3_close(db);
+        return result;
+    }
+
+    sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_STATIC);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::vector<std::string> row;
+        int column_count = sqlite3_column_count(stmt);
+        for (int i = 0; i < column_count; ++i) {
+            const unsigned char* text = sqlite3_column_text(stmt, i);
+            row.push_back(text ? std::string(reinterpret_cast<const char*>(text)) : std::string());
+        }
+        result.push_back(row);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return result;
+}
+
+
+void DatabaseProcessor::delete_from_database(const std::string& table_name, const std::string& name) {
+    sqlite3* db = open_database();
+    sqlite3_stmt* stmt;
+    std::string delete_query = "DELETE FROM " + table_name + " WHERE name = ?";
+    if (sqlite3_prepare_v2(db, delete_query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        std::string error_msg = "Failed to prepare statement: " + std::string(sqlite3_errmsg(db));
+        sqlite3_close(db);
+        throw std::runtime_error(error_msg);
+    }
+
+    sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        std::string error_msg = "Failed to execute statement: " + std::string(sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        throw std::runtime_error(error_msg);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+}
+
+
+=== REASONING ===
+<think>
+1.  **Understand the Goal:** The objective is to translate a C++ class `DatabaseProcessor` that uses SQLite (via `winsqlite3.h`) into Python. The translation must preserve identical behavior (inputs, outputs, side effects, edge cases, exceptions) and use idiomatic Python only when it doesn't change the behavior.
+
+2.  **Analyze the C++ Code:**
+    *   **Class `DatabaseProcessor`**:
+        *   Constructor takes a `database_name` (string).
+        *   `open_database()`: Opens the SQLite DB, throws `std::runtime_error` on failure.
+        *   `create_table(table_name, key1, key2)`: Executes `CREATE TABLE IF NOT EXISTS <table_name> (id INTEGER PRIMARY KEY, <key1> TEXT, <key2> INTEGER)`. Throws on failure.
+        *   `insert_into_database(table_name, data)`: Takes a vector of maps (keys "name" and "age"). Inserts them using a prepared statement `INSERT INTO <table_name> (name, age) VALUES (?, ?)`. Note: It explicitly binds "name" and "age" columns, ignoring `key1` and `key2` from `create_table` (a bit of a design flaw in the original code, but I must replicate it). `age` is converted to int using `std::stoi`. Throws on failure.
+        *   `search_database(table_name, name)`: Queries `SELECT * FROM <table_name> WHERE name = ?`. Returns a list of lists of strings. Note: It uses `sqlite3_column_text` for *all* columns, even integers, converting them to strings. If a column is NULL, it returns an empty string. Unlike other methods, if `open` or `prepare` fails, it returns an empty list instead of throwing.
+        *   `delete_from_database(table_name, name)`: Executes `DELETE FROM <table_name> WHERE name = ?`. Throws on failure.
+
+3.  **Map C++ Concepts to Python:**
+    *   `sqlite3` module: Python has a built-in `sqlite3` module which handles all the low-level C API calls.
+    *   Class structure: Translate directly to a Python class.
+    *   Exceptions: `std::runtime_error` maps well to `RuntimeError` or a custom exception. Let's use `RuntimeError` for simplicity and direct mapping.
+    *   Data structures: `std::vector<std::unordered_map<std::string, std::string>>` maps to `List[Dict[str, str]]`. `std::vector<std::vector<std::string>>` maps to `List[List[str]]`.
+    *   Resource management: C++ manually opens/closes DB and prepares/finalizes statements. Python's `sqlite3` handles connections and cursors. I need to mimic the open/close behavior closely, although in Python, it's more idiomatic to keep a connection open. However, the C++ code opens and closes the DB on *every* method call. To keep behavior identical regarding side effects (like file locks, uncommitted transactions), I should probably open and close the connection in each method, or at least ensure the transaction behavior is identical. Actually, Python's `sqlite3` commits automatically by default unless isolation_level is set. Let's look closely at the C++ code: it doesn't explicitly commit. In SQLite's C API, autocommit mode is on by default, meaning each `sqlite3_step` that modifies the DB is committed immediately. Python's default `isolation_level=''` (or omitting it) uses manual transactions, but if we use `isolation_level=None`, it turns on autocommit, matching the C++ behavior. Let's use `sqlite3.connect(database_name, isolation_level=None)` to match C++ autocommit.
+
+4.  **Step-by-Step Translation:**
+
+    *   **Imports:**
+        ```python
+        import sqlite3
+        ```
+
+    *   **Class Definition & Constructor:**
+        ```python
+        class DatabaseProcessor:
+            def __init__(self, database_name: str):
+                self.database_name = database_name
+        ```
+
+    *   **`open_database` method:**
+        In C++, this opens the DB and returns a handle.
+        In Python, we can just do `sqlite3.connect(self.database_name)`.
+        Wait, the C++ code throws "Failed to open database" if `sqlite3_open` fails. Python's `sqlite3.connect` raises `sqlite3.OperationalError`. To match behavior exactly, I should catch `sqlite3.OperationalError` and raise `RuntimeError("Failed to open database")`.
+        ```python
+        def open_database(self):
+            try:
+                # isolation_level=None enables autocommit, matching C++ default behavior
+                return sqlite3.connect(self.database_name, isolation_level=None)
+            except sqlite3.OperationalError:
+                raise RuntimeError("Failed to open database")
+        ```
+
+    *   **`create_table` method:**
+        ```python
+        def create_table(self, table_name: str, key1: str, key2: str):
+            db = self.open_database()
+            create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} (id INTEGER PRIMARY KEY, {key1} TEXT, {key2} INTEGER)"
+            try:
+                cursor = db.cursor()
+                cursor.execute(create_table_query)
+            except sqlite3.OperationalError as e:
+                # C++ throws: "Failed to create table: " + err_msg
+                raise RuntimeError(f"Failed to create table: {e}")
+            finally:
+                db.close()
+        ```
+        *Self-Correction on C++ string formatting:* C++ uses `+` to concatenate. Python f-strings are idiomatic and don't change behavior here.
+
+    *   **`insert_into_database` method:**
+        C++ takes `data: List[Dict[str, str]]`. It accesses `item.at("name")` and `item.at("age")`. `item.at` throws `std::out_of_range` if the key doesn't exist. Python's `dict[key]` raises `KeyError`. This is a behavioral match.
+        C++ uses `std::stoi` on age, which throws `std::invalid_argument` if it's not an int. Python's `int()` throws `ValueError`. To perfectly match C++, maybe we just use `int()`, which is the Python equivalent.
+        ```python
+        def insert_into_database(self, table_name: str, data):
+            db = self.open_database()
+            insert_query = f"INSERT INTO {table_name} (name, age) VALUES (?, ?)"
+            try:
+                cursor = db.cursor()
+                cursor.execute(insert_query) # Prepare the statement (in Python, execute handles prepare and step, but for loops we use executemany or loop execute)
+                # Wait, C++ loops and resets the statement.
+                # Python's execute in a loop is the exact equivalent.
+                for item in data:
+                    name = item["name"]
+                    age = int(item["age"]) # std::stoi equivalent
+                    cursor.execute(insert_query, (name, age))
+            except sqlite3.OperationalError as e:
+                # C++ throws "Failed to prepare statement: " or "Failed to execute statement: "
+                # Python's execute combines these. We can just catch DatabaseError.
+                raise RuntimeError(f"Failed to prepare/execute statement: {e}")
+            except ValueError as e:
+                # If std::stoi fails, it throws. int() throws ValueError. This is close enough.
+                # Actually, if we want to be strict about exceptions, we might need to map, but usually standard library exceptions map to their Python equivalents.
+                raise
+            finally:
+                db.close()
+        ```
+        *Refining the exception message:* The C++ code has two distinct error messages: "Failed to prepare statement: ..." and "Failed to execute statement: ...". In Python, `cursor.execute` does both. If we want to be extremely precise, we could separate them, but it's impossible to know if preparation or execution failed from a single `execute` call unless we parse the error message. Given the prompt says "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)", I should try to separate them or just combine them. Let's look at how Python `sqlite3` works. It doesn't expose `prepare` and `step` separately easily. I will catch `sqlite3.DatabaseError` and format it. To match C++ closely, I can use `cursor.prepare()`? No, `sqlite3` in Python doesn't have a public `prepare` method. I will use `cursor.execute()` and if an error occurs, I'll just use a generic message or check the state. Actually, `sqlite3.IntegrityError` vs `sqlite3.OperationalError` might differentiate. Let's just use `RuntimeError(f"Failed to execute statement: {e}")` for both to be safe, or try to replicate the exact flow:
+        ```python
+        def insert_into_database(self, table_name: str, data):
+            db = self.open_database()
+            insert_query = f"INSERT INTO {table_name} (name, age) VALUES (?, ?)"
+            cursor = db.cursor()
+            try:
+                # In Python, we can't easily separate prepare and step without custom C extensions.
+                # We will loop and execute.
+                for item in data:
+                    try:
+                        name = item["name"]
+                        age = int(item["age"])
+                    except (KeyError, ValueError):
+                        raise # Let Python's natural exceptions bubble up for std::out_of_range / std::invalid_argument equivalents
+                    
+                    try:
+                        cursor.execute(insert_query, (name, age))
+                    except sqlite3.DatabaseError as e:
+                        raise RuntimeError(f"Failed to execute statement: {e}")
+            finally:
+                db.close()
+        ```
+        Wait, if `prepare` fails in C++, it throws *before* the loop. In Python, if the SQL syntax is bad, `execute` fails on the first iteration. I can do a dummy prepare-like check or just accept that Python's `execute` combines them. Let's do this:
+        ```python
+        def insert_into_database(self, table_name: str, data):
+            db = self.open_database()
+            insert_query = f"INSERT INTO {table_name} (name, age) VALUES (?, ?)"
+            cursor = db.cursor()
+            try:
+                # Attempt to "prepare" by doing a describe or similar? No, just execute.
+                # Since Python combines prepare and step, we'll just execute.
+                for item in data:
+                    name = item["name"]
+                    age = int(item["age"])
+                    try:
+                        cursor.execute(insert_query, (name, age))
+                    except sqlite3.DatabaseError as e:
+                        raise RuntimeError(f"Failed to execute statement: {e}")
+            except sqlite3.DatabaseError as e:
+                 raise RuntimeError(f"Failed to prepare statement: {e}")
+            finally:
+                db.close()
+        ```
+        Actually, if I do `cursor.execute("INVALID SQL")`, it raises `sqlite3.OperationalError`. If I do `cursor.execute("INSERT ...", valid_args)` and it violates a constraint, it raises `sqlite3.IntegrityError` (which is a subclass of `DatabaseError`). Both happen during `execute`. I will just catch `sqlite3.DatabaseError` and raise `RuntimeError("Failed to execute statement: ...")` to keep it simple and functionally equivalent for the caller (they get a RuntimeError).
+
+    *   **`search_database` method:**
+        C++ returns `std::vector<std::vector<std::string>>`.
+        Crucially, C++ does `sqlite3_column_text` on *all* columns, even integers. This means an integer column `age` will be returned as a string `"25"`. Also, if a column is NULL, C++ returns an empty string `""`.
+        Python's `cursor.fetchall()` returns native types (integers as int, NULL as None).
+        To match C++ behavior *exactly*, I must convert every column to a string, and replace `None` with `""`.
+        Also, C++ `search_database` *does not throw* if open or prepare fails. It returns an empty list!
+        ```python
+        def search_database(self, table_name: str, name: str):
+            result = []
+            try:
+                db = sqlite3.connect(self.database_name, isolation_level=None)
+            except sqlite3.OperationalError:
+                return result # Matches C++ behavior of returning empty list on open failure
+            
+            query = f"SELECT * FROM {table_name} WHERE name = ?"
+            try:
+                cursor = db.cursor()
+                cursor.execute(query, (name,))
+                rows = cursor.fetchall()
+                for row in rows:
+                    str_row = []
+                    for col in row:
+                        if col is None:
+                            str_row.append("")
+                        else:
+                            str_row.append(str(col))
+                    result.append(str_row)
+            except sqlite3.DatabaseError:
+                # Matches C++ behavior of returning empty list on prepare failure
+                db.close()
+                return result
+            
+            db.close()
+            return result
+        ```
+        Wait, C++ `sqlite3_column_text` returns the text representation of the value as stored by SQLite. If I stored `age` as an integer, `sqlite3_column_text` returns `"25"`. Python's `str(col)` will return `"25"`. This matches.
+
+    *   **`delete_from_database` method:**
+        ```python
+        def delete_from_database(self, table_name: str, name: str):
+            db = self.open_database()
+            delete_query = f"DELETE FROM {table_name} WHERE name = ?"
+            cursor = db.cursor()
+            try:
+                cursor.execute(delete_query, (name,))
+            except sqlite3.DatabaseError as e:
+                raise RuntimeError(f"Failed to execute statement: {e}")
+            finally:
+                db.close()
+        ```
+        Wait, the C++ code has distinct error messages for prepare and step. As discussed, Python combines them. I'll use "Failed to prepare statement" if the query is structurally invalid (which we can't easily separate), but let's just use a unified message or catch before/inside. Let's look at the C++ again:
+        ```cpp
+        if (sqlite3_prepare_v2(db, delete_query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            std::string error_msg = "Failed to prepare statement: " + std::string(sqlite3_errmsg(db));
+            ...
+        }
+        ...
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            std::string error_msg = "Failed to execute statement: " + std::string(sqlite3_errmsg(db));
+            ...
+        }
+        ```
+        Since Python doesn't expose prepare/step separately, I will just catch `sqlite3.DatabaseError` during `execute` and raise `RuntimeError("Failed to execute statement: ...")`. It's the closest behavioral match without writing a C extension.
+
+5.  **Refining and Reviewing:**
+    *   *Autocommit:* The C++ code doesn't call `sqlite3_exec` with `BEGIN` or `COMMIT`. It relies on SQLite's default autocommit mode. In Python, `isolation_level=None` sets autocommit mode. This is critical for identical behavior, especially if methods are called in sequence and we expect the data to be persisted immediately.
+    *   *Type mapping:*
+        *   `std::vector<std::unordered_map<std::string, std::string>>` -> `List[Dict[str, str]]`
+        *   `std::vector<std::vector<std::string>>` -> `List[List[str]]`
+    *   *Exception mapping:*
+        *   `std::runtime_error` -> `RuntimeError`
+        *   `std::out_of_range` (from `item.at("name")`) -> `KeyError` (from `item["name"]`)
+        *   `std::invalid_argument` (from `std::stoi`) -> `ValueError` (from `int()`)
+    *   *Resource Management:* C++ explicitly calls `sqlite3_close(db)`. Python's `db.close()` does the same. Using `try...finally` ensures `db.close()` is called even if exceptions occur, mirroring the C++ manual cleanup.
+    *   *NULL handling in search:* C++ does `text ? std::string(...) : std::string()`. Python does `"" if col is None else str(col)`. Matches perfectly.
+    *   *Integer to String in search:* C++ does `sqlite3_column_text` which converts integers to their string representation. Python's `str(col)` does the same.
+
+6.  **Writing the final Python code:**
+    (Drafting the code in my head to ensure it looks clean and follows the constraints)
+
+    ```python
+    import sqlite3
+    from typing import List, Dict
+
+    class DatabaseProcessor:
+        def __init__(self, database_name: str):
+            self.database_name = database_name
+
+        def open_database(self) -> sqlite3.Connection:
+            try:
+                # isolation_level=None enables autocommit, matching C++ default behavior
+                return sqlite3.connect(self.database_name, isolation_level=None)
+            except sqlite3.OperationalError:
+                raise RuntimeError("Failed to open database")
+
+        def create_table(self, table_name: str, key1: str, key2: str):
+            db = self.open_database()
+            create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} (id INTEGER PRIMARY KEY, {key1} TEXT, {key2} INTEGER)"
+            try:
+                cursor = db.cursor()
+                cursor.execute(create_table_query)
+            except sqlite3.DatabaseError as e:
+                raise RuntimeError(f"Failed to create table: {e}")
+            finally:
+                db.close()
+
+        def insert_into_database(self, table_name: str, data: List[Dict[str, str]]):
+            db = self.open_database()
+            insert_query = f"INSERT INTO {table_name} (name, age) VALUES (?, ?)"
+            cursor = db.cursor()
+            try:
+                for item in data:
+                    name = item["name"]
+                    age = int(item["age"])  # std::stoi equivalent
+                    try:
+                        cursor.execute(insert_query, (name, age))
+                    except sqlite3.DatabaseError as e:
+                        raise RuntimeError(f"Failed to execute statement: {e}")
+            except sqlite3.DatabaseError as e:
+                # Catches preparation errors (e.g., table doesn't exist)
+                raise RuntimeError(f"Failed to prepare statement: {e}")
+            finally:
+                db.close()
+
+        def search_database(self, table_name: str, name: str) -> List[List[str]]:
+            result = []
+            try:
+                db = sqlite3.connect(self.database_name, isolation_level=None)
+            except sqlite3.OperationalError:
+                return result  # Matches C++ behavior of returning empty list on open failure
+
+            query = f"SELECT * FROM {table_name} WHERE name = ?"
+            try:
+                cursor = db.cursor()
+                cursor.execute(query, (name,))
+                rows = cursor.fetchall()
+                for row in rows:
+                    str_row = []
+                    for col in row:
+                        if col is None:
+                            str_row.append("")
+                        else:
+                            str_row.append(str(col))
+                    result.append(str_row)
+            except sqlite3.DatabaseError:
+                # Matches C++ behavior of returning empty list on prepare failure
+                db.close()
+                return result
+
+            db.close()
+            return result
+
+        def delete_from_database(self, table_name: str, name: str):
+            db = self.open_database()
+            delete_query = f"DELETE FROM {table_name} WHERE name = ?"
+            cursor = db.cursor()
+            try:
+                cursor.execute(delete_query, (name,))
+            except sqlite3.DatabaseError as e:
+                raise RuntimeError(f"Failed to execute statement: {e}")
+            finally:
+                db.close()
+    ```
+
+7.  **Final sanity checks:**
+    *   Did I miss any C++ specific edge cases? `std::stoi` throws `std::invalid_argument` if the string isn't a valid int. Python's `int()` throws `ValueError`. This is the correct Pythonic equivalent.
+    *   `item.at("name")` throws `std::out_of_range` if missing. `item["name"]` throws `KeyError`. Correct equivalent.
+    *   `sqlite3_column_text` returns `""` for NULL. My Python code returns `""` for `None`. Correct.
+    *   `sqlite3_column_text` returns stringified integers. `str(col)` does the same in Python. Correct.
+    *   `search_database` returns empty list on DB open failure. Correct.
+    *   `search_database` returns empty list on prepare failure. Correct.
+    *   `isolation_level=None` is crucial. Without it, Python's `sqlite3` module wraps DML statements in `BEGIN` ... `COMMIT`, which can lead to locked database errors if not committed, and differs from C++ autocommit. Added it.
+    *   The C++ code uses `sqlite3_exec` for `create_table`. Python's `cursor.execute` is the equivalent.
+    *   The C++ code uses `sqlite3_prepare_v2` and `sqlite3_step` for `insert`, `search`, `delete`. Python's `cursor.execute` combines these. I've split the exception handling in `insert_into_database` to mimic the distinct error messages as closely as possible, though it's a bit of a hack. Actually, if the query is syntactically invalid or the table doesn't exist, `cursor.execute` will fail immediately. If it's a constraint violation, it fails on step. In Python, both happen during `cursor.execute`. I'll just catch `sqlite3.DatabaseError` and map it to `RuntimeError`. To perfectly match the C++ message, I could do:
+        ```python
+        try:
+            cursor.execute(insert_query, (name, age))
+        except sqlite3.DatabaseError as e:
+            # Distinguish between prepare and step errors if possible, 
+            # but in Python it's tricky. We'll use a generic message or check exception type.
+            # sqlite3.OperationalError usually means prepare failed (e.g., no such table)
+            # sqlite3.IntegrityError usually means step failed (e.g., constraint violation)
+            if isinstance(e, sqlite3.OperationalError):
+                raise RuntimeError(f"Failed to prepare statement: {e}")
+            else:
+                raise RuntimeError(f"Failed to execute statement: {e}")
+        ```
+        This is a nice touch that brings the Python behavior closer to the C++ intent without altering the control flow. I'll apply this logic to `insert_into_database` and `delete_from_database`.
+
+8.  **Output Generation:** Present the final Python code clearly.
+</think>
+
+=== RAW ANSWER ===
+```python
+import sqlite3
+from typing import List, Dict
+
+class DatabaseProcessor:
+    def __init__(self, database_name: str):
+        self.database_name = database_name
+
+    def open_database(self) -> sqlite3.Connection:
+        try:
+            # isolation_level=None enables autocommit, matching the C++ sqlite3 default behavior
+            return sqlite3.connect(self.database_name, isolation_level=None)
+        except sqlite3.OperationalError:
+            raise RuntimeError("Failed to open database")
+
+    def create_table(self, table_name: str, key1: str, key2: str) -> None:
+        db = self.open_database()
+        create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} (id INTEGER PRIMARY KEY, {key1} TEXT, {key2} INTEGER)"
+        try:
+            cursor = db.cursor()
+            cursor.execute(create_table_query)
+        except sqlite3.DatabaseError as e:
+            raise RuntimeError(f"Failed to create table: {e}")
+        finally:
+            db.close()
+
+    def insert_into_database(self, table_name: str, data: List[Dict[str, str]]) -> None:
+        db = self.open_database()
+        insert_query = f"INSERT INTO {table_name} (name, age) VALUES (?, ?)"
+        cursor = db.cursor()
+        
+        try:
+            for item in data:
+                # item.at() throws std::out_of_range if missing; Python dict[] throws KeyError
+                name = item["name"]
+                # std::stoi throws std::invalid_argument; Python int() throws ValueError
+                age = int(item["age"])
+                
+                try:
+                    cursor.execute(insert_query, (name, age))
+                except sqlite3.OperationalError as e:
+                    # OperationalError typically maps to preparation failures in SQLite
+                    raise RuntimeError(f"Failed to prepare statement: {e}")
+                except sqlite3.DatabaseError as e:
+                    # Other DatabaseErrors (like IntegrityError) map to execution failures
+                    raise RuntimeError(f"Failed to execute statement: {e}")
+        finally:
+            db.close()
+
+    def search_database(self, table_name: str, name: str) -> List[List[str]]:
+        result = []
+        
+        try:
+            db = sqlite3.connect(self.database_name, isolation_level=None)
+        except sqlite3.OperationalError:
+            # Matches C++ behavior of returning empty list on open failure
+            return result
+
+        query = f"SELECT * FROM {table_name} WHERE name = ?"
+        try:
+            cursor = db.cursor()
+            cursor.execute(query, (name,))
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                str_row = []
+                for col in row:
+                    # sqlite3_column_text returns "" for NULL, and stringifies integers
+                    if col is None:
+                        str_row.append("")
+                    else:
+                        str_row.append(str(col))
+                result.append(str_row)
+        except sqlite3.DatabaseError:
+            # Matches C++ behavior of returning empty list on prepare failure
+            db.close()
+            return result
+
+        db.close()
+        return result
+
+    def delete_from_database(self, table_name: str, name: str) -> None:
+        db = self.open_database()
+        delete_query = f"DELETE FROM {table_name} WHERE name = ?"
+        cursor = db.cursor()
+        
+        try:
+            cursor.execute(delete_query, (name,))
+        except sqlite3.OperationalError as e:
+            raise RuntimeError(f"Failed to prepare statement: {e}")
+        except sqlite3.DatabaseError as e:
+            raise RuntimeError(f"Failed to execute statement: {e}")
+        finally:
+            db.close()
+```
+
+=== TRANSLATED CODE (py) ===
+import sqlite3
+from typing import List, Dict
+
+class DatabaseProcessor:
+    def __init__(self, database_name: str):
+        self.database_name = database_name
+
+    def open_database(self) -> sqlite3.Connection:
+        try:
+            # isolation_level=None enables autocommit, matching the C++ sqlite3 default behavior
+            return sqlite3.connect(self.database_name, isolation_level=None)
+        except sqlite3.OperationalError:
+            raise RuntimeError("Failed to open database")
+
+    def create_table(self, table_name: str, key1: str, key2: str) -> None:
+        db = self.open_database()
+        create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} (id INTEGER PRIMARY KEY, {key1} TEXT, {key2} INTEGER)"
+        try:
+            cursor = db.cursor()
+            cursor.execute(create_table_query)
+        except sqlite3.DatabaseError as e:
+            raise RuntimeError(f"Failed to create table: {e}")
+        finally:
+            db.close()
+
+    def insert_into_database(self, table_name: str, data: List[Dict[str, str]]) -> None:
+        db = self.open_database()
+        insert_query = f"INSERT INTO {table_name} (name, age) VALUES (?, ?)"
+        cursor = db.cursor()
+        
+        try:
+            for item in data:
+                # item.at() throws std::out_of_range if missing; Python dict[] throws KeyError
+                name = item["name"]
+                # std::stoi throws std::invalid_argument; Python int() throws ValueError
+                age = int(item["age"])
+                
+                try:
+                    cursor.execute(insert_query, (name, age))
+                except sqlite3.OperationalError as e:
+                    # OperationalError typically maps to preparation failures in SQLite
+                    raise RuntimeError(f"Failed to prepare statement: {e}")
+                except sqlite3.DatabaseError as e:
+                    # Other DatabaseErrors (like IntegrityError) map to execution failures
+                    raise RuntimeError(f"Failed to execute statement: {e}")
+        finally:
+            db.close()
+
+    def search_database(self, table_name: str, name: str) -> List[List[str]]:
+        result = []
+        
+        try:
+            db = sqlite3.connect(self.database_name, isolation_level=None)
+        except sqlite3.OperationalError:
+            # Matches C++ behavior of returning empty list on open failure
+            return result
+
+        query = f"SELECT * FROM {table_name} WHERE name = ?"
+        try:
+            cursor = db.cursor()
+            cursor.execute(query, (name,))
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                str_row = []
+                for col in row:
+                    # sqlite3_column_text returns "" for NULL, and stringifies integers
+                    if col is None:
+                        str_row.append("")
+                    else:
+                        str_row.append(str(col))
+                result.append(str_row)
+        except sqlite3.DatabaseError:
+            # Matches C++ behavior of returning empty list on prepare failure
+            db.close()
+            return result
+
+        db.close()
+        return result
+
+    def delete_from_database(self, table_name: str, name: str) -> None:
+        db = self.open_database()
+        delete_query = f"DELETE FROM {table_name} WHERE name = ?"
+        cursor = db.cursor()
+        
+        try:
+            cursor.execute(delete_query, (name,))
+        except sqlite3.OperationalError as e:
+            raise RuntimeError(f"Failed to prepare statement: {e}")
+        except sqlite3.DatabaseError as e:
+            raise RuntimeError(f"Failed to execute statement: {e}")
+        finally:
+            db.close()

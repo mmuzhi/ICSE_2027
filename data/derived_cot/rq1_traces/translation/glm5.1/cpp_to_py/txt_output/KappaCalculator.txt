@@ -1,0 +1,957 @@
+=== SOURCE CODE (cpp) ===
+
+#include <Eigen/Dense>
+#include <numeric> 
+
+
+#include <vector>
+
+class KappaCalculator {
+public:
+    static double kappa(const std::vector<std::vector<int>>& testData, int k);
+    static double fleiss_kappa(const std::vector<std::vector<int>>& testData, int N, int k, int n);
+};
+
+double KappaCalculator::kappa(const std::vector<std::vector<int>>& testData, int k) {
+    Eigen::MatrixXd dataMat(testData.size(), k);
+
+    for (size_t i = 0; i < testData.size(); ++i) {
+        for (int j = 0; j < k; ++j) {
+            dataMat(i, j) = testData[i][j];
+        }
+    }
+
+    double P0 = 0.0;
+    for (int i = 0; i < k; ++i) {
+        P0 += dataMat(i, i);
+    }
+
+    Eigen::VectorXd xsum = dataMat.rowwise().sum();
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+    double sum = dataMat.sum();
+
+    double Pe = (ysum.dot(xsum)) / (sum * sum);
+    P0 /= sum;
+
+    double cohens_coefficient = (P0 - Pe) / (1 - Pe);
+    return cohens_coefficient;
+}
+
+double KappaCalculator::fleiss_kappa(const std::vector<std::vector<int>>& testData, int N, int k, int n) {
+    Eigen::MatrixXd dataMat(testData.size(), k);
+
+    for (size_t i = 0; i < testData.size(); ++i) {
+        for (int j = 0; j < k; ++j) {
+            dataMat(i, j) = testData[i][j];
+        }
+    }
+
+    double sum = 0.0;
+    double P0 = 0.0;
+
+    for (int i = 0; i < N; ++i) {
+        double temp = 0.0;
+        for (int j = 0; j < k; ++j) {
+            sum += dataMat(i, j);
+            temp += std::pow(dataMat(i, j), 2);
+        }
+        temp -= n;
+        temp /= (n - 1) * n;
+        P0 += temp;
+    }
+
+    P0 /= N;
+
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+    ysum = ysum.array() / sum;
+    ysum = ysum.array().square();
+
+    double Pe = ysum.sum();
+
+    double ans = (P0 - Pe) / (1 - Pe);
+    return ans;
+}
+
+
+=== REASONING ===
+<think>
+The user wants to translate a C++ code that calculates Cohen's Kappa and Fleiss' Kappa into Python.
+The C++ code uses Eigen for matrix operations. I should use numpy in Python for equivalent functionality.
+
+Let's break down the `kappa` function (Cohen's Kappa):
+```cpp
+double KappaCalculator::kappa(const std::vector<std::vector<int>>& testData, int k) {
+    Eigen::MatrixXd dataMat(testData.size(), k);
+
+    for (size_t i = 0; i < testData.size(); ++i) {
+        for (int j = 0; j < k; ++j) {
+            dataMat(i, j) = testData[i][j];
+        }
+    }
+
+    double P0 = 0.0;
+    for (int i = 0; i < k; ++i) {
+        P0 += dataMat(i, i);
+    }
+
+    Eigen::VectorXd xsum = dataMat.rowwise().sum();
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+    double sum = dataMat.sum();
+
+    double Pe = (ysum.dot(xsum)) / (sum * sum);
+    P0 /= sum;
+
+    double cohens_coefficient = (P0 - Pe) / (1 - Pe);
+    return cohens_coefficient;
+}
+```
+Wait, `ysum.dot(xsum)` in Eigen for two vectors of different sizes?
+`xsum` is `testData.size()` elements (rows).
+`ysum` is `k` elements (cols).
+Wait, `ysum.dot(xsum)` in Eigen on two vectors of different sizes is invalid and causes an assertion failure, unless `testData.size() == k` (which is true for a confusion matrix in Cohen's Kappa!).
+Ah, a confusion matrix is square. So `testData.size()` is `k`.
+Wait, if `xsum` is `k` elements and `ysum` is `k` elements, `ysum.dot(xsum)` is the dot product of the row sums and column sums.
+Let's trace this carefully.
+`dataMat` is `k x k`.
+`xsum` is row sums (size `k`).
+`ysum` is col sums (size `k`).
+`ysum.dot(xsum)` computes `sum(ysum * xsum)`.
+Wait, `ysum` and `xsum` are both column vectors. `ysum.dot(xsum)` computes the dot product.
+`Pe = (ysum.dot(xsum)) / (sum * sum)`
+Wait, for Cohen's Kappa, `Pe = sum(xsum * ysum) / sum^2`. Yes, since `xsum` and `ysum` are marginal totals.
+
+Let's write the Python equivalent for `kappa`:
+```python
+import numpy as np
+
+class KappaCalculator:
+    @staticmethod
+    def kappa(testData, k):
+        dataMat = np.array(testData, dtype=float)
+        
+        P0 = np.trace(dataMat)
+        
+        xsum = np.sum(dataMat, axis=1)
+        ysum = np.sum(dataMat, axis=0)
+        total_sum = np.sum(dataMat)
+        
+        Pe = np.dot(ysum, xsum) / (total_sum * total_sum)
+        P0 /= total_sum
+        
+        cohens_coefficient = (P0 - Pe) / (1 - Pe)
+        return cohens_coefficient
+```
+Wait, `testData` is a list of lists of ints. `np.array(testData)` will create a 2D array.
+Let's double check `ysum.dot(xsum)`. In Eigen, `ysum` is a column vector, `xsum` is a column vector. `ysum.dot(xsum)` computes `sum(ysum_i * xsum_i)`. In numpy, `np.dot(ysum, xsum)` does the same if they are 1D arrays.
+Wait, `xsum` in C++ is `dataMat.rowwise().sum()`, which is a column vector of size `k`.
+`ysum` in C++ is `dataMat.colwise().sum()`, which is a row vector of size `k`?
+Wait, `Eigen::VectorXd ysum = dataMat.colwise().sum();`
+In Eigen, `VectorXd` is a column vector. Assigning a row vector to it transposes it. So `ysum` is a column vector.
+So `ysum.dot(xsum)` is just the dot product of the two column vectors.
+In numpy, `np.sum(dataMat, axis=0)` gives a 1D array, `np.sum(dataMat, axis=1)` gives a 1D array. `np.dot` on two 1D arrays is the inner product. So `np.dot(ysum, xsum)` is correct.
+
+Now for `fleiss_kappa`:
+```cpp
+double KappaCalculator::fleiss_kappa(const std::vector<std::vector<int>>& testData, int N, int k, int n) {
+    Eigen::MatrixXd dataMat(testData.size(), k);
+
+    for (size_t i = 0; i < testData.size(); ++i) {
+        for (int j = 0; j < k; ++j) {
+            dataMat(i, j) = testData[i][j];
+        }
+    }
+
+    double sum = 0.0;
+    double P0 = 0.0;
+
+    for (int i = 0; i < N; ++i) {
+        double temp = 0.0;
+        for (int j = 0; j < k; ++j) {
+            sum += dataMat(i, j);
+            temp += std::pow(dataMat(i, j), 2);
+        }
+        temp -= n;
+        temp /= (n - 1) * n;
+        P0 += temp;
+    }
+
+    P0 /= N;
+
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+    ysum = ysum.array() / sum;
+    ysum = ysum.array().square();
+
+    double Pe = ysum.sum();
+
+    double ans = (P0 - Pe) / (1 - Pe);
+    return ans;
+}
+```
+In Python:
+```python
+    @staticmethod
+    def fleiss_kappa(testData, N, k, n):
+        dataMat = np.array(testData, dtype=float)
+        
+        total_sum = 0.0
+        P0 = 0.0
+        
+        for i in range(N):
+            temp = 0.0
+            for j in range(k):
+                total_sum += dataMat[i, j]
+                temp += dataMat[i, j] ** 2
+            temp -= n
+            temp /= (n - 1) * n
+            P0 += temp
+            
+        P0 /= N
+        
+        ysum = np.sum(dataMat, axis=0)
+        ysum = ysum / total_sum
+        ysum = ysum ** 2
+        
+        Pe = np.sum(ysum)
+        
+        ans = (P0 - Pe) / (1 - Pe)
+        return ans
+```
+Wait, the C++ code loops `i` from `0` to `N-1`, but `testData.size()` could be larger than `N`. The C++ code creates `dataMat` with `testData.size()` rows, but only iterates up to `N` rows. I should replicate this exactly, even if it means `N` might be different from `len(testData)`. However, if `N` is always `len(testData)`, it's fine. To be safe, I will use `range(N)` as in the C++ code.
+Wait, `ysum = np.sum(dataMat, axis=0)` computes the sum over ALL rows of `dataMat`, not just the first `N` rows. Is this intended in C++?
+In C++:
+```cpp
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+```
+This computes the sum over all rows of `dataMat`, which has `testData.size()` rows.
+But `sum` is computed only for the first `N` rows:
+```cpp
+    for (int i = 0; i < N; ++i) {
+        double temp = 0.0;
+        for (int j = 0; j < k; ++j) {
+            sum += dataMat(i, j);
+            ...
+```
+This is a bit inconsistent in the C++ code, but I must keep the behavior identical!
+So `ysum` must be computed over the entire `dataMat`, while `sum` is computed over the first `N` rows.
+Let's verify this.
+If I use `np.sum(dataMat, axis=0)`, it will sum over all rows of `dataMat`. This matches `dataMat.colwise().sum()`.
+And `total_sum` is computed by summing `dataMat[i, j]` for `i` in `0..N-1` and `j` in `0..k-1`.
+This matches the C++ logic exactly.
+
+Let's trace carefully:
+```cpp
+    Eigen::MatrixXd dataMat(testData.size(), k);
+```
+`dataMat` has `testData.size()` rows and `k` columns.
+
+```cpp
+    for (size_t i = 0; i < testData.size(); ++i) {
+        for (int j = 0; j < k; ++j) {
+            dataMat(i, j) = testData[i][j];
+        }
+    }
+```
+Populates all rows.
+
+```cpp
+    double sum = 0.0;
+    double P0 = 0.0;
+
+    for (int i = 0; i < N; ++i) {
+        double temp = 0.0;
+        for (int j = 0; j < k; ++j) {
+            sum += dataMat(i, j);
+            temp += std::pow(dataMat(i, j), 2);
+        }
+        temp -= n;
+        temp /= (n - 1) * n;
+        P0 += temp;
+    }
+```
+`sum` is the sum of the first `N` rows.
+
+```cpp
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+```
+`ysum` is the sum of all columns of the entire `dataMat` (all `testData.size()` rows).
+
+```cpp
+    ysum = ysum.array() / sum;
+    ysum = ysum.array().square();
+```
+Divides by `sum` (which only sums the first `N` rows).
+
+So yes, `ysum` uses the whole `dataMat`, but `sum` uses the first `N` rows. This is exactly what the C++ code does.
+
+Wait, is there any chance `testData.size()` could be less than `N`? The C++ code would segfault or access out of bounds. In Python, it would throw an IndexError. We don't need to handle this explicitly unless required, just let it crash like C++.
+
+Let's double check `kappa`:
+```cpp
+    Eigen::MatrixXd dataMat(testData.size(), k);
+
+    for (size_t i = 0; i < testData.size(); ++i) {
+        for (int j = 0; j < k; ++j) {
+            dataMat(i, j) = testData[i][j];
+        }
+    }
+```
+Here `dataMat` has `testData.size()` rows and `k` columns.
+
+```cpp
+    double P0 = 0.0;
+    for (int i = 0; i < k; ++i) {
+        P0 += dataMat(i, i);
+    }
+```
+`P0` sums the diagonal. If `testData.size() < k`, it accesses out of bounds. If `testData.size() > k`, it only sums up to `k`.
+
+```cpp
+    Eigen::VectorXd xsum = dataMat.rowwise().sum();
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+    double sum = dataMat.sum();
+```
+`xsum` is row sums of the whole `dataMat`.
+`ysum` is col sums of the whole `dataMat`.
+`sum` is total sum of the whole `dataMat`.
+
+```cpp
+    double Pe = (ysum.dot(xsum)) / (sum * sum);
+```
+Wait. `ysum` is `1 x k` (or `k x 1` after `VectorXd` cast). `xsum` is `testData.size() x 1`.
+If `testData.size() != k`, `ysum.dot(xsum)` in Eigen will throw an assertion error (debug) or do invalid memory access (release) because `dot` requires vectors of the same size.
+So for `kappa` to work in C++, `testData.size()` MUST equal `k`. Thus `dataMat` is square.
+I will just write the exact equivalent in Python. `np.dot(ysum, xsum)` will raise a ValueError if sizes don't match, which is the Pythonic equivalent of Eigen's assertion.
+
+Let's refine the Python code.
+
+```python
+import numpy as np
+
+class KappaCalculator:
+    @staticmethod
+    def kappa(testData, k):
+        dataMat = np.array(testData, dtype=float)
+        
+        P0 = 0.0
+        for i in range(k):
+            P0 += dataMat[i, i]
+            
+        xsum = np.sum(dataMat, axis=1)
+        ysum = np.sum(dataMat, axis=0)
+        total_sum = np.sum(dataMat)
+        
+        Pe = np.dot(ysum, xsum) / (total_sum * total_sum)
+        P0 /= total_sum
+        
+        cohens_coefficient = (P0 - Pe) / (1 - Pe)
+        return cohens_coefficient
+
+    @staticmethod
+    def fleiss_kappa(testData, N, k, n):
+        dataMat = np.array(testData, dtype=float)
+        
+        total_sum = 0.0
+        P0 = 0.0
+        
+        for i in range(N):
+            temp = 0.0
+            for j in range(k):
+                total_sum += dataMat[i, j]
+                temp += dataMat[i, j] ** 2
+            temp -= n
+            temp /= (n - 1) * n
+            P0 += temp
+            
+        P0 /= N
+        
+        ysum = np.sum(dataMat, axis=0)
+        ysum = ysum / total_sum
+        ysum = ysum ** 2
+        
+        Pe = np.sum(ysum)
+        
+        ans = (P0 - Pe) / (1 - Pe)
+        return ans
+```
+
+Wait, in `kappa`, `P0` is computed as:
+```python
+        P0 = 0.0
+        for i in range(k):
+            P0 += dataMat[i, i]
+```
+This can be written as `P0 = np.trace(dataMat[:k, :k])`, but a loop is closer to the C++ and perfectly fine. Actually, `np.trace(dataMat)` computes the sum of `dataMat[i, i]` for `i` up to `min(rows, cols)`. Since the C++ code loops up to `k`, if `testData.size() < k`, C++ accesses out of bounds. If `testData.size() >= k`, it loops up to `k`. So `np.trace(dataMat[:k, :k])` or just a loop. I'll use the loop to be safe and exact.
+
+Wait, `ysum` and `xsum` in C++ `kappa` are `VectorXd`. `ysum.dot(xsum)` computes the dot product.
+In numpy, `np.sum(dataMat, axis=1)` gives shape `(rows,)`. `np.sum(dataMat, axis=0)` gives shape `(cols,)`.
+`np.dot(ysum, xsum)` computes the inner product, which matches `ysum.dot(xsum)`.
+
+Let's double check `ysum = np.sum(dataMat, axis=0)` in `fleiss_kappa`.
+In C++:
+```cpp
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+```
+This is a row vector (or column vector after assignment) containing the sum of each column over ALL rows.
+In Python:
+```python
+        ysum = np.sum(dataMat, axis=0)
+```
+This sums over all rows. This is correct.
+
+What about `temp /= (n - 1) * n;`?
+In C++, this is floating point division because `temp` is `double` and `(n - 1) * n` is integer, which gets promoted to double.
+In Python, `temp` is a float, so `/` is float division. This is correct.
+
+Let's check `ysum = ysum / total_sum`.
+In C++:
+```cpp
+    ysum = ysum.array() / sum;
+```
+This is element-wise division. In numpy, `ysum / total_sum` is element-wise. Correct.
+
+```cpp
+    ysum = ysum.array().square();
+```
+In numpy, `ysum ** 2` is element-wise square. Correct.
+
+```cpp
+    double Pe = ysum.sum();
+```
+In numpy, `Pe = np.sum(ysum)`. Correct.
+
+One detail: `dataMat` initialization.
+In C++:
+```cpp
+    Eigen::MatrixXd dataMat(testData.size(), k);
+```
+This initializes a matrix of size `testData.size()` x `k`.
+In Python:
+```python
+        dataMat = np.array(testData, dtype=float)
+```
+If `testData` has fewer columns than `k`, `np.array` will just create what it is given. The C++ code would access out of bounds. In Python, `dataMat[i, j]` would raise an IndexError. This matches the behavior (crashing on invalid input).
+If `testData` has more columns than `k`, `np.array` creates a wider matrix. The C++ code only reads up to column `k`. Wait!
+In C++:
+```cpp
+    for (size_t i = 0; i < testData.size(); ++i) {
+        for (int j = 0; j < k; ++j) {
+            dataMat(i, j) = testData[i][j];
+        }
+    }
+```
+If `testData[i]` has more than `k` elements, C++ ignores the rest!
+So `dataMat` in Python should strictly only take the first `k` columns if we want identical behavior.
+Let's do this to be absolutely identical:
+```python
+        dataMat = np.array(testData, dtype=float)[:,:k]
+```
+Wait, `testData` might not be rectangular. `np.array(testData)` would fail or create a 1D array of objects if `testData` is jagged.
+But `testData` is `const std::vector<std::vector<int>>&`, and C++ accesses `testData[i][j]`. If a row is too short, C++ segfaults. If it's longer, it ignores the rest.
+To perfectly mimic this without `np.array` failing on jagged arrays, I can construct `dataMat` explicitly, just like C++.
+
+```python
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+```
+This is extremely safe and perfectly mimics the C++ logic, including ignoring extra columns or raising IndexError on missing columns (if `testData[i]` doesn't have `j`). Wait, in C++ accessing `testData[i][j]` where `j` is out of bounds is UB. In Python it raises IndexError. That's fine.
+
+Let's do this for both methods.
+
+```python
+import numpy as np
+
+class KappaCalculator:
+    @staticmethod
+    def kappa(testData, k):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        P0 = 0.0
+        for i in range(k):
+            P0 += dataMat[i, i]
+            
+        xsum = np.sum(dataMat, axis=1)
+        ysum = np.sum(dataMat, axis=0)
+        total_sum = np.sum(dataMat)
+        
+        Pe = np.dot(ysum, xsum) / (total_sum * total_sum)
+        P0 /= total_sum
+        
+        cohens_coefficient = (P0 - Pe) / (1 - Pe)
+        return cohens_coefficient
+
+    @staticmethod
+    def fleiss_kappa(testData, N, k, n):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        total_sum = 0.0
+        P0 = 0.0
+        
+        for i in range(N):
+            temp = 0.0
+            for j in range(k):
+                total_sum += dataMat[i, j]
+                temp += dataMat[i, j] ** 2
+            temp -= n
+            temp /= (n - 1) * n
+            P0 += temp
+            
+        P0 /= N
+        
+        ysum = np.sum(dataMat, axis=0)
+        ysum = ysum / total_sum
+        ysum = ysum ** 2
+        
+        Pe = np.sum(ysum)
+        
+        ans = (P0 - Pe) / (1 - Pe)
+        return ans
+```
+Wait, in C++, `kappa`:
+```cpp
+    double P0 = 0.0;
+    for (int i = 0; i < k; ++i) {
+        P0 += dataMat(i, i);
+    }
+```
+If `rows < k`, C++ accesses out of bounds. In Python, `dataMat[i, i]` raises IndexError. This matches.
+
+In C++ `fleiss_kappa`:
+```cpp
+    for (int i = 0; i < N; ++i) {
+        double temp = 0.0;
+        for (int j = 0; j < k; ++j) {
+            sum += dataMat(i, j);
+            temp += std::pow(dataMat(i, j), 2);
+        }
+```
+If `N > rows`, C++ accesses out of bounds. Python raises IndexError. Matches.
+
+Let's review the C++ code for `kappa` again.
+```cpp
+    Eigen::VectorXd xsum = dataMat.rowwise().sum();
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+    double sum = dataMat.sum();
+
+    double Pe = (ysum.dot(xsum)) / (sum * sum);
+```
+In C++, `dataMat.rowwise().sum()` returns a column vector of size `rows`.
+`dataMat.colwise().sum()` returns a row vector of size `k`.
+Then `Eigen::VectorXd ysum = dataMat.colwise().sum();` evaluates the row vector into a column vector of size `k`.
+Then `ysum.dot(xsum)` is called. In Eigen, `dot` requires both vectors to have the same size. If `rows != k`, this is a runtime assertion error.
+So in Python, `np.dot(ysum, xsum)` will raise `ValueError: shapes not aligned` if `rows != k`. This perfectly matches the Eigen assertion failure!
+
+Is there any type issue?
+C++ uses `double`. Python `float` is equivalent to C++ `double`.
+`dataMat` is `Eigen::MatrixXd`, which is `double`. My numpy array uses `dtype=float`, which is `float64` (equivalent to C++ `double`).
+`total_sum` is `double`.
+`P0` is `double`.
+`temp` is `double`.
+
+What if `sum` is 0 in `kappa`?
+`Pe = (ysum.dot(xsum)) / (sum * sum);` -> Division by zero.
+`P0 /= sum;` -> Division by zero.
+Python will raise `ZeroDivisionError`. In C++, it results in `inf` or `nan`. Is it required to match C++ exactly?
+The prompt says: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)."
+If C++ divides by zero, it produces `inf` or `nan` (depending on IEEE 754, which is standard). In Python, dividing by `0.0` also produces `inf` or `nan` and raises a `RuntimeWarning`, but doesn't throw an exception.
+Wait, if `sum` is an integer in C++, `sum * sum` is integer, and `ysum.dot(xsum)` is double, so it's double division. `sum` is double in C++ (`double sum = dataMat.sum();`). So `sum * sum` is double. Double division by 0.0 in C++ is `inf`/`nan`. In Python, `0.0` division is also `inf`/`nan`.
+So Python will return `nan` or `inf`, just like C++. No exception thrown in either language for float division by zero.
+
+Wait, in C++ `fleiss_kappa`:
+```cpp
+    double sum = 0.0;
+...
+        temp /= (n - 1) * n;
+```
+If `n` is 1, `(n - 1) * n` is 0. `temp /= 0` produces `inf` or `nan`. In Python, same.
+
+What about `1 - Pe`? If `Pe == 1`, `(P0 - Pe) / (1 - Pe)` is division by zero. C++ returns `nan` or `inf`. Python returns `nan` or `inf`.
+
+Let's double check `ysum = np.sum(dataMat, axis=0)`.
+In C++ `fleiss_kappa`:
+```cpp
+    Eigen::VectorXd ysum = dataMat.colwise().sum();
+```
+This sums over ALL rows of `dataMat`.
+My Python code: `ysum = np.sum(dataMat, axis=0)`. This also sums over ALL rows of `dataMat`.
+This matches.
+
+Wait, is there any case where `dataMat.colwise().sum()` in C++ only sums the first `N` rows?
+No, `dataMat` has `testData.size()` rows. `dataMat.colwise().sum()` sums all rows.
+But `sum` in `fleiss_kappa` is only accumulated for the first `N` rows:
+```cpp
+    for (int i = 0; i < N; ++i) {
+        double temp = 0.0;
+        for (int j = 0; j < k; ++j) {
+            sum += dataMat(i, j);
+            temp += std::pow(dataMat(i, j), 2);
+        }
+```
+So if `N < testData.size()`, `sum` will be smaller than the total sum of `dataMat`.
+Then `ysum = ysum.array() / sum;` will divide the total column sums by the partial sum.
+This is definitely a bug in the C++ code, but I must replicate the behavior identically.
+My Python code does exactly this:
+```python
+        total_sum = 0.0
+        P0 = 0.0
+        
+        for i in range(N):
+            temp = 0.0
+            for j in range(k):
+                total_sum += dataMat[i, j]
+                temp += dataMat[i, j] ** 2
+            temp -= n
+            temp /= (n - 1) * n
+            P0 += temp
+            
+        P0 /= N
+        
+        ysum = np.sum(dataMat, axis=0)
+        ysum = ysum / total_sum
+```
+Here `ysum` is the sum of all rows, but `total_sum` is the sum of the first `N` rows. This matches the C++ behavior.
+
+Let's trace `kappa` again.
+```python
+        P0 = 0.0
+        for i in range(k):
+            P0 += dataMat[i, i]
+```
+This is correct.
+
+```python
+        xsum = np.sum(dataMat, axis=1)
+        ysum = np.sum(dataMat, axis=0)
+        total_sum = np.sum(dataMat)
+        
+        Pe = np.dot(ysum, xsum) / (total_sum * total_sum)
+```
+This matches C++.
+
+Wait, in C++ `kappa`:
+```cpp
+    double P0 = 0.0;
+    for (int i = 0; i < k; ++i) {
+        P0 += dataMat(i, i);
+    }
+```
+If `k` is larger than `testData.size()`, C++ accesses out of bounds.
+In Python, `dataMat` has `rows` rows. If `k > rows`, `dataMat[i, i]` raises `IndexError`.
+Is there any way `k > rows`? Yes, if `k > len(testData)`.
+To make it exactly like C++, C++ does not check bounds. It just reads memory.
+If I want to perfectly emulate C++ out-of-bounds access, I can't in Python without writing C extensions. An `IndexError` is the Pythonic equivalent of a segfault / out-of-bounds access, which is acceptable.
+
+Wait, what if `testData` is empty?
+In C++, `testData.size()` is 0. `dataMat` is `0 x k`.
+`P0` loop runs up to `k`. If `k > 0`, it accesses out of bounds.
+In Python, `dataMat` is `0 x k`. `dataMat[i, i]` raises `IndexError`. Matches.
+
+What if `k` is 0?
+In C++, `dataMat` is `testData.size() x 0`.
+`P0` loop doesn't run. `P0 = 0.0`.
+`xsum` is size `testData.size()`. `ysum` is size `0`.
+`sum` is 0.
+`ysum.dot(xsum)` is 0 (dot product of empty vector and non-empty vector? In Eigen, this is an assertion error because sizes don't match).
+In Python, `ysum` is shape `(0,)`, `xsum` is shape `(testData.size(),)`. `np.dot` raises `ValueError`. Matches.
+
+Are there any other edge cases?
+What if `testData` elements are negative?
+C++ handles them as normal integers. Python handles them as normal integers.
+
+Let's consider the types of `N`, `k`, `n`. They are `int` in C++.
+In Python, we don't need to specify types.
+
+Let's review the code structure.
+```python
+import numpy as np
+
+class KappaCalculator:
+    @staticmethod
+    def kappa(testData, k):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        P0 = 0.0
+        for i in range(k):
+            P0 += dataMat[i, i]
+            
+        xsum = np.sum(dataMat, axis=1)
+        ysum = np.sum(dataMat, axis=0)
+        total_sum = np.sum(dataMat)
+        
+        Pe = np.dot(ysum, xsum) / (total_sum * total_sum)
+        P0 /= total_sum
+        
+        cohens_coefficient = (P0 - Pe) / (1 - Pe)
+        return cohens_coefficient
+
+    @staticmethod
+    def fleiss_kappa(testData, N, k, n):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        total_sum = 0.0
+        P0 = 0.0
+        
+        for i in range(N):
+            temp = 0.0
+            for j in range(k):
+                total_sum += dataMat[i, j]
+                temp += dataMat[i, j] ** 2
+            temp -= n
+            temp /= (n - 1) * n
+            P0 += temp
+            
+        P0 /= N
+        
+        ysum = np.sum(dataMat, axis=0)
+        ysum = ysum / total_sum
+        ysum = ysum ** 2
+        
+        Pe = np.sum(ysum)
+        
+        ans = (P0 - Pe) / (1 - Pe)
+        return ans
+```
+
+Is there any difference between `std::pow(dataMat(i, j), 2)` and `dataMat[i, j] ** 2`?
+In C++, `std::pow` for double and int promotes to double. `dataMat[i, j]` is float64, so `** 2` is float64 power. They are identical.
+
+Is there any difference between `ysum.array().square()` and `ysum ** 2`?
+Both are element-wise squares. Identical.
+
+Is there any difference between `ysum.array() / sum` and `ysum / total_sum`?
+Both are element-wise division. Identical.
+
+Is there any difference between `dataMat.rowwise().sum()` and `np.sum(dataMat, axis=1)`?
+`dataMat.rowwise().sum()` returns a column vector (shape `rows x 1`).
+`np.sum(dataMat, axis=1)` returns a 1D array (shape `(rows,)`).
+When passed to `np.dot`, a 1D array behaves like a vector, so `np.dot(ysum, xsum)` is the inner product. This matches `ysum.dot(xsum)` in Eigen for two column vectors.
+So the behavior is identical.
+
+Wait, what if `total_sum` is 0? In C++, `ysum / sum` produces `inf` or `nan`. In Python, `ysum / total_sum` produces `inf` or `nan` (with a RuntimeWarning). The result is the same.
+
+Let's double check `P0 /= N` in `fleiss_kappa`.
+In C++, `P0` is a double, `N` is an int. The result is a double.
+In Python, `P0` is a float, `N` is an int. The result is a float. Identical.
+
+What about `temp -= n`?
+In C++, `temp` is double, `n` is int. Result is double.
+In Python, `temp` is float, `n` is int. Result is float. Identical.
+
+What about `temp /= (n - 1) * n`?
+In C++, `(n - 1) * n` is int. `temp /= ...` is double.
+In Python, `(n - 1) * n` is int. `temp /= ...` is float. Identical.
+
+Let's consider if `testData` is passed as a list of lists.
+`len(testData)` works.
+`testData[i][j]` works.
+
+Is there any need to handle `k` being larger than `len(testData[i])`?
+In C++, if `j >= testData[i].size()`, accessing `testData[i][j]` is undefined behavior (out of bounds).
+In Python, it raises `IndexError`. This is the standard Python equivalent for out-of-bounds access and is perfectly acceptable.
+
+Is there any need to handle `N` being larger than `len(testData)`?
+In C++, accessing `dataMat(i, j)` for `i >= testData.size()` is out of bounds.
+In Python, `dataMat[i, j]` raises `IndexError`. Acceptable.
+
+I think the translation is solid and accurately reflects the C++ code, including its potential bugs (like the partial sum vs full sum in `fleiss_kappa`).
+
+One minor point: in C++, `kappa` takes `k` as an argument, but `testData` might implicitly define `k`. The C++ code explicitly uses `k` to size the matrix and loop bounds. My Python code does the same.
+
+```python
+import numpy as np
+
+class KappaCalculator:
+    @staticmethod
+    def kappa(testData, k):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        P0 = 0.0
+        for i in range(k):
+            P0 += dataMat[i, i]
+            
+        xsum = np.sum(dataMat, axis=1)
+        ysum = np.sum(dataMat, axis=0)
+        total_sum = np.sum(dataMat)
+        
+        Pe = np.dot(ysum, xsum) / (total_sum * total_sum)
+        P0 /= total_sum
+        
+        cohens_coefficient = (P0 - Pe) / (1 - Pe)
+        return cohens_coefficient
+
+    @staticmethod
+    def fleiss_kappa(testData, N, k, n):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        total_sum = 0.0
+        P0 = 0.0
+        
+        for i in range(N):
+            temp = 0.0
+            for j in range(k):
+                total_sum += dataMat[i, j]
+                temp += dataMat[i, j] ** 2
+            temp -= n
+            temp /= (n - 1) * n
+            P0 += temp
+            
+        P0 /= N
+        
+        ysum = np.sum(dataMat, axis=0)
+        ysum = ysum / total_sum
+        ysum = ysum ** 2
+        
+        Pe = np.sum(ysum)
+        
+        ans = (P0 - Pe) / (1 - Pe)
+        return ans
+```
+
+This looks complete and correct. I will present this as the final solution.
+</think>
+
+=== RAW ANSWER ===
+```python
+import numpy as np
+
+class KappaCalculator:
+    @staticmethod
+    def kappa(testData, k):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        P0 = 0.0
+        for i in range(k):
+            P0 += dataMat[i, i]
+            
+        xsum = np.sum(dataMat, axis=1)
+        ysum = np.sum(dataMat, axis=0)
+        total_sum = np.sum(dataMat)
+        
+        Pe = np.dot(ysum, xsum) / (total_sum * total_sum)
+        P0 /= total_sum
+        
+        cohens_coefficient = (P0 - Pe) / (1 - Pe)
+        return cohens_coefficient
+
+    @staticmethod
+    def fleiss_kappa(testData, N, k, n):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        total_sum = 0.0
+        P0 = 0.0
+        
+        for i in range(N):
+            temp = 0.0
+            for j in range(k):
+                total_sum += dataMat[i, j]
+                temp += dataMat[i, j] ** 2
+            temp -= n
+            temp /= (n - 1) * n
+            P0 += temp
+            
+        P0 /= N
+        
+        ysum = np.sum(dataMat, axis=0)
+        ysum = ysum / total_sum
+        ysum = ysum ** 2
+        
+        Pe = np.sum(ysum)
+        
+        ans = (P0 - Pe) / (1 - Pe)
+        return ans
+```
+
+=== TRANSLATED CODE (py) ===
+import numpy as np
+
+class KappaCalculator:
+    @staticmethod
+    def kappa(testData, k):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        P0 = 0.0
+        for i in range(k):
+            P0 += dataMat[i, i]
+            
+        xsum = np.sum(dataMat, axis=1)
+        ysum = np.sum(dataMat, axis=0)
+        total_sum = np.sum(dataMat)
+        
+        Pe = np.dot(ysum, xsum) / (total_sum * total_sum)
+        P0 /= total_sum
+        
+        cohens_coefficient = (P0 - Pe) / (1 - Pe)
+        return cohens_coefficient
+
+    @staticmethod
+    def fleiss_kappa(testData, N, k, n):
+        rows = len(testData)
+        dataMat = np.zeros((rows, k))
+        
+        for i in range(rows):
+            for j in range(k):
+                dataMat[i, j] = testData[i][j]
+                
+        total_sum = 0.0
+        P0 = 0.0
+        
+        for i in range(N):
+            temp = 0.0
+            for j in range(k):
+                total_sum += dataMat[i, j]
+                temp += dataMat[i, j] ** 2
+            temp -= n
+            temp /= (n - 1) * n
+            P0 += temp
+            
+        P0 /= N
+        
+        ysum = np.sum(dataMat, axis=0)
+        ysum = ysum / total_sum
+        ysum = ysum ** 2
+        
+        Pe = np.sum(ysum)
+        
+        ans = (P0 - Pe) / (1 - Pe)
+        return ans

@@ -1,0 +1,969 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
+
+public class AccessGatewayFilter {
+
+    public AccessGatewayFilter() {
+    }
+
+    public boolean filter(Map<String, Object> request) {
+        String requestUri = (String) request.get("path");
+        String method = (String) request.get("method");
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            Map<String, Object> token = getJwtUser(request);
+            Map<String, Object> user = (Map<String, Object>) token.get("user");
+            if ((int) user.get("level") > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        return false;
+    }
+
+    public boolean isStartWith(String requestUri) {
+        String[] startWith = {"/api", "/login"};
+        for (String s : startWith) {
+            if (requestUri.startsWith(s)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public Map<String, Object> getJwtUser(Map<String, Object> request) {
+        Map<String, Object> token = (Map<String, Object>) ((Map<String, Object>) request.get("headers")).get("Authorization");
+        Map<String, Object> user = (Map<String, Object>) token.get("user");
+        String jwt = (String) token.get("jwt");
+
+        if (jwt.startsWith((String) user.get("name"))) {
+            String jwtStrDate = jwt.substring(((String) user.get("name")).length());
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+            LocalDate jwtDate = LocalDate.parse(jwtStrDate, formatter);
+            if (LocalDate.now().minusDays(3).isAfter(jwtDate)) {
+                return null;
+            }
+        }
+        return token;
+    }
+
+    public void setCurrentUserInfoAndLog(Map<String, Object> user) {
+        String host = (String) user.get("address");
+        String message = user.get("name") + host + LocalDate.now();
+        System.out.println(message);
+    }
+}
+
+
+=== REASONING ===
+<think>
+Let me translate this Java code to C++ carefully.
+
+Key observations:
+1. The code uses `Map<String, Object>` which in C++ would be something like `std::map<std::string, std::any>` or a custom variant type. Since Java's `Object` can hold any type, I need to use `std::any` in C++.
+2. Uses `LocalDate` and `DateTimeFormatter` from java.time - need C++ equivalents.
+3. The code does a lot of casting from `Object` to specific types.
+
+Let me think about the best approach:
+
+- `Map<String, Object>` → `std::map<std::string, std::any>`
+- Casting: `(String) request.get("path")` → `std::any_cast<std::string>(&...)` 
+- `LocalDate` → I'll need to use C++ chrono or a simple date implementation
+- `DateTimeFormatter.ofPattern("yyyy-MM-dd")` → need date parsing
+
+Let me implement this step by step.
+
+For the date handling, I'll use `<chrono>` and `<iomanip>` for parsing dates. In C++20, we have `std::chrono::year_month_day`, but for broader compatibility, I might use a simpler approach. Let me use C++20 chrono since it's the most idiomatic approach for this.
+
+Actually, let me think about this more carefully. The Java code:
+- `LocalDate.now()` - gets current date
+- `LocalDate.now().minusDays(3).isAfter(jwtDate)` - checks if current date minus 3 days is after jwtDate
+- `LocalDate.parse(jwtStrDate, formatter)` - parses a date string in "yyyy-MM-dd" format
+
+For C++20, I can use `std::chrono::year_month_day` and related facilities. But parsing dates with C++20 chrono is a bit involved. Let me use a simpler approach with `std::tm` and `std::get_time`/`std::put_time`.
+
+Actually, let me use C++20 `<chrono>` since it's the most natural translation. But parsing is still tricky. Let me use a manual approach for parsing.
+
+Let me think about the structure:
+
+```cpp
+#include <map>
+#include <string>
+#include <any>
+#include <chrono>
+#include <iostream>
+#include <sstream>
+#include <iomanip>
+```
+
+For the date operations:
+- Parse "yyyy-MM-dd" string to a date
+- Get current date
+- Subtract 3 days
+- Compare dates
+
+Let me use `std::chrono::system_clock::time_point` or `std::tm` based approach.
+
+Actually, using `std::tm` and the C date functions might be simplest and most portable:
+
+```cpp
+// Parse date
+std::tm tm = {};
+std::istringstream ss(jwtStrDate);
+ss >> std::get_time(&tm, "%Y-%m-%d");
+auto jwtTime = std::mktime(&tm);
+
+// Current date
+auto now = std::time(nullptr);
+auto nowTm = *std::localtime(&now);
+
+// Subtract 3 days
+nowTm.tm_mday -= 3;
+auto threeDaysAgo = std::mktime(&nowTm); // normalizes
+
+// Compare
+if (threeDaysAgo > jwtTime) { ... }
+```
+
+Wait, but `std::localtime` returns a pointer to a static internal buffer, which is not thread-safe. But the Java code isn't specifically thread-safe either, so this should be fine for behavioral equivalence.
+
+Actually, let me reconsider. The Java code uses `LocalDate` which is date-only (no time component). Using `std::tm` with midnight times should be equivalent.
+
+Let me also handle the `std::any` casting carefully. In Java, `(int) user.get("level")` does unboxing. In C++, `std::any_cast<int>` would be the equivalent.
+
+But wait - in Java, `user.get("level")` returns an `Object`, and if it was stored as an `Integer`, `(int)` unboxes it. In C++, if we store it as `int` in `std::any`, we retrieve with `std::any_cast<int>`.
+
+Let me also handle the exception behavior. In Java, if `getJwtUser` returns `null`, then `token.get("user")` would throw `NullPointerException`, which is caught by the `catch (Exception e)` block, returning `false`. In C++, dereferencing a null would be undefined behavior, so I need to check for null explicitly or use exceptions.
+
+Actually, in C++ with `std::any`, if `getJwtUser` returns a `std::map` that's empty or doesn't have the key, `map.find()` would return `end()`. And `std::any_cast` on a wrong type would throw `std::bad_any_cast`. So I need to be careful.
+
+Let me think about this differently. The Java code relies on exceptions for control flow (NullPointerException when token is null, ClassCastException if types don't match). In C++, I should preserve this behavior.
+
+One approach: use `std::any` and let `std::bad_any_cast` exceptions propagate, and catch them in the `filter` method. But `std::map::at()` throws `std::out_of_range` for missing keys, while Java's `Map.get()` returns `null`.
+
+Hmm, this is getting complex. Let me think about what approach gives the most faithful translation.
+
+Actually, let me use `std::map::at()` which throws `std::out_of_range` for missing keys. In Java, `Map.get()` returns null for missing keys, and then subsequent operations on null throw NullPointerException. The behavior would differ slightly but the catch block in `filter` would catch both types of exceptions.
+
+Wait, but `getJwtUser` can return null (when the jwt date is too old). Then in `filter`, `token.get("user")` would throw NullPointerException. In C++, if I return an empty optional or a null pointer, I need to handle that.
+
+Let me use `std::map<std::string, std::any>` and use `.at()` for access (throws on missing key). For the `getJwtUser` returning null case, I'll return `std::nullopt` or throw an exception.
+
+Actually, let me just make it simpler. Let me return a `std::optional<std::map<std::string, std::any>>` from `getJwtUser`. Then in `filter`, if it's `std::nullopt`, the code would try to access it and throw, which gets caught.
+
+Hmm, but that's not quite right either. Let me look at the Java flow again:
+
+1. `filter` calls `getJwtUser(request)` which returns `Map<String, Object>` or `null`
+2. If `null`, then `token.get("user")` throws NullPointerException
+3. This is caught by `catch (Exception e)` and `filter` returns `false`
+
+In C++, I could:
+- Have `getJwtUser` return `std::optional<std::map<std::string, std::any>>`
+- In `filter`, if the optional is empty, throw an exception or return false
+
+Or more faithfully:
+- Have `getJwtUser` return `std::map<std::string, std::any>` and throw on error
+- Or return a pointer that could be null
+
+Let me go with `std::optional` and check for it. But to keep behavior identical, if the optional is empty, I should simulate the NullPointerException by throwing something that gets caught.
+
+Actually, the simplest faithful translation: let `getJwtUser` return a pointer (or optional), and in `filter`, if it's null/nullopt, we go to the catch block. But we'd need to explicitly throw.
+
+Let me just check for null/nullopt explicitly and handle it:
+
+```cpp
+try {
+    auto token = getJwtUser(request);
+    // If token is null/empty, accessing it would fail
+    auto& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+    if (std::any_cast<int>(user.at("level")) > 2) {
+        setCurrentUserInfoAndLog(user);
+        return true;
+    }
+} catch (const std::exception& e) {
+    return false;
+}
+return false;
+```
+
+And `getJwtUser` returns `std::map<std::string, std::any>`. If the jwt check fails, it could return an empty map (so that `.at("user")` throws `std::out_of_range`), or throw directly.
+
+Wait, in Java, `getJwtUser` returns `null` when the jwt date is too old. Then `token.get("user")` throws NullPointerException. In C++, if I return an empty map, `.at("user")` throws `std::out_of_range`. Both are caught by the catch block. So the behavior is the same from `filter`'s perspective.
+
+But wait, there's another case: what if `jwt.startsWith(user.get("name"))` is false? Then the method just returns `token` without the date check. Let me re-read the Java code...
+
+```java
+if (jwt.startsWith((String) user.get("name"))) {
+    // date check
+    if (LocalDate.now().minusDays(3).isAfter(jwtDate)) {
+        return null;
+    }
+}
+return token;
+```
+
+So if the jwt doesn't start with the user's name, it returns the token (no date check). If it does start with the name and the date is more than 3 days old, return null. Otherwise return token.
+
+OK let me just write the C++ code now.
+
+For the date handling, I'll use a helper approach with `std::tm`:
+
+```cpp
+#include <map>
+#include <string>
+#include <any>
+#include <ctime>
+#include <iostream>
+#include <sstream>
+#include <iomanip>
+
+class AccessGatewayFilter {
+public:
+    AccessGatewayFilter() {}
+
+    bool filter(std::map<std::string, std::any>& request) {
+        std::string requestUri = std::any_cast<std::string>(request.at("path"));
+        std::string method = std::any_cast<std::string>(request.at("method"));
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            auto token = getJwtUser(request);
+            auto& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+            if (std::any_cast<int>(user.at("level")) > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (const std::exception& e) {
+            return false;
+        }
+        return false;
+    }
+
+    bool isStartWith(const std::string& requestUri) {
+        std::string startWith[] = {"/api", "/login"};
+        for (const auto& s : startWith) {
+            if (requestUri.substr(0, s.length()) == s) {  // startsWith
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::map<std::string, std::any> getJwtUser(std::map<std::string, std::any>& request) {
+        auto& headers = std::any_cast<std::map<std::string, std::any>&>(request.at("headers"));
+        auto& token = std::any_cast<std::map<std::string, std::any>&>(headers.at("Authorization"));
+        auto& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+        std::string jwt = std::any_cast<std::string>(token.at("jwt"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        if (jwt.substr(0, name.length()) == name) {  // startsWith
+            std::string jwtStrDate = jwt.substr(name.length());
+            // Parse date
+            std::tm tm = {};
+            std::istringstream ss(jwtStrDate);
+            ss >> std::get_time(&tm, "%Y-%m-%d");
+            std::time_t jwtTime = std::mktime(&tm);
+            
+            // Current date minus 3 days
+            auto now = std::time(nullptr);
+            auto nowTm = *std::localtime(&now);
+            nowTm.tm_mday -= 3;
+            std::time_t threeDaysAgo = std::mktime(&nowTm);
+            
+            if (threeDaysAgo > jwtTime) {
+                return {};  // empty map = "null" equivalent
+            }
+        }
+        return token;
+    }
+
+    void setCurrentUserInfoAndLog(std::map<std::string, std::any>& user) {
+        std::string host = std::any_cast<std::string>(user.at("address"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+        
+        // Get current date as string
+        auto now = std::time(nullptr);
+        auto nowTm = *std::localtime(&now);
+        std::ostringstream dateStream;
+        dateStream << std::put_time(&nowTm, "%Y-%m-%d");
+        
+        std::string message = name + host + dateStream.str();
+        std::cout << message << std::endl;
+    }
+};
+```
+
+Wait, there's an issue with `getJwtUser` returning `token` by value. But `token` is a reference to a map inside `request`. If I return by value, it makes a copy, which is fine. But then in `filter`, when I access `token.at("user")`, I'm working with a copy. That should be fine for this code.
+
+But wait - if `getJwtUser` returns an empty map (the "null" case), then `token.at("user")` will throw `std::out_of_range`, which is a `std::exception`, so it'll be caught. Good.
+
+However, there's a subtle issue: in the Java code, `getJwtUser` returns `null`, and then `token.get("user")` throws `NullPointerException`. In C++, I'm returning an empty map, and `.at("user")` throws `std::out_of_range`. Both result in the catch block being triggered, so the behavior is the same.
+
+But what about the `startsWith` check? If `name.length()` is greater than `jwt.length()`, `jwt.substr(0, name.length())` would just return `jwt` (substr doesn't throw if the count exceeds the string length in C++). In Java, `startsWith` would return false in this case. So I need to check:
+
+- If `name.length() > jwt.length()`, `jwt.substr(0, name.length())` returns `jwt`, and comparing with `name` would be false. So the behavior matches Java's `startsWith`. ✓
+
+Actually wait, let me double check. In Java:
+- `"ab".startsWith("abc")` → false
+- In C++: `"ab".substr(0, 3)` → `"ab"`, and `"ab" == "abc"` → false. ✓
+
+OK that works.
+
+Now, there's another issue with `getJwtUser`. It returns `token` which is a reference to a local... no wait, it's a reference to something inside `request`. But I'm returning by value, so it copies. That's fine.
+
+Actually wait, I declared `token` as `auto&` (a reference), and then `return token;` makes a copy. That's correct.
+
+But there's a problem: if `getJwtUser` returns `token` (the copy of the inner map), and then in `filter` we do `token.at("user")`, we get a `std::any`. Then we cast it to `std::map<std::string, std::any>&`. But `token` is a local variable (the returned copy), and we're getting a reference to something inside it. This should be fine as long as `token` is still in scope, which it is in the `filter` function.
+
+Let me also reconsider the `method` variable in `filter`. It's obtained but never used. That's the same in the Java code, so I'll keep it.
+
+Let me also think about the `setCurrentUserInfoAndLog` function. In Java:
+```java
+String message = user.get("name") + host + LocalDate.now();
+```
+`user.get("name")` returns an `Object`, and string concatenation with `+` calls `toString()` on it. `LocalDate.now().toString()` returns the date in ISO format "yyyy-MM-dd".
+
+In my C++ code, I'm casting `name` to `std::string` explicitly, which should be equivalent.
+
+Wait, but in Java, `user.get("name")` returns `Object`, and when you do `Object + String`, Java calls `toString()` on the Object. Since it's actually a `String`, `toString()` returns the string itself. So the behavior is the same.
+
+Let me also handle the `host` variable. In Java, `user.get("address")` returns `Object`, and it's cast to `String`. In C++, I'm using `std::any_cast<std::string>`. Same behavior.
+
+One more thing: the Java `LocalDate.now()` in `setCurrentUserInfoAndLog` outputs the date in the default format which is "yyyy-MM-dd". My C++ code uses `std::put_time(&nowTm, "%Y-%m-%d")` which produces the same format. ✓
+
+Let me also think about edge cases:
+- What if `requestUri` is empty? `startsWith` with an empty string... In Java, `"".startsWith("/api")` returns false. In C++, `"".substr(0, 4)` returns `""`, and `"" == "/api"` is false. ✓
+- What if `name` is empty? `jwt.startsWith("")` is always true in Java. In C++, `jwt.substr(0, 0)` is `""`, and `"" == ""` is true. ✓
+
+I think the code is correct. Let me also add the `const` correctness where possible, but since `std::any_cast` with references might need non-const, let me be careful.
+
+Actually, `std::any_cast<T&>` requires the `std::any` to contain a non-const T. If I make the map `const`, I'd need `std::any_cast<const T&>`. But since the Java code doesn't use const, I'll keep it non-const for simplicity.
+
+Wait, there's actually a subtle issue. In `getJwtUser`, I return `std::map<std::string, std::any>` by value. When I do `return token;`, it copies the map. But when I do `return {};` (empty map), the caller will try to access `.at("user")` which throws. That's the intended behavior.
+
+But there's another issue: in `getJwtUser`, I'm taking `request` by reference. The Java code also passes by reference (all non-primitive types are passed by reference in Java). So this is fine.
+
+Let me also consider: should `filter` take `request` by reference? In Java, `Map<String, Object>` is passed by reference. In C++, I'll use `std::map<std::string, std::any>&` to match.
+
+Actually, looking more carefully at the Java code, `getJwtUser` receives `request` and doesn't modify it. But in C++, since I'm using `std::any_cast` with non-const references, I need the map to be non-const. Let me just keep it as non-const reference.
+
+Hmm, actually there's a problem. `std::any_cast<std::map<std::string, std::any>&>(token.at("user"))` - here `token` is a local copy (returned by value from `getJwtUser`). So `token.at("user")` returns a reference to the `std::any` inside the local `token`. Then `std::any_cast<...&>` extracts a reference to the map inside the `std::any`. This is fine as long as `token` is alive, which it is in the scope of the try block.
+
+But then I pass `user` to `setCurrentUserInfoAndLog`, which takes it by reference. The `user` reference is still valid because `token` is still alive. ✓
+
+OK wait, I realize there might be an issue with the return of `token` from `getJwtUser`. When `getJwtUser` returns `token` (the reference to the map inside request), it creates a copy. But when it returns `{}` (empty map), it's a new empty map. Both are fine.
+
+Let me finalize the code. One thing I want to double-check: in `setCurrentUserInfoAndLog`, the Java code does:
+```java
+String message = user.get("name") + host + LocalDate.now();
+```
+
+`LocalDate.now()` returns a `LocalDate`, and when concatenated with a `String`, its `toString()` is called, which returns "2024-01-15" format. In my C++ code, I'm using `std::put_time` with "%Y-%m-%d" which gives the same format. ✓
+
+Actually, I realize I should also handle the case where `jwtStrDate` parsing fails. In Java, if the date string is malformed, `LocalDate.parse` throws `DateTimeParseException`, which extends `Exception`, so it would be caught by the catch block in `filter`. In C++, if `ss >> std::get_time` fails, `tm` would be uninitialized/garbage, and `mktime` might return -1. This could lead to different behavior. But since we're told to keep behavior identical, I should make sure that parsing failure also throws.
+
+Hmm, but actually, the Java code would throw `DateTimeParseException` which is caught. In C++, if parsing fails, `mktime` might return -1, and the comparison `threeDaysAgo > jwtTime` would still work (just with wrong values). This is a subtle behavioral difference.
+
+To be safe, I could add a check after parsing:
+
+```cpp
+if (ss.fail()) {
+    throw std::runtime_error("Date parse failed");
+}
+```
+
+This would make the behavior more similar to Java's.
+
+Let me also consider: in Java, `LocalDate.now().minusDays(3).isAfter(jwtDate)` compares dates at midnight. In my C++ code, `mktime` normalizes the time to seconds since epoch, so comparing `time_t` values should be equivalent as long as both are at midnight.
+
+Wait, there's a subtlety. `std::mktime` interprets the `tm` struct as local time. `std::time(nullptr)` also returns local time (well, it returns seconds since epoch, but `localtime` converts to local time). So both should be in the same timezone. ✓
+
+But `std::mktime` with a `tm` that has `tm_hour = 0` (which is what `get_time` sets it to after parsing a date-only string) would give midnight. And `std::localtime(&now)` gives the current local time, which might not be at midnight. So `nowTm.tm_mday -= 3; std::mktime(&nowTm)` would give the time 3 days ago at the current time of day, not at midnight.
+
+This is a difference from Java's `LocalDate` which is date-only (no time component). In Java, `LocalDate.now().minusDays(3).isAfter(jwtDate)` compares dates only, ignoring time.
+
+To fix this, I should set the current time to midnight as well:
+
+```cpp
+auto now = std::time(nullptr);
+auto nowTm = *std::localtime(&now);
+nowTm.tm_hour = 0;
+nowTm.tm_min = 0;
+nowTm.tm_sec = 0;
+nowTm.tm_mday -= 3;
+std::time_t threeDaysAgo = std::mktime(&nowTm);
+```
+
+This way, both `threeDaysAgo` and `jwtTime` are at midnight, and the comparison is date-only. ✓
+
+Let me also make sure the parsed date is at midnight:
+```cpp
+std::tm tm = {};
+// After get_time, tm_year, tm_mon, tm_mday are set, tm_hour = 0, tm_min = 0, tm_sec = 0
+```
+
+Actually, `std::tm tm = {}` zero-initializes all fields, and `std::get_time` only sets the date fields. So `tm_hour`, `tm_min`, `tm_sec` are all 0. ✓
+
+OK, let me write the final version:
+
+```cpp
+#include <map>
+#include <string>
+#include <any>
+#include <ctime>
+#include <iostream>
+#include <sstream>
+#include <iomanip>
+
+class AccessGatewayFilter {
+public:
+    AccessGatewayFilter() {}
+
+    bool filter(std::map<std::string, std::any>& request) {
+        std::string requestUri = std::any_cast<std::string>(request.at("path"));
+        std::string method = std::any_cast<std::string>(request.at("method"));
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            std::map<std::string, std::any> token = getJwtUser(request);
+            std::map<std::string, std::any>& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+            if (std::any_cast<int>(user.at("level")) > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (const std::exception& e) {
+            return false;
+        }
+        return false;
+    }
+
+    bool isStartWith(const std::string& requestUri) {
+        std::string startWith[] = {"/api", "/login"};
+        for (const auto& s : startWith) {
+            if (requestUri.size() >= s.size() && requestUri.substr(0, s.size()) == s) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::map<std::string, std::any> getJwtUser(std::map<std::string, std::any>& request) {
+        std::map<std::string, std::any>& headers = std::any_cast<std::map<std::string, std::any>&>(request.at("headers"));
+        std::map<std::string, std::any>& token = std::any_cast<std::map<std::string, std::any>&>(headers.at("Authorization"));
+        std::map<std::string, std::any>& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+        std::string jwt = std::any_cast<std::string>(token.at("jwt"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        if (jwt.size() >= name.size() && jwt.substr(0, name.size()) == name) {
+            std::string jwtStrDate = jwt.substr(name.size());
+            std::tm tm = {};
+            std::istringstream ss(jwtStrDate);
+            ss >> std::get_time(&tm, "%Y-%m-%d");
+            if (ss.fail()) {
+                throw std::runtime_error("Failed to parse date");
+            }
+            tm.tm_hour = 0;
+            tm.tm_min = 0;
+            tm.tm_sec = 0;
+            std::time_t jwtTime = std::mktime(&tm);
+
+            auto now = std::time(nullptr);
+            auto nowTm = *std::localtime(&now);
+            nowTm.tm_hour = 0;
+            nowTm.tm_min = 0;
+            nowTm.tm_sec = 0;
+            nowTm.tm_mday -= 3;
+            std::time_t threeDaysAgo = std::mktime(&nowTm);
+
+            if (threeDaysAgo > jwtTime) {
+                return {};
+            }
+        }
+        return token;
+    }
+
+    void setCurrentUserInfoAndLog(std::map<std::string, std::any>& user) {
+        std::string host = std::any_cast<std::string>(user.at("address"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        auto now = std::time(nullptr);
+        auto nowTm = *std::localtime(&now);
+        std::ostringstream dateStream;
+        dateStream << std::put_time(&nowTm, "%Y-%m-%d");
+
+        std::string message = name + host + dateStream.str();
+        std::cout << message << std::endl;
+    }
+};
+```
+
+Wait, I need to double-check the `startsWith` implementation. In Java:
+- `"hello".startsWith("hel")` → true
+- `"he".startsWith("hello")` → false
+- `"/api/test".startsWith("/api")` → true
+
+My C++ implementation:
+- `requestUri.size() >= s.size() && requestUri.substr(0, s.size()) == s`
+
+This is correct. But actually, `std::string::substr(0, s.size())` when `s.size() > requestUri.size()` would just return the whole string, and the comparison would be false. So the `requestUri.size() >= s.size()` check is technically redundant but makes the intent clearer and avoids creating a temporary substring. Let me keep it for clarity.
+
+Actually wait, I just realized I should use `compare` instead for efficiency, but `substr` is fine for correctness.
+
+Hmm, one more thing. In C++17, there's `starts_with` method on `std::string`. But that's C++20. Actually, `starts_with` was added in C++20. Since I don't know the target C++ version, let me stick with the manual check.
+
+Let me also reconsider whether to use `const` references where possible. The Java code doesn't have const, so I'll keep it non-const to match.
+
+Actually, I realize there might be an issue with `getJwtUser` returning `token`. In Java, `token` is a reference to the map inside `headers` inside `request`. When returned, Java returns the reference. In C++, I'm returning by value, which makes a copy. This is fine for the current usage since `filter` doesn't modify `token`, but it's a copy, not a reference.
+
+Wait, but in `filter`, after getting `token`, we access `token.at("user")` and then `user.at("level")`. These are read operations. And `setCurrentUserInfoAndLog` also only reads from `user`. So returning by value (copy) is fine.
+
+But there's a subtle issue: in `getJwtUser`, when we return `token` (which is a reference to the map inside `headers`), we're returning a copy. But what if the caller modifies the returned map? In Java, modifications would affect the original. In C++, they wouldn't. But since the Java code doesn't modify it, this difference doesn't matter.
+
+OK, I think the code is correct. Let me also add a namespace to match the Java package, but actually, the instructions say "Use idiomatic C++ only when it doesn't change behavior", so I'll skip the namespace since it doesn't affect behavior.
+
+Actually, let me reconsider one more time. The `method` variable in `filter` is unused in both Java and C++. I'll keep it to match the Java code exactly.
+
+Let me also think about `std::endl` vs `"\n"`. In Java, `System.out.println` prints the message followed by a newline and flushes. `std::endl` also flushes, so it's the closest match. ✓
+
+One more consideration: in Java, `LocalDate.now()` in `setCurrentUserInfoAndLog` is called and converted to string via `toString()`. The default format is "yyyy-MM-dd". My C++ code uses `std::put_time` with "%Y-%m-%d" which produces the same format. ✓
+
+I think the code is ready. Let me write the final version.
+
+Actually, I want to reconsider one thing. The `getJwtUser` function returns `token` which is a reference to a map. But I declared the return type as `std::map<std::string, std::any>` (by value). This means a copy is made. In the "null" case, I return `{}` (empty map). 
+
+In Java, returning `null` means `token.get("user")` throws `NullPointerException`. In C++, returning `{}` means `token.at("user")` throws `std::out_of_range`. Both are caught by the respective catch blocks. ✓
+
+But wait, what if someone stores a "user" key in the empty map? That can't happen with `{}`. ✓
+
+OK, I'm satisfied with the code. Let me finalize.
+
+Hmm, actually one more thing. I should double check: in the Java `filter` method, the `catch (Exception e)` catches ALL exceptions (including RuntimeException like NullPointerException, ClassCastException, etc.). In C++, `catch (const std::exception& e)` catches all exceptions derived from `std::exception`, which includes `std::bad_any_cast`, `std::out_of_range`, `std::runtime_error`, etc. But it wouldn't catch non-std::exception types like `int` or `const char*`. Since my code only throws std::exception-derived types, this should be fine. ✓
+
+Wait, but what about `std::any_cast`? If the type doesn't match, it throws `std::bad_any_cast`, which derives from `std::exception`. ✓
+
+And `std::map::at()` throws `std::out_of_range`, which derives from `std::exception`. ✓
+
+OK, I'm confident the code is correct now.
+
+One last thing: I should make sure the `startsWith` check in `isStartWith` matches Java's behavior exactly. Java's `String.startsWith(String prefix)`:
+- Returns true if the string starts with the prefix
+- Returns false if the prefix is longer than the string
+- Returns true if the prefix is empty (but our prefixes aren't empty)
+
+My C++ implementation handles all these cases correctly. ✓
+
+Actually, I want to also handle the case in `getJwtUser` where `jwt.substr(0, name.size())` is called. If `name` is empty, `jwt.substr(0, 0)` returns `""`, and `"" == ""` is true. This matches Java's `jwt.startsWith("")` returning true. ✓
+
+If `name.size() > jwt.size()`, then `jwt.substr(0, name.size())` returns `jwt` (the whole string), and `jwt == name` would be false (since name is longer). This matches Java's behavior where `startsWith` returns false when the prefix is longer. ✓
+
+But wait, I added the check `jwt.size() >= name.size()` before calling `substr`. Without this check, `jwt.substr(0, name.size())` when `name.size() > jwt.size()` returns `jwt` (the whole string), which is correct. So the check is redundant but makes the code clearer. I'll keep it.
+
+Actually, let me remove the size check in `startsWith` to simplify. The `substr` behavior handles it correctly:
+
+```cpp
+if (requestUri.substr(0, s.size()) == s) {
+```
+
+Wait, but this creates a substring even when the prefix is longer. It's a minor inefficiency but correct. Let me keep the size check for efficiency:
+
+```cpp
+if (requestUri.size() >= s.size() && requestUri.compare(0, s.size(), s) == 0) {
+```
+
+Actually, `compare` is the most idiomatic way. But `substr` is simpler and more readable. Let me just use `substr` without the size check since it's correct either way:
+
+```cpp
+if (requestUri.substr(0, s.size()) == s) {
+```
+
+Hmm, but `substr(0, s.size())` when `s.size() > requestUri.size()` returns a string of length `requestUri.size()`, which would not equal `s` (which is longer). So it's correct. ✓
+
+OK final version:
+
+```cpp
+#include <map>
+#include <string>
+#include <any>
+#include <ctime>
+#include <iostream>
+#include <sstream>
+#include <iomanip>
+
+class AccessGatewayFilter {
+public:
+    AccessGatewayFilter() {}
+
+    bool filter(std::map<std::string, std::any>& request) {
+        std::string requestUri = std::any_cast<std::string>(request.at("path"));
+        std::string method = std::any_cast<std::string>(request.at("method"));
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            std::map<std::string, std::any> token = getJwtUser(request);
+            std::map<std::string, std::any>& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+            if (std::any_cast<int>(user.at("level")) > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (const std::exception& e) {
+            return false;
+        }
+        return false;
+    }
+
+    bool isStartWith(const std::string& requestUri) {
+        std::string startWith[] = {"/api", "/login"};
+        for (const auto& s : startWith) {
+            if (requestUri.substr(0, s.size()) == s) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::map<std::string, std::any> getJwtUser(std::map<std::string, std::any>& request) {
+        std::map<std::string, std::any>& headers = std::any_cast<std::map<std::string, std::any>&>(request.at("headers"));
+        std::map<std::string, std::any>& token = std::any_cast<std::map<std::string, std::any>&>(headers.at("Authorization"));
+        std::map<std::string, std::any>& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+        std::string jwt = std::any_cast<std::string>(token.at("jwt"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        if (jwt.substr(0, name.size()) == name) {
+            std::string jwtStrDate = jwt.substr(name.size());
+            std::tm tm = {};
+            std::istringstream ss(jwtStrDate);
+            ss >> std::get_time(&tm, "%Y-%m-%d");
+            if (ss.fail()) {
+                throw std::runtime_error("Failed to parse date");
+            }
+            tm.tm_hour = 0;
+            tm.tm_min = 0;
+            tm.tm_sec = 0;
+            std::time_t jwtTime = std::mktime(&tm);
+
+            auto now = std::time(nullptr);
+            std::tm nowTm = *std::localtime(&now);
+            nowTm.tm_hour = 0;
+            nowTm.tm_min = 0;
+            nowTm.tm_sec = 0;
+            nowTm.tm_mday -= 3;
+            std::time_t threeDaysAgo = std::mktime(&nowTm);
+
+            if (threeDaysAgo > jwtTime) {
+                return {};
+            }
+        }
+        return token;
+    }
+
+    void setCurrentUserInfoAndLog(std::map<std::string, std::any>& user) {
+        std::string host = std::any_cast<std::string>(user.at("address"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        auto now = std::time(nullptr);
+        std::tm nowTm = *std::localtime(&now);
+        std::ostringstream dateStream;
+        dateStream << std::put_time(&nowTm, "%Y-%m-%d");
+
+        std::string message = name + host + dateStream.str();
+        std::cout << message << std::endl;
+    }
+};
+```
+
+Wait, I just realized there might be an issue with `startsWith` when `name` is empty. In Java, `"".startsWith("")` returns true, and `"hello".startsWith("")` also returns true. In C++, `jwt.substr(0, 0)` returns `""`, and `"" == ""` is true. So `"hello".startsWith("")` would be true in both. ✓
+
+But what about `jwt.substr(0, name.size())` when `name` is empty and `jwt` is non-empty? `jwt.substr(0, 0)` returns `""`, and `"" == ""` is true. So the condition is true, and we enter the if block. This matches Java's behavior. ✓
+
+OK, I'm confident this is correct. But let me reconsider one more edge case: what if `name.size()` is 0 and `jwt` is "2024-01-15"? Then `jwt.substr(0, 0)` is `""`, which equals `name` (also `""`), so we enter the if block. `jwtStrDate` would be `jwt.substr(0)` which is "2024-01-15". Then we parse it as a date. This matches Java's behavior where `jwt.startsWith("")` is true. ✓
+
+Alright, I'm done. Let me write the final clean version.
+
+Hmm, actually I want to reconsider whether `startsWith` with `substr` is the best approach. In C++20, there's `starts_with()`. But since I don't know the target version, I'll stick with `substr`. It's correct and works in all C++ versions that support `std::string`.
+
+Actually, I realize I should use `compare` for the startsWith check to avoid creating temporary strings:
+
+```cpp
+requestUri.compare(0, s.size(), s) == 0
+```
+
+But this has a subtle issue: if `s.size() > requestUri.size()`, `compare` will only compare up to `requestUri.size()` characters... wait, no. Let me check.
+
+According to cppreference, `basic_string::compare(pos1, count1, str)` compares `*this` substring `[pos1, pos1 + count1)` with `str`. If `count1` is greater than `size() - pos1`, then `count1` is adjusted to `size() - pos1`. So if `s.size() > requestUri.size()`, then `compare(0, s.size(), s)` would compare `requestUri` (the whole string) with `s`, and since they have different lengths, it would return non-zero. ✓
+
+So `compare` works correctly. But for readability, `substr` is clearer. Let me use `compare` for efficiency since it avoids creating a temporary.
+
+Actually, you know what, let me just use `substr` for readability. The performance difference is negligible for this use case.
+
+Let me finalize the code now. I think it's correct and complete.
+
+Wait, one more thing. In the `isStartWith` method, the Java code uses `requestUri.startsWith(s)`. If `requestUri` is null, this would throw NullPointerException. In C++, if `requestUri` is passed as a const reference to a string, it can't be null (unless someone passes a dereferenced null pointer, which is UB). So the behavior is slightly different, but in practice, both would result in an exception/crash.
+
+OK, I'm overthinking this. Let me finalize.
+
+Actually, I want to reconsider the return type of `getJwtUser`. In Java, it returns `Map<String, Object>` which can be `null`. In C++, I'm returning `std::map<std::string, std::any>` which can be empty (to simulate null). This works because in `filter`, accessing `.at("user")` on an empty map throws, which is caught.
+
+But there's a subtle difference: in Java, `token.get("user")` on a `null` reference throws `NullPointerException`. In C++, `token.at("user")` on an empty map throws `std::out_of_range`. Both are exceptions, both are caught. The behavior from `filter`'s perspective is identical (returns `false`). ✓
+
+OK, truly final version now.
+
+Actually, I just thought of something. In `getJwtUser`, when I return `token`, I'm returning a copy of the map that's inside `headers` which is inside `request`. But what if the caller modifies the returned map? In Java, modifications would affect the original map. In C++, they wouldn't. But since the Java code doesn't modify the returned map (it only reads from it), this difference doesn't matter.
+
+However, there's another consideration: `setCurrentUserInfoAndLog(user)` takes `user` by reference. In my C++ code, `user` is a reference to the map inside `token` (which is a local copy in `filter`). So `setCurrentUserInfoAndLog` reads from a valid reference. ✓
+
+But wait, what if `setCurrentUserInfoAndLog` modified `user`? In Java, it would modify the original map inside `request`. In C++, it would modify the copy inside `token`. But `setCurrentUserInfoAndLog` only reads from `user`, so this doesn't matter. ✓
+
+OK, I'm truly done now. Here's the final code.
+
+Hmm, one more thought: should I use `std::unordered_map` instead of `std::map`? Java's `Map` is an interface, and the most common implementation is `HashMap`, which is unordered. But `std::map` is ordered (tree-based). For behavioral equivalence, the choice doesn't matter since the code doesn't depend on iteration order. I'll use `std::map` for simplicity.
+
+Actually, `std::unordered_map` might be more appropriate since Java's `HashMap` is hash-based. But since the behavior is identical (same key lookups, same values), it doesn't matter. I'll use `std::map` since it's simpler (no need for hash function for `std::string`... wait, `std::unordered_map<std::string, ...>` works fine since `std::string` has a default hash). Let me just use `std::map` for consistency.
+
+OK, truly truly final version:
+
+Actually, I want to also think about whether `std::any` is the right choice. Alternatives:
+1. `std::any` - type-erased container, requires `std::any_cast` for access
+2. `boost::variant` or `std::variant` - requires listing all possible types
+3. A custom tagged union
+
+`std::any` is the closest match to Java's `Object` since it can hold any copyable type. `std::variant` would require knowing all possible types upfront, which might not be practical. So `std::any` is the right choice. ✓
+
+One concern: `std::any_cast<int>` requires the stored type to be exactly `int`. If the value was stored as `long` or `short`, the cast would fail. In Java, `(int) user.get("level")` unboxes `Integer` to `int`. So in C++, we need to make sure `level` is stored as `int`. Since we're translating the whole system, this should be consistent. ✓
+
+OK, here's the final code. For real this time.
+
+Let me also add the `#include` for `<stdexcept>` since I'm using `std::runtime_error`. Actually, `<stdexcept>` might be included transitively through other headers, but it's better to be explicit.
+
+And `<functional>` for... no, I don't need it.
+
+Final includes:
+- `<map>` for `std::map`
+- `<string>` for `std::string`
+- `<any>` for `std::any`
+- `<ctime>` for `std::time`, `std::localtime`, `std::mktime`, `std::tm`
+- `<iostream>` for `std::cout`, `std::endl`
+- `<sstream>` for `std::istringstream`, `std::ostringstream`
+- `<iomanip>` for `std::get_time`, `std::put_time`
+- `<stdexcept>` for `std::runtime_error`
+
+OK, here's the truly final version.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <map>
+#include <string>
+#include <any>
+#include <ctime>
+#include <iostream>
+#include <sstream>
+#include <iomanip>
+#include <stdexcept>
+
+class AccessGatewayFilter {
+public:
+    AccessGatewayFilter() {}
+
+    bool filter(std::map<std::string, std::any>& request) {
+        std::string requestUri = std::any_cast<std::string>(request.at("path"));
+        std::string method = std::any_cast<std::string>(request.at("method"));
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            std::map<std::string, std::any> token = getJwtUser(request);
+            std::map<std::string, std::any>& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+            if (std::any_cast<int>(user.at("level")) > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (const std::exception& e) {
+            return false;
+        }
+        return false;
+    }
+
+    bool isStartWith(const std::string& requestUri) {
+        std::string startWith[] = {"/api", "/login"};
+        for (const auto& s : startWith) {
+            if (requestUri.substr(0, s.size()) == s) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::map<std::string, std::any> getJwtUser(std::map<std::string, std::any>& request) {
+        std::map<std::string, std::any>& headers = std::any_cast<std::map<std::string, std::any>&>(request.at("headers"));
+        std::map<std::string, std::any>& token = std::any_cast<std::map<std::string, std::any>&>(headers.at("Authorization"));
+        std::map<std::string, std::any>& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+        std::string jwt = std::any_cast<std::string>(token.at("jwt"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        if (jwt.substr(0, name.size()) == name) {
+            std::string jwtStrDate = jwt.substr(name.size());
+            std::tm tm = {};
+            std::istringstream ss(jwtStrDate);
+            ss >> std::get_time(&tm, "%Y-%m-%d");
+            if (ss.fail()) {
+                throw std::runtime_error("Failed to parse date");
+            }
+            tm.tm_hour = 0;
+            tm.tm_min = 0;
+            tm.tm_sec = 0;
+            std::time_t jwtTime = std::mktime(&tm);
+
+            auto now = std::time(nullptr);
+            std::tm nowTm = *std::localtime(&now);
+            nowTm.tm_hour = 0;
+            nowTm.tm_min = 0;
+            nowTm.tm_sec = 0;
+            nowTm.tm_mday -= 3;
+            std::time_t threeDaysAgo = std::mktime(&nowTm);
+
+            if (threeDaysAgo > jwtTime) {
+                return {};
+            }
+        }
+        return token;
+    }
+
+    void setCurrentUserInfoAndLog(std::map<std::string, std::any>& user) {
+        std::string host = std::any_cast<std::string>(user.at("address"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        auto now = std::time(nullptr);
+        std::tm nowTm = *std::localtime(&now);
+        std::ostringstream dateStream;
+        dateStream << std::put_time(&nowTm, "%Y-%m-%d");
+
+        std::string message = name + host + dateStream.str();
+        std::cout << message << std::endl;
+    }
+};
+```
+
+Key translation decisions:
+
+- **`Map<String, Object>` → `std::map<std::string, std::any>`**: `std::any` is the closest C++ equivalent to Java's `Object` — a type-erased container that can hold any copyable type.
+- **Casting**: `(String) x` → `std::any_cast<std::string>(x)`, `(Map<...>) x` → `std::any_cast<std::map<...>&>(x)`. Failed casts throw `std::bad_any_cast` (analogous to `ClassCastException`).
+- **`null` return from `getJwtUser`**: Returns an empty map `{}` instead. When `filter` then calls `.at("user")` on it, `std::out_of_range` is thrown — caught by the `catch` block, matching Java's `NullPointerException` behavior.
+- **`startsWith`**: Implemented via `substr(0, prefix.size()) == prefix`, which correctly handles the case where the prefix is longer than the string.
+- **`LocalDate` operations**: Uses `std::tm`/`std::mktime`/`std::localtime`. Both the JWT date and "3 days ago" are normalized to midnight to match Java's date-only `LocalDate` comparison semantics.
+- **Date parsing failure**: Throws `std::runtime_error` (caught by the `catch` block), matching Java's `DateTimeParseException` behavior.
+- **`System.out.println` → `std::cout << ... << std::endl`**: `std::endl` flushes the buffer, matching Java's println behavior.
+
+=== TRANSLATED CODE (cpp) ===
+#include <map>
+#include <string>
+#include <any>
+#include <ctime>
+#include <iostream>
+#include <sstream>
+#include <iomanip>
+#include <stdexcept>
+
+class AccessGatewayFilter {
+public:
+    AccessGatewayFilter() {}
+
+    bool filter(std::map<std::string, std::any>& request) {
+        std::string requestUri = std::any_cast<std::string>(request.at("path"));
+        std::string method = std::any_cast<std::string>(request.at("method"));
+
+        if (isStartWith(requestUri)) {
+            return true;
+        }
+
+        try {
+            std::map<std::string, std::any> token = getJwtUser(request);
+            std::map<std::string, std::any>& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+            if (std::any_cast<int>(user.at("level")) > 2) {
+                setCurrentUserInfoAndLog(user);
+                return true;
+            }
+        } catch (const std::exception& e) {
+            return false;
+        }
+        return false;
+    }
+
+    bool isStartWith(const std::string& requestUri) {
+        std::string startWith[] = {"/api", "/login"};
+        for (const auto& s : startWith) {
+            if (requestUri.substr(0, s.size()) == s) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::map<std::string, std::any> getJwtUser(std::map<std::string, std::any>& request) {
+        std::map<std::string, std::any>& headers = std::any_cast<std::map<std::string, std::any>&>(request.at("headers"));
+        std::map<std::string, std::any>& token = std::any_cast<std::map<std::string, std::any>&>(headers.at("Authorization"));
+        std::map<std::string, std::any>& user = std::any_cast<std::map<std::string, std::any>&>(token.at("user"));
+        std::string jwt = std::any_cast<std::string>(token.at("jwt"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        if (jwt.substr(0, name.size()) == name) {
+            std::string jwtStrDate = jwt.substr(name.size());
+            std::tm tm = {};
+            std::istringstream ss(jwtStrDate);
+            ss >> std::get_time(&tm, "%Y-%m-%d");
+            if (ss.fail()) {
+                throw std::runtime_error("Failed to parse date");
+            }
+            tm.tm_hour = 0;
+            tm.tm_min = 0;
+            tm.tm_sec = 0;
+            std::time_t jwtTime = std::mktime(&tm);
+
+            auto now = std::time(nullptr);
+            std::tm nowTm = *std::localtime(&now);
+            nowTm.tm_hour = 0;
+            nowTm.tm_min = 0;
+            nowTm.tm_sec = 0;
+            nowTm.tm_mday -= 3;
+            std::time_t threeDaysAgo = std::mktime(&nowTm);
+
+            if (threeDaysAgo > jwtTime) {
+                return {};
+            }
+        }
+        return token;
+    }
+
+    void setCurrentUserInfoAndLog(std::map<std::string, std::any>& user) {
+        std::string host = std::any_cast<std::string>(user.at("address"));
+        std::string name = std::any_cast<std::string>(user.at("name"));
+
+        auto now = std::time(nullptr);
+        std::tm nowTm = *std::localtime(&now);
+        std::ostringstream dateStream;
+        dateStream << std::put_time(&nowTm, "%Y-%m-%d");
+
+        std::string message = name + host + dateStream.str();
+        std::cout << message << std::endl;
+    }
+};

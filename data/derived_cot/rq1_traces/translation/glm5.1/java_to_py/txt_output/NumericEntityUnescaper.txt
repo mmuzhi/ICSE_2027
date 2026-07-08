@@ -1,0 +1,491 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+public class NumericEntityUnescaper {
+
+    public String replace(String string) {
+        StringBuilder out = new StringBuilder();
+        int pos = 0;
+        int length = string.length();
+
+        while (pos < length - 2) {
+            if (string.charAt(pos) == '&' && string.charAt(pos + 1) == '#') {
+                int start = pos + 2;
+                boolean isHex = false;
+                char firstChar = string.charAt(start);
+
+                if (firstChar == 'x' || firstChar == 'X') {
+                    start++;
+                    isHex = true;
+                }
+
+                if (start == length) {
+                    return out.toString();
+                }
+
+                int end = start;
+                while (end < length && isHexChar(string.charAt(end))) {
+                    end++;
+                }
+
+                if (end < length && string.charAt(end) == ';') {
+                    try {
+                        int entityValue = Integer.parseInt(string.substring(start, end), isHex ? 16 : 10);
+                        out.append((char) entityValue);
+                        pos = end + 1;
+                        continue;
+                    } catch (NumberFormatException e) {
+                        return out.toString();
+                    }
+                }
+            }
+            out.append(string.charAt(pos));
+            pos++;
+        }
+
+        return out.toString();
+    }
+
+    public static boolean isHexChar(char c) {
+        return Character.isDigit(c) || ('a' <= Character.toLowerCase(c) && Character.toLowerCase(c) <= 'f');
+    }
+}
+
+=== REASONING ===
+<think>
+1.  **Understand the Goal:** The objective is to translate a Java class `NumericEntityUnescaper` into Python, maintaining identical behavior (inputs/outputs, side effects, edge cases, exceptions), while using idiomatic Python only where it doesn't alter the behavior.
+
+2.  **Analyze the Java Code:**
+    *   **Class:** `NumericEntityUnescaper`
+    *   **Method:** `replace(String string)`
+        *   Iterates through the string looking for `&#` (numeric entities).
+        *   Handles both decimal (`&#123;`) and hex (`&#x1A;` or `&#X1A;`) entities.
+        *   If a valid entity is found (ends with `;` and parses correctly), it appends the corresponding Unicode character.
+        *   If parsing fails (`NumberFormatException`), it immediately returns the currently built string.
+        *   If the string ends unexpectedly during hex prefix parsing (`start == length`), it returns the currently built string.
+        *   If `&#` is found but it's not a valid entity (doesn't end with `;`), it just appends `&` and moves to the next character.
+        *   Appends remaining characters one by one.
+    *   **Method:** `isHexChar(char c)`
+        *   Checks if a character is a valid hex digit (0-9, a-f, A-F).
+
+3.  **Step-by-Step Translation & Behavioral Matching:**
+
+    *   *Class Structure:* Python doesn't require classes for this, but to keep the structure similar and encapsulate the helper method, a class is fine. Or just two functions. Let's use a class to match the Java structure closely.
+
+    *   *Method `replace(self, string: str) -> str`:*
+        *   `StringBuilder out = new StringBuilder();` -> `out = []` (list of strings/chars is most efficient in Python, then `"".join(out)` at the end). Wait, the Java code returns `out.toString()` in multiple places. In Python, if I use a list, returning `"".join(out)` works perfectly.
+        *   `int pos = 0;` -> `pos = 0`
+        *   `int length = string.length();` -> `length = len(string)`
+        *   `while (pos < length - 2):` -> `while pos < length - 2:`
+        *   `if (string.charAt(pos) == '&' && string.charAt(pos + 1) == '#'):` -> `if string[pos] == '&' and string[pos + 1] == '#':`
+        *   `int start = pos + 2;` -> `start = pos + 2`
+        *   `boolean isHex = false;` -> `is_hex = False`
+        *   `char firstChar = string.charAt(start);` -> `first_char = string[start]`
+        *   `if (firstChar == 'x' || firstChar == 'X'):` -> `if first_char in ('x', 'X'):`
+        *   `start++; isHex = true;` -> `start += 1; is_hex = True`
+        *   `if (start == length) { return out.toString(); }` -> `if start == length: return "".join(out)`
+        *   `int end = start;` -> `end = start`
+        *   `while (end < length && isHexChar(string.charAt(end))) { end++; }` -> `while end < length and self.is_hex_char(string[end]): end += 1`
+        *   `if (end < length && string.charAt(end) == ';'):` -> `if end < length and string[end] == ';':`
+        *   `try { ... } catch (NumberFormatException e) { return out.toString(); }` -> In Python, `int(string, base)` raises `ValueError`. So:
+            ```python
+            try:
+                entity_value = int(string[start:end], 16 if is_hex else 10)
+                out.append(chr(entity_value))
+                pos = end + 1
+                continue
+            except ValueError:
+                return "".join(out)
+            ```
+            *Wait*, what if `entityValue` is out of range for a Java `char`? In Java, `(char) entityValue` does a modulo 65536 cast (or truncates the lower 16 bits). In Python, `chr()` supports full Unicode. Let's check Java's behavior. `Integer.parseInt` parses up to 0xFFFFFFFF (or 7FFFFFFF). `(char)` casts it to 16-bit. Python's `chr()` takes valid Unicode code points (up to 0x10FFFF). If the Java code parses `0x10001`, `(char)` makes it `\u0001`. Python's `chr(0x10001)` makes it `𐀁`.
+            *Behavioral identicalness requirement:* "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)."
+            To be strictly identical to Java's `(char) entityValue`, I should do `chr(entity_value & 0xFFFF)`. Let's look at `html.unescape` - but we are implementing it manually. I will use `chr(entity_value & 0xFFFF)` to perfectly match Java's 16-bit char truncation.
+            Wait, actually, does Java's `Integer.parseInt` allow negative hex strings? No, `parseInt("FFFFFF", 16)` is 16777215. `(char) 16777215` is `\uFFFF`. If someone passes `0x10000`, `(char)` makes it `\u0000`. I will use `chr(entity_value & 0xFFFF)` to exactly mimic Java's char casting. Wait, actually, standard Python `chr` might raise `ValueError` if out of range (0-0x10FFFF). If the Java code truncates, Python needs to truncate. Let's do `chr(entity_value & 0xFFFF)` to be safe and strictly identical to Java's `(char)` cast.
+
+        *   `out.append(string.charAt(pos)); pos++;` -> `out.append(string[pos]); pos += 1`
+
+    *   *Method `is_hex_char(self, c: str) -> bool`:*
+        *   `Character.isDigit(c)` -> `c.isdigit()`
+        *   `('a' <= Character.toLowerCase(c) && Character.toLowerCase(c) <= 'f')` -> `('a' <= c.lower() <= 'f')`
+        *   Return boolean.
+
+4.  **Refining the Python Code:**
+
+    ```python
+    class NumericEntityUnescaper:
+        def replace(self, string: str) -> str:
+            out = []
+            pos = 0
+            length = len(string)
+
+            while pos < length - 2:
+                if string[pos] == '&' and string[pos + 1] == '#':
+                    start = pos + 2
+                    is_hex = False
+                    first_char = string[start]
+
+                    if first_char == 'x' or first_char == 'X':
+                        start += 1
+                        is_hex = True
+
+                    if start == length:
+                        return "".join(out)
+
+                    end = start
+                    while end < length and self.is_hex_char(string[end]):
+                        end += 1
+
+                    if end < length and string[end] == ';':
+                        try:
+                            entity_value = int(string[start:end], 16 if is_hex else 10)
+                            out.append(chr(entity_value & 0xFFFF)) # Mimic Java's (char) cast
+                            pos = end + 1
+                            continue
+                        except ValueError:
+                            return "".join(out)
+
+                out.append(string[pos])
+                pos += 1
+
+            # Wait, the Java code doesn't append the remaining characters after the while loop!
+            # Let's check the Java code carefully.
+            # while (pos < length - 2) { ... out.append(string.charAt(pos)); pos++; }
+            # return out.toString();
+            # If length is 5, loop runs while pos < 3.
+            # pos = 0, 1, 2. Loop exits when pos = 3.
+            # It returns out.toString(). It DOES NOT append characters at pos 3 and 4!
+            # Is this a bug in the Java code? Yes, it seems like it.
+            # But the prompt says: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)."
+            # I MUST replicate this bug!
+    ```
+
+5.  **Double check the Java loop bounds:**
+    ```java
+    while (pos < length - 2) {
+        // ...
+        out.append(string.charAt(pos));
+        pos++;
+    }
+    return out.toString();
+    ```
+    If `length` is 5, `length - 2` is 3.
+    Loop runs for `pos = 0, 1, 2`.
+    When `pos = 3`, `3 < 3` is false, loop terminates.
+    It returns `out.toString()`.
+    The characters at index 3 and 4 are completely dropped!
+    This is definitely a bug in the original Java code (it should probably be `while (pos < length)` or append the rest after the loop).
+    Since the instructions explicitly state: "Keep behavior identical (inputs/outputs, side effects, edge cases, exceptions)", I must reproduce this exact truncation behavior.
+
+6.  **Edge case: Empty string or short string:**
+    *   `length = 0`: `length - 2 = -2`. `pos < -2` is false. Returns `""`.
+    *   `length = 1`: `length - 2 = -1`. `pos < -1` is false. Returns `""`.
+    *   `length = 2`: `length - 2 = 0`. `pos < 0` is false. Returns `""`.
+    *   Wait, if `length = 2`, e.g., `"ab"`, the Java code returns `""`!
+    *   Let's trace `length = 3`, `"abc"`. `length - 2 = 1`. Loop runs for `pos = 0`. Appends 'a'. `pos = 1`. Loop terminates. Returns `"a"`.
+    *   I must strictly follow `while pos < length - 2:` and return `"".join(out)`.
+
+7.  **Another edge case: `start == length`**
+    ```java
+    if (firstChar == 'x' || firstChar == 'X') {
+        start++;
+        isHex = true;
+    }
+
+    if (start == length) {
+        return out.toString();
+    }
+    ```
+    If `string` is `"&#x"`, `length = 3`. `pos = 0`. `length - 2 = 1`. `0 < 1` is true.
+    `string[0] == '&'`, `string[1] == '#'`.
+    `start = 2`. `first_char = 'x'`.
+    `start = 3`, `is_hex = true`.
+    `start == length` (3 == 3) -> returns `out.toString()` (which is `""`).
+    Python equivalent:
+    ```python
+    if start == length:
+        return "".join(out)
+    ```
+    This is correct.
+
+8.  **Re-evaluating the `(char) entityValue` truncation:**
+    In Java, `(char)` takes the lowest 16 bits.
+    Example: `0x12345` -> `0x2345`.
+    In Python, `chr(0x12345 & 0xFFFF)` -> `chr(0x2345)`.
+    If I don't do `& 0xFFFF`, `chr(0x12345)` produces a different character (or raises ValueError if > 0x10FFFF).
+    Wait, what if `entityValue` is negative? `Integer.parseInt` throws `NumberFormatException` for `-1` in base 10 if there's no minus sign. But wait, `string.substring(start, end)` won't contain a minus sign because `isHexChar` doesn't include `-`. So `entityValue` is always positive.
+    However, `int("FFFFFFFF", 16)` in Python is `4294967295`. `chr(4294967295 & 0xFFFF)` -> `chr(65535)`. Java `(char) 4294967295L` is also `\uFFFF`.
+    So `chr(entity_value & 0xFFFF)` is the exact behavioral match for Java's `(char) entityValue`.
+    Wait, what if the Java code was meant to handle supplementary characters? The Java code uses `StringBuilder` and `(char)`, which inherently breaks surrogate pairs if it were trying to output them, but it just casts to `char`. So it strictly outputs BMP characters. I will stick to `& 0xFFFF`.
+
+9.  **Let's dry-run the Java code with `"A&#66;C"`:**
+    *   `length = 6`. `length - 2 = 4`.
+    *   `pos = 0`: `string[0] == 'A'`. Appends 'A'. `pos = 1`.
+    *   `pos = 1`: `string[1] == '&'`, `string[2] == '#'`.
+        *   `start = 3`. `first_char = '6'`. Not 'x' or 'X'.
+        *   `end = 3`. `isHexChar('6')` -> true. `end = 4`.
+        *   `isHexChar(';')` -> false. `end = 4`.
+        *   `string[4] == ';'` -> true.
+        *   `parseInt("66", 10)` -> 66. `chr(66)` -> 'B'.
+        *   Appends 'B'. `pos = 5`. `continue`.
+    *   `pos = 5`: `5 < 4` is false. Loop terminates.
+    *   Returns `"AB"`.
+    *   Wait, the 'C' at index 5 is dropped!
+    *   Yes, the Java code has a bug where it drops the last two characters if they aren't part of an entity.
+    *   I must replicate this exactly. `while pos < length - 2:`
+
+10. **Refining `is_hex_char`:**
+    ```java
+    public static boolean isHexChar(char c) {
+        return Character.isDigit(c) || ('a' <= Character.toLowerCase(c) && Character.toLowerCase(c) <= 'f');
+    }
+    ```
+    Python:
+    ```python
+    @staticmethod
+    def is_hex_char(c: str) -> bool:
+        return c.isdigit() or ('a' <= c.lower() <= 'f')
+    ```
+    Wait, in Java, `Character.isDigit` can match Unicode digits (e.g., Arabic-Indic digits). Python's `c.isdigit()` also matches Unicode digits.
+    However, `Integer.parseInt` only accepts ASCII digits (0-9) and ASCII hex chars (a-f, A-F).
+    If `isHexChar` returns true for a Unicode digit like '२' (Devanagari 2), `end` will include it, but `Integer.parseInt` will throw `NumberFormatException`.
+    In Python, `int("२", 16)` raises `ValueError`.
+    The behavior is: `isHexChar` includes it, `parseInt` throws, and the method returns `out.toString()`.
+    Python's `int(..., 16)` behaves identically in throwing `ValueError` for non-ASCII hex digits.
+    So `c.isdigit()` is the correct equivalent for `Character.isDigit(c)`.
+    `Character.toLowerCase(c)` in Java handles Unicode. Python's `c.lower()` handles Unicode.
+    So the Python `is_hex_char` is perfectly equivalent.
+
+11. **Check exception handling:**
+    Java:
+    ```java
+    try {
+        int entityValue = Integer.parseInt(string.substring(start, end), isHex ? 16 : 10);
+        out.append((char) entityValue);
+        pos = end + 1;
+        continue;
+    } catch (NumberFormatException e) {
+        return out.toString();
+    }
+    ```
+    Python:
+    ```python
+    try:
+        entity_value = int(string[start:end], 16 if is_hex else 10)
+        out.append(chr(entity_value & 0xFFFF))
+        pos = end + 1
+        continue
+    except ValueError:
+        return "".join(out)
+    ```
+    This exactly matches.
+
+12. **Final review of the loop and dropped characters:**
+    Let's re-verify the dropping of the last two characters.
+    Java:
+    ```java
+    while (pos < length - 2) {
+        if (string.charAt(pos) == '&' && string.charAt(pos + 1) == '#') {
+            ...
+            if (end < length && string.charAt(end) == ';') {
+                ...
+                pos = end + 1;
+                continue;
+            }
+        }
+        out.append(string.charAt(pos));
+        pos++;
+    }
+    return out.toString();
+    ```
+    If `length = 4` (e.g. `"abcd"`), `length - 2 = 2`.
+    `pos = 0`: appends 'a', `pos = 1`.
+    `pos = 1`: appends 'b', `pos = 2`.
+    `pos = 2`: `2 < 2` is false. Loop ends.
+    Returns `"ab"`. Characters at index 2 and 3 ('c', 'd') are dropped.
+    This is definitely a bug in the Java code, but the prompt is strict: "Keep behavior identical".
+    I will write the Python code exactly as translated, but I will add a comment noting the behavioral bug so the user knows I didn't just make a mistake, but faithfully translated their buggy code.
+
+    Wait, what if `pos` is updated inside the `if` block?
+    `pos = end + 1; continue;`
+    If `end` was the last character (index `length - 1`), then `pos = length`.
+    Next iteration: `pos < length - 2` -> `length < length - 2` -> false.
+    Loop ends. This is fine.
+
+    What if `end` is `length - 2` and `string.charAt(end) != ';'`?
+    Then it doesn't enter the `if (end < length && ...)` block.
+    It falls through, appends `string.charAt(pos)` (which is `&`), and `pos` increments by 1.
+    Then it loops again. This is all correctly handled by the direct translation.
+
+13. **Write the final Python code:**
+
+```python
+class NumericEntityUnescaper:
+
+    def replace(self, string: str) -> str:
+        out = []
+        pos = 0
+        length = len(string)
+
+        while pos < length - 2:
+            if string[pos] == '&' and string[pos + 1] == '#':
+                start = pos + 2
+                is_hex = False
+                first_char = string[start]
+
+                if first_char == 'x' or first_char == 'X':
+                    start += 1
+                    is_hex = True
+
+                if start == length:
+                    return "".join(out)
+
+                end = start
+                while end < length and self.is_hex_char(string[end]):
+                    end += 1
+
+                if end < length and string[end] == ';':
+                    try:
+                        entity_value = int(string[start:end], 16 if is_hex else 10)
+                        # Java's (char) cast truncates to 16 bits, equivalent to & 0xFFFF
+                        out.append(chr(entity_value & 0xFFFF))
+                        pos = end + 1
+                        continue
+                    except ValueError:
+                        return "".join(out)
+
+            out.append(string[pos])
+            pos += 1
+
+        return "".join(out)
+
+    @staticmethod
+    def is_hex_char(c: str) -> bool:
+        return c.isdigit() or ('a' <= c.lower() <= 'f')
+```
+
+14. **Check for any subtle differences:**
+    - Java's `StringBuilder.toString()` creates a string from the appended characters. Python's `"".join(out)` does the same.
+    - Java's `string.charAt(pos)` throws `StringIndexOutOfBoundsException` if `pos` is out of bounds. Python's `string[pos]` throws `IndexError`. Both are out-of-bounds exceptions, and since the logic bounds-checks `pos < length - 2` and `pos + 1`, `pos + 2` (for `start`), no exception will be thrown for valid indices in either language.
+    - Java's `string.substring(start, end)` throws `StringIndexOutOfBoundsException` if `start > end`. In the loop, `end` starts at `start` and only increments, so `start <= end` is always true. Python's `string[start:end]` handles `start == end` by returning `""`, which `int("", base)` will throw `ValueError` for, matching Java's `NumberFormatException`. Wait, let's trace `start == end`.
+      If `is_hex_char(string[start])` is false, `end` remains `start`.
+      Then `if end < length and string[end] == ';'` is evaluated.
+      If `string[start] == ';'`, then `end == start`, `string[start:end]` is `""`.
+      `int("", 10)` throws `ValueError` in Python.
+      `Integer.parseInt("", 10)` throws `NumberFormatException` in Java.
+      Both throw, both are caught, both return `out.toString()`. Perfect match.
+
+    - What if `is_hex` is True and `string[start:end]` is empty? Same thing, `int("", 16)` throws `ValueError`, matches Java.
+    - What if `entity_value` is too large? `int("999999999999999999999", 10)` throws `ValueError` in Python. Java's `Integer.parseInt` throws `NumberFormatException` for values outside 32-bit signed int range. Both throw, both caught, both return `out.toString()`. Perfect match.
+
+    - Wait, what if `entity_value` fits in a Java `int` but is larger than 16 bits?
+      e.g., `0x10000`. Java `parseInt` succeeds. `(char) 0x10000` truncates to `\u0000`. Python `chr(0x10000 & 0xFFFF)` -> `chr(0)` -> `\u0000`. Match!
+      If I didn't do `& 0xFFFF`, Python `chr(0x10000)` would return `\U00010000`. This would be a behavioral difference. So `& 0xFFFF` is strictly required.
+
+    - What about `is_hex_char`? Java's `Character.toLowerCase` handles locale-independent lowercasing for Unicode. Python's `str.lower()` is also Unicode-aware. Match.
+
+    - Loop bounds: `while pos < length - 2:`
+      If `length` is 0, `length - 2` is `-2`. `0 < -2` is False. Loop doesn't run. Returns `""`. Match.
+      If `length` is 1, `length - 2` is `-1`. `0 < -1` is False. Match.
+      If `length` is 2, `length - 2` is `0`. `0 < 0` is False. Match.
+
+    - Are there any side effects? No, the Java code is pure (no external side effects).
+
+15. **Construct Output:**
+    Present the translated Python code clearly. Add a brief note about the `(char)` cast emulation and the loop bounds bug replication, as it shows attention to detail and adherence to the prompt's strict rules.
+</think>
+
+=== RAW ANSWER ===
+Here is the translated Python code. 
+
+Note that I have strictly replicated the behavior of the original Java code, which includes two significant quirks/bugs in the original implementation:
+1. **Truncation of the last two characters:** The `while (pos < length - 2)` loop condition in the Java code causes it to exit before processing the last two characters of the string unless they are part of a numeric entity. This behavioral bug is preserved in the Python translation.
+2. **16-bit char truncation:** Java's `(char) entityValue` cast silently truncates integers larger than 16 bits to fit within the BMP (Basic Multilingual Plane). To perfectly mimic this in Python (where `chr()` supports the full Unicode range), `& 0xFFFF` is used.
+
+```python
+class NumericEntityUnescaper:
+
+    def replace(self, string: str) -> str:
+        out = []
+        pos = 0
+        length = len(string)
+
+        while pos < length - 2:
+            if string[pos] == '&' and string[pos + 1] == '#':
+                start = pos + 2
+                is_hex = False
+                first_char = string[start]
+
+                if first_char == 'x' or first_char == 'X':
+                    start += 1
+                    is_hex = True
+
+                if start == length:
+                    return "".join(out)
+
+                end = start
+                while end < length and self.is_hex_char(string[end]):
+                    end += 1
+
+                if end < length and string[end] == ';':
+                    try:
+                        entity_value = int(string[start:end], 16 if is_hex else 10)
+                        # Mimic Java's (char) cast which truncates to 16-bit
+                        out.append(chr(entity_value & 0xFFFF))
+                        pos = end + 1
+                        continue
+                    except ValueError:
+                        return "".join(out)
+
+            out.append(string[pos])
+            pos += 1
+
+        return "".join(out)
+
+    @staticmethod
+    def is_hex_char(c: str) -> bool:
+        return c.isdigit() or ('a' <= c.lower() <= 'f')
+```
+
+=== TRANSLATED CODE (py) ===
+class NumericEntityUnescaper:
+
+    def replace(self, string: str) -> str:
+        out = []
+        pos = 0
+        length = len(string)
+
+        while pos < length - 2:
+            if string[pos] == '&' and string[pos + 1] == '#':
+                start = pos + 2
+                is_hex = False
+                first_char = string[start]
+
+                if first_char == 'x' or first_char == 'X':
+                    start += 1
+                    is_hex = True
+
+                if start == length:
+                    return "".join(out)
+
+                end = start
+                while end < length and self.is_hex_char(string[end]):
+                    end += 1
+
+                if end < length and string[end] == ';':
+                    try:
+                        entity_value = int(string[start:end], 16 if is_hex else 10)
+                        # Mimic Java's (char) cast which truncates to 16-bit
+                        out.append(chr(entity_value & 0xFFFF))
+                        pos = end + 1
+                        continue
+                    except ValueError:
+                        return "".join(out)
+
+            out.append(string[pos])
+            pos += 1
+
+        return "".join(out)
+
+    @staticmethod
+    def is_hex_char(c: str) -> bool:
+        return c.isdigit() or ('a' <= c.lower() <= 'f')
