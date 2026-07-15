@@ -226,7 +226,7 @@ def process_single_sample(segmenter: COTSegmenter, sample: dict, idx: int, proce
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="COT segmentation runner with Rate Limiting")
-    parser.add_argument("--task", choices=sorted(TASK_OUTPUT_DIRS), default="translation", help="RQ1 task to segment")
+    parser.add_argument("--task", choices=sorted(TASK_OUTPUT_DIRS), default="generation", help="RQ1 task to segment")
     parser.add_argument("--trace-model", default="glm5.1", help="Trace-source model directory, e.g., r1, qwen, glm5.1")
     parser.add_argument("--dataset-path", default=None, help="Override input results.jsonl path")
     parser.add_argument("--output-dir", default=None, help="Override output directory")
