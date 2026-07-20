@@ -1,0 +1,971 @@
+=== SOURCE CODE (java) ===
+package org.example;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+
+public class TimeUtils {
+
+    LocalDateTime datetime;
+
+    public TimeUtils() {
+        this.datetime = LocalDateTime.now();
+    }
+
+    public String getCurrentTime() {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("HH:mm:ss");
+        return datetime.format(formatter);
+    }
+
+    public String getCurrentDate() {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        return datetime.format(formatter);
+    }
+
+    public String addSeconds(int seconds) {
+        LocalDateTime newDatetime = datetime.plusSeconds(seconds);
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("HH:mm:ss");
+        return newDatetime.format(formatter);
+    }
+
+    public LocalDateTime stringToDatetime(String string) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-M-d H:m:s");
+        return LocalDateTime.parse(string, formatter);
+    }
+
+    public String datetimeToString(LocalDateTime datetime) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        return datetime.format(formatter);
+    }
+
+    public int getMinutes(String stringTime1, String stringTime2) {
+        LocalDateTime time1 = stringToDatetime(stringTime1);
+        LocalDateTime time2 = stringToDatetime(stringTime2);
+        long minutes = ChronoUnit.MINUTES.between(time1, time2);
+        return Math.toIntExact(Math.round(minutes));
+    }
+
+    public String getFormatTime(int year, int month, int day, int hour, int minute, int second) {
+        LocalDateTime timeItem = LocalDateTime.of(year, month, day, hour, minute, second);
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        return timeItem.format(formatter);
+    }
+}
+
+=== REASONING ===
+<think>
+We need to translate the Java code to C++ with identical behavior. The Java code uses `java.time.LocalDateTime`, `DateTimeFormatter`, `ChronoUnit`. We need to map this to C++ equivalents. In C++ we can use `<chrono>`, `<ctime>`, `<iomanip>`, `<sstream>`, `<string>`, etc. Or we can use C-style `strftime`, `time_t`, `tm`. But we need to handle parsing and formatting with patterns similar to Java's. In C++20, we have `std::chrono::system_clock`, `std::chrono::local_time`, `std::chrono::year_month_day`, `std::chrono::hh_mm_ss`, `std::format` with chrono types. But many environments may not fully support C++20 chrono formatting. The prompt says "Use idiomatic C++ only when it doesn't change behavior." We can use C++17 or C++20. Since the behavior includes parsing a string like "yyyy-M-d H:m:s" which is flexible (single digit month/day allowed). Java's `DateTimeFormatter.ofPattern` with `yyyy-M-d H:m:s` will parse year, month (1-12), day (1-31), hour (0-23), minute (0-59), second (0-59). In C++, we can implement similar parsing using `std::istringstream` and `std::get_time` with `%Y-%m-%d %H:%M:%S` but `%m` expects two digits, `%d` expects two digits, etc. Java's pattern `M` and `d` can be one or two digits. `std::get_time` with `%Y-%m-%d` expects leading zeros? Actually `%m` expects two digits (01-12). So we need a custom parser to handle one-digit months/days etc. Alternatively, we can parse manually using `sscanf` or split by space and '-'. We'll implement a robust parsing.
+
+The class `TimeUtils` has a member `datetime` initialized to current time. `LocalDateTime.now()` gets current date/time without timezone. In C++ we can use `std::chrono::system_clock::now()` and convert to `std::time_t` and then to local `tm` using `localtime`. But `localtime` is not thread-safe. We can use `localtime_r` on POSIX or `localtime_s` on Windows. For portability, we can use `std::chrono::system_clock::to_time_t` and then `std::localtime`. We'll store the `std::tm` or a `std::chrono::system_clock::time_point` as the internal representation. Since `LocalDateTime` in Java stores year, month, day, hour, minute, second, nanosecond. We can store a `std::tm` structure or a custom struct. But `std::tm` has year since 1900, month 0-11. We'll store year, month, day, hour, minute, second as separate fields, or just store a `std::chrono::system_clock::time_point` representing the time in UTC? Actually `LocalDateTime` does not represent a point on the time-line without timezone. It's just a date and time. In C++, we can use `std::chrono::local_time` or just a `std::tm` but `std::tm` is associated with local time. To avoid timezone issues, we can store a `std::chrono::system_clock::time_point` and convert to `tm` for formatting, assuming local time. But `LocalDateTime.now()` gives the current date and time in the default time-zone. Equivalent to `std::chrono::system_clock::now()` converted to local time. So we can store a `std::chrono::system_clock::time_point` representing the current time, and interpret it as local time when formatting and parsing. That preserves the behavior.
+
+We need functions:
+- `getCurrentTime()`: returns "HH:mm:ss" (24-hour). Equivalent to `strftime` with `%H:%M:%S`.
+- `getCurrentDate()`: returns "yyyy-MM-dd". Equivalent to `%Y-%m-%d`.
+- `addSeconds(int seconds)`: returns new time string "HH:mm:ss" after adding seconds to the stored datetime. We can add `std::chrono::seconds` to the time_point, then format.
+- `stringToDatetime(string)`: parses a string in pattern "yyyy-M-d H:m:s" (flexible digits). We'll parse year, month, day, hour, minute, second. Then construct a `std::tm` and convert to `time_point` using `mktime`? But `mktime` interprets as local time. The Java `LocalDateTime.parse` returns a `LocalDateTime` without timezone. If we store it as a `time_point` we need to assume it's local time and convert to `time_t` via `mktime`. That's fine as long as we consistently use local time. We'll return a `std::tm` or a custom struct? The Java method returns `LocalDateTime`. In the C++ translation, we can return a `std::tm` but it's not a class. Better to define a struct or just keep it as an internal representation. Since the method is called from `getMinutes`, we can parse two strings and compute the difference in minutes. We can compute difference using `difftime` divided by 60, or using chrono. We'll implement `stringToDatetime` to return a `std::time_t` (or `std::chrono::system_clock::time_point`) representing the parsed local time. Then `getMinutes` computes the difference in minutes.
+- `datetimeToString(LocalDateTime)` -> In C++ we can take a `std::tm` or `time_point` and format to "yyyy-MM-dd HH:mm:ss".
+- `getMinutes(stringTime1, stringTime2)`: parse both, compute difference in minutes, round? Java's `ChronoUnit.MINUTES.between` returns the number of whole minutes between the two times, truncating towards zero? Actually `between` returns the number of complete units between the two temporals. It's integer division. Then `Math.round(minutes)` is redundant because `minutes` is already a `long` integer. `Math.toIntExact` just checks if it fits in int. So we can compute `std::chrono::duration_cast<std::chrono::minutes>(time2 - time1).count()`. But note the order: `between(time1, time2)` computes `time2 - time1`. So we do `time2 - time1`. Then cast to `int` and ensure no overflow? We can just return `int` and assume it fits. If overflow, Java throws `ArithmeticException`. In C++ we can just return `int` and rely on undefined behavior or we can check and throw. We'll do a simple cast to `int` for brevity, but we can use `static_cast<int>` and maybe throw if out of range? The prompt says keep behavior identical, exceptions. So we should throw an exception if the value exceeds int range. We can use `std::overflow_error` or similar. We'll implement `getMinutes` to compute difference and throw if out of int range.
+- `getFormatTime(int year, int month, int day, int hour, int minute, int second)`: constructs a `LocalDateTime` and formats to "yyyy-MM-dd HH:mm:ss". We can create a `std::tm` and format.
+
+We need to handle the internal `datetime` member. In Java, `LocalDateTime.now()` captures the current date and time at the moment of construction. We should capture it in the constructor. We'll store it as a `std::chrono::system_clock::time_point` representing the local time. But `system_clock::now()` gives UTC. We need to convert to local time. We can use `std::chrono::current_zone()` in C++20, but we may not have full C++20. Alternatively, use `std::time_t` and `std::localtime`. We can store the `std::time_t` representing the current time, and when formatting, convert to `std::tm` using `localtime_r`. But `localtime` uses the system's local time. That's exactly what `LocalDateTime.now()` does. So we can store `std::time_t now = std::time(nullptr);` in constructor. Then all operations are on this `time_t`. `addSeconds` adds seconds to `time_t`. `getCurrentTime` and `getCurrentDate` format the stored `time_t`. `stringToDatetime` parses a string into a `std::tm`, then `mktime` to get `time_t`. This normalizes the `tm` (e.g., if day is out of range, it adjusts). Java's `LocalDateTime.parse` does not normalize? It will throw `DateTimeParseException` if values are out of range. `mktime` will normalize (e.g., Jan 32 -> Feb 1). We should validate the parsed values or use a different approach. We can parse and then manually construct a `time_t` by setting fields and checking validity. But `mktime` is the easiest. However, Java's `LocalDateTime.parse` with `DateTimeFormatter` will throw `DateTimeParseException` if the values are invalid (e.g., month 13). We can use `std::istringstream` with `std::get_time` which also does some validation but not strict. `std::get_time` with `%Y-%m-%d %H:%M:%S` expects two-digit month/day etc. But the pattern is `yyyy-M-d H:m:s` which accepts single digits. We can parse manually using `sscanf` with format `"%d-%d-%d %d:%d:%d"`. That accepts any integers. Then we validate ranges (month 1-12, day 1-31 depending on month, leap year, hour 0-23, minute 0-59, second 0-59, though leap second? Java allows 0-59). Then we can create a `std::tm` and use `mktime` to get `time_t`. But `mktime` will adjust if we set `tm_mday` to 32, etc. To match Java's exception, we must validate before calling `mktime`. We'll do manual validation and throw `std::invalid_argument` or a custom exception? In Java it throws `DateTimeParseException` (a checked exception? Actually it's a RuntimeException extending `DateTimeException`). In C++ we can throw `std::runtime_error` or `std::invalid_argument`. We'll throw `std::invalid_argument` for parse errors.
+
+Alternatively, we can use Howard Hinnant's date library, but we must stick to standard C++.
+
+Let's design the class:
+
+```cpp
+#include <string>
+#include <ctime>
+#include <chrono>
+#include <stdexcept>
+#include <sstream>
+#include <iomanip>
+#include <cmath>
+```
+
+Store `datetime` as `std::time_t` (or `std::chrono::system_clock::time_point`). Since we need to add seconds, `time_t` is fine. `time_t` is in seconds since epoch. We can do arithmetic on it.
+
+In constructor:
+```cpp
+TimeUtils() : datetime(std::time(nullptr)) {}
+```
+
+`getCurrentTime()`:
+```cpp
+std::string getCurrentTime() const {
+    std::tm* tm = std::localtime(&datetime);
+    char buf[9];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", tm);
+    return buf;
+}
+```
+But `localtime` is not thread-safe. We can use `localtime_r` or `localtime_s` if available. For portability, we can use `std::chrono::system_clock::to_time_t`? Actually we already have `time_t`. We can use `localtime_r` on POSIX and `localtime_s` on Windows. We can write a wrapper. Or we can use C++20's `std::chrono::zoned_time` but that's not widely supported. To keep it simple and standard, we can just use `localtime` and note that it's not thread-safe, but Java's `LocalDateTime.now()` is thread-safe. To be thread-safe, we can use `localtime_r` on POSIX, and `localtime_s` on Windows. We can conditionally compile. But maybe simpler: we can store the broken-down time as fields instead of `time_t`, and update them. But then adding seconds is complex. Another approach: use `std::chrono::system_clock::time_point` and then convert to `time_t` and then to `tm` using `localtime_r`. We can write a helper to get `tm` from `time_t` in a thread-safe way.
+
+```cpp
+std::tm localtime_safe(const std::time_t& t) {
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return tm;
+}
+```
+
+We'll use that.
+
+`getCurrentDate()`:
+```cpp
+std::string getCurrentDate() const {
+    std::tm tm = localtime_safe(datetime);
+    char buf[11];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
+    return buf;
+}
+```
+
+`addSeconds(int seconds)`:
+```cpp
+std::string addSeconds(int seconds) const {
+    std::time_t newTime = datetime + seconds;
+    std::tm tm = localtime_safe(newTime);
+    char buf[9];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", &tm);
+    return buf;
+}
+```
+
+`stringToDatetime(string)`:
+We need to parse "yyyy-M-d H:m:s". We'll manually parse. We can use `std::sscanf` with format `"%d-%d-%d %d:%d:%d"` to get 6 ints. Then validate ranges. Then create a `std::tm` with year - 1900, month - 1, day, hour, min, sec. Set `tm_isdst = -1` to let `mktime` determine DST. Then call `std::mktime` to get `time_t`. But `mktime` will normalize the date. We should validate before calling `mktime` so that invalid dates throw. We'll validate day of month considering leap years. We can use a helper function `isValidDate(year, month, day)` and `isValidTime(hour, min, sec)`. Then after validation, we set `tm` and call `mktime`. `mktime` returns `time_t`. We'll store/return a `time_t`. But the Java method returns `LocalDateTime`. In our C++ code, we can return `std::time_t` as the internal representation. But the method signature originally returns `LocalDateTime`. In the translation, we can change the return type to `std::time_t` or keep it as some class. Since the subsequent `datetimeToString` takes a `LocalDateTime`, we can make it take `std::time_t`. And `getMinutes` uses `stringToDatetime` to get two `LocalDateTime`s and computes difference. So we can just use `std::time_t`.
+
+But note: Java's `LocalDateTime` does not represent a point in time, but a date and time without timezone. `mktime` interprets the `tm` as local time and converts to UTC `time_t`. If we compute difference between two `time_t` values, we get the difference in seconds as if they were local times? Actually `mktime` converts to `time_t` (UTC). So `time_t` difference is the actual elapsed seconds between the two local times, accounting for DST transitions? In Java, `LocalDateTime` does not account for DST; it's just a date and time. `ChronoUnit.MINUTES.between` computes the difference in minutes ignoring timezone, just based on the date and time values. For example, if there's a DST spring forward, `LocalDateTime` of 2:30 and 3:30 would be 60 minutes apart, but in reality they are 30 minutes apart. Java's `LocalDateTime` ignores DST. If we use `mktime`, it would give the actual elapsed time, which might be different. So we must NOT use `mktime` for difference calculation. We should store the parsed values as a tuple (year, month, day, hour, minute, second) and compute difference directly in terms of days/hours/minutes, or use a `time_point` of a notional clock (like `std::chrono::local_t`). In C++20, we can use `std::chrono::local_days` and `std::chrono::local_time`. But we might not have that. The safest is to store a custom `LocalDateTime` struct with year, month, day, hour, minute, second, and compute difference by converting to a total number of minutes since some epoch (e.g., year 0). We can write a function to compute minutes since epoch for a given date/time, ignoring leap seconds. Java's `LocalDateTime` uses the proleptic Gregorian calendar. We can do the same: convert to `std::chrono::days` using `std::chrono::year_month_day`? In C++20, we can use `std::chrono::year_month_day` and `std::chrono::hh_mm_ss`, but we need to be careful about availability. If we aim for C++17, we can use Howard Hinnant's date library, but that's not standard. We can implement a simple Julian Day Number calculation or use `std::tm` and `mktime` but that would be wrong for DST. However, the problem says "Keep behavior identical". If we use `mktime`, it will differ in DST transitions. The original Java code uses `LocalDateTime`, which ignores DST. So we must implement a DST-ignorant difference. The simplest is to parse into a struct and compute difference using a custom algorithm for days since epoch.
+
+Let's define a struct:
+```cpp
+struct DateTime {
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+    int second;
+};
+```
+
+Then `stringToDatetime` returns `DateTime`. `datetimeToString` takes `DateTime`. `getMinutes` takes two strings, gets two `DateTime`, computes difference in minutes by converting to a total number of minutes since some epoch (e.g., 0000-03-01? Actually we can use a standard algorithm: days since civil epoch). We can implement `daysFromCivil(int y, int m, int d)` using Howard Hinnant's algorithm (which is public domain). That algorithm works for any proleptic Gregorian date. Then total minutes = days * 1440 + hour * 60 + minute. The difference in minutes is just that. Seconds are ignored because `ChronoUnit.MINUTES.between` truncates to minutes? Actually `ChronoUnit.MINUTES.between` computes the whole minutes between the two temporals. It does not round seconds; it truncates towards zero (or towards the past/future? In Java, `between` returns the number of complete units between the two temporals. For example, `between(12:00:00, 12:00:59)` returns 0. `between(12:00:00, 12:01:00)` returns 1. `between(12:00:59, 12:01:00)` returns 0. So it's the difference in minutes, ignoring seconds, and truncating towards zero? Actually `LocalDateTime` implements `Temporal`, and `ChronoUnit.MINUTES.between` computes `time2 - time1` in minutes, and returns the floor of the result if negative? Let's test: `between(12:01:00, 12:00:00)` returns -1. So it's just the difference in whole minutes, truncating towards zero? For negative, `12:00:00` and `12:01:00` difference is -1. `12:00:59` and `12:01:00` difference is -0? Actually `between` is `until` which returns the number of complete units. So it's effectively `time2 - time1` in minutes, discarding remainder toward zero. In C++, we can compute total minutes of each, then subtract, and that's it. Because total minutes ignores seconds, so difference is integer. That matches Java's behavior? If time1 is 12:00:59 and time2 is 12:01:00, time1 total minutes = 12*60+0 = 720, time2 = 12*60+1 = 721. Difference = 1. But Java's `between(12:00:59, 12:01:00)` returns 0? Let's verify Java's `ChronoUnit.MINUTES.between` behavior. In Java, `LocalDateTime` has seconds. `ChronoUnit.MINUTES.between` computes the amount of time in minutes between the two temporals. It is equivalent to `first.until(second, MINUTES)`. The `until` method for `LocalDateTime` computes the difference in minutes, and the remainder is given in a copy? Actually `LocalDateTime.until` returns the number of complete units between the two. For `MINUTES`, it uses the time part. The seconds are considered. `between(12:00:59, 12:01:00)` would be 1 second difference, which is 0 complete minutes. So it returns 0. Our total minutes approach would return 1 because we discard seconds? Wait, our total minutes approach: total minutes = day*1440 + hour*60 + minute. We ignore seconds. So time1 = 12:00:59 -> total minutes = 12*60+0 = 720. time2 = 12:01:00 -> total minutes = 12*60+1 = 721. Difference = 1. That's wrong. We need to include seconds and then floor division? Actually we need to compute the difference in seconds and then divide by 60, truncating towards zero? But `between` returns the number of complete minutes. If time1 = 12:00:59 and time2 = 12:01:01, difference is 2 seconds, which is 0 minutes. So we need to compute total seconds difference, then integer divide by 60 (truncating towards zero). That matches Java's `between`. So we should compute total seconds since epoch for each DateTime, then subtract, then divide by 60. But we must be careful with negative differences. In Java, `Math.toIntExact(Math.round(minutes))` is called on the result of `ChronoUnit.MINUTES.between`. `between` returns a `long` which is the number of complete minutes. Then `Math.round` is applied to a `long`? `Math.round` takes `double` or `float`. If we pass a `long`, it's promoted to `float`? Actually `Math.round` has overloads: `round(float)` returns `int`, `round(double)` returns `long`. If `minutes` is `long`, it would be boxed? No, `minutes` is `long`, so it calls `Math.round(long)`? There is no `Math.round(long)`. Wait, `Math.round` takes `double` or `float`. If we pass `long`, it will be implicitly converted to `float` (since `long` to `float` is a widening primitive conversion). Then `Math.round(float)` returns `int`. So `Math.round(minutes)` is redundant if `minutes` is integer, but it's a no-op (rounding a whole number). Then `Math.toIntExact` ensures it fits in `int`. So we can just compute difference in seconds, divide by 60, truncate towards zero, and cast to `int`. But we need to match Java's truncation behavior for negative numbers. In Java, integer division truncates towards zero. `ChronoUnit.MINUTES.between` also truncates towards zero? For `between` with negative, it returns the number of complete units between. If time1 is after time2, the result is negative. For example, `between(12:01:00, 12:00:00)` is -1 (difference -60 seconds, -1 minute). `between(12:01:30, 12:00:00)` is -1 (difference -90 seconds, -1 complete minute? Actually -90 seconds / 60 = -1.5, truncates towards zero to -1). So yes, difference in seconds / 60 truncated towards zero.
+
+So we need total seconds since epoch. We can compute `days * 86400 + hour * 3600 + minute * 60 + second`. Then subtract, then `/ 60` (integer division truncates toward zero). Then cast to `int`. We'll also need to handle overflow: if the difference in seconds doesn't fit in `long` (Java uses `long` for difference). In C++, we can use `long long` for seconds. Then convert to `int` and check bounds.
+
+Now, we need to store the current time in the constructor as a `DateTime` struct. We can get current local time using `std::time` and `localtime_safe`, then populate `DateTime`.
+
+```cpp
+DateTime datetime;
+```
+
+Constructor:
+```cpp
+TimeUtils::TimeUtils() {
+    std::time_t now = std::time(nullptr);
+    std::tm tm = localtime_safe(now);
+    datetime.year = tm.tm_year + 1900;
+    datetime.month = tm.tm_mon + 1;
+    datetime.day = tm.tm_mday;
+    datetime.hour = tm.tm_hour;
+    datetime.minute = tm.tm_min;
+    datetime.second = tm.tm_sec;
+}
+```
+
+`getCurrentTime()`:
+```cpp
+std::string TimeUtils::getCurrentTime() const {
+    char buf[9];
+    // Format using datetime fields
+    std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", datetime.hour, datetime.minute, datetime.second);
+    return buf;
+}
+```
+
+`getCurrentDate()`:
+```cpp
+std::string TimeUtils::getCurrentDate() const {
+    char buf[11];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", datetime.year, datetime.month, datetime.day);
+    return buf;
+}
+```
+
+`addSeconds(int seconds)`:
+```cpp
+std::string TimeUtils::addSeconds(int seconds) const {
+    // We need to add seconds to the datetime. We can convert to total seconds since epoch, add, then convert back.
+    long long total_seconds = toEpochSeconds(datetime) + seconds;
+    DateTime new_dt = fromEpochSeconds(total_seconds);
+    char buf[9];
+    std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", new_dt.hour, new_dt.minute, new_dt.second);
+    return buf;
+}
+```
+We need `toEpochSeconds` and `fromEpochSeconds` functions. We can use the civil date algorithm to convert to days since epoch (e.g., 1970-01-01), then seconds = days * 86400 + hour*3600 + minute*60 + second. For `fromEpochSeconds`, we can convert seconds to days, then use `civil_from_days` to get year/month/day, and then time from remainder.
+
+We must ensure that the epoch is consistent with `LocalDateTime`. Since `LocalDateTime` doesn't have an epoch, we can just use a consistent internal epoch (e.g., 1970-01-01) for arithmetic. Adding seconds to a `LocalDateTime` will wrap around days, months, years correctly. Java's `plusSeconds` handles all that. So our `toEpochSeconds` and `fromEpochSeconds` must correctly handle the Gregorian calendar (including leap years). Howard Hinnant's algorithms are perfect for this.
+
+Let's implement `days_from_civil(int y, int m, int d)` and `civil_from_days(int z)`.
+
+```cpp
+// Returns number of days since civil 1970-01-01. Negative values indicate days prior to 1970-01-01.
+// Preconditions: y-m-d represents a date in the civil (Gregorian) calendar
+int days_from_civil(int y, int m, int d) noexcept {
+    y -= m <= 2;
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const int yoe = static_cast<unsigned>(y - era * 400);      // [0, 399]
+    const int doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;  // [0, 365]
+    const int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;         // [0, 146096]
+    return era * 146097 + doe - 719468;
+}
+
+// Returns year/month/day in civil calendar corresponding to days since 1970-01-01
+void civil_from_days(int z, int& y, int& m, int& d) noexcept {
+    z += 719468;
+    const int era = (z >= 0 ? z : z - 146096) / 146097;
+    const int doe = static_cast<unsigned>(z - era * 146097);          // [0, 146096]
+    const int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;  // [0, 399]
+    y = yoe + era * 400;
+    const int doy = doe - (365 * yoe + yoe / 4 - yoe / 100);                // [0, 365]
+    const int mp = (5 * doy + 2) / 153;                                   // [0, 11]
+    d = doy - (153 * mp + 2) / 5 + 1;                             // [1, 31]
+    m = mp + (mp < 10 ? 3 : -9);                            // [1, 12]
+    y += (m <= 2);
+}
+```
+These are public domain from Howard Hinnant. Note: `days_from_civil` returns days since 1970-01-01. This matches Unix epoch. We can use `long long` for seconds.
+
+`toEpochSeconds`:
+```cpp
+long long toEpochSeconds(const DateTime& dt) {
+    int days = days_from_civil(dt.year, dt.month, dt.day);
+    return days * 86400LL + dt.hour * 3600LL + dt.minute * 60LL + dt.second;
+}
+```
+
+`fromEpochSeconds`:
+```cpp
+DateTime fromEpochSeconds(long long secs) {
+    // Handle negative seconds correctly for division
+    int days = static_cast<int>(secs / 86400);
+    int rem = static_cast<int>(secs % 86400);
+    if (rem < 0) {
+        rem += 86400;
+        days -= 1;
+    }
+    DateTime dt;
+    civil_from_days(days, dt.year, dt.month, dt.day);
+    dt.hour = rem / 3600;
+    rem %= 3600;
+    dt.minute = rem / 60;
+    dt.second = rem % 60;
+    return dt;
+}
+```
+
+Now `stringToDatetime`:
+```cpp
+DateTime TimeUtils::stringToDatetime(const std::string& string) const {
+    int year, month, day, hour, minute, second;
+    // Parse using sscanf
+    if (std::sscanf(string.c_str(), "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour, &minute, &second) != 6) {
+        throw std::invalid_argument("Invalid datetime format: " + string);
+    }
+    // Validate ranges
+    if (month < 1 || month > 12) throw std::invalid_argument("Month out of range");
+    if (day < 1 || day > 31) throw std::invalid_argument("Day out of range");
+    // Check day of month
+    int maxDay = 31;
+    if (month == 4 || month == 6 || month == 9 || month == 11) maxDay = 30;
+    else if (month == 2) {
+        bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        maxDay = leap ? 29 : 28;
+    }
+    if (day > maxDay) throw std::invalid_argument("Day out of range for month");
+    if (hour < 0 || hour > 23) throw std::invalid_argument("Hour out of range");
+    if (minute < 0 || minute > 59) throw std::invalid_argument("Minute out of range");
+    if (second < 0 || second > 59) throw std::invalid_argument("Second out of range");
+    // Java's DateTimeFormatter also accepts hour 24? No, H is 0-23. So we're good.
+    return DateTime{year, month, day, hour, minute, second};
+}
+```
+
+`datetimeToString`:
+```cpp
+std::string TimeUtils::datetimeToString(const DateTime& datetime) const {
+    char buf[20];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+        datetime.year, datetime.month, datetime.day,
+        datetime.hour, datetime.minute, datetime.second);
+    return buf;
+}
+```
+
+`getMinutes`:
+```cpp
+int TimeUtils::getMinutes(const std::string& stringTime1, const std::string& stringTime2) const {
+    DateTime time1 = stringToDatetime(stringTime1);
+    DateTime time2 = stringToDatetime(stringTime2);
+    long long secs1 = toEpochSeconds(time1);
+    long long secs2 = toEpochSeconds(time2);
+    long long diff = secs2 - secs1;
+    long long minutes = diff / 60; // truncates towards zero
+    // Math.toIntExact
+    if (minutes < std::numeric_limits<int>::min() || minutes > std::numeric_limits<int>::max()) {
+        throw std::overflow_error("Minutes difference exceeds int range");
+    }
+    return static_cast<int>(minutes);
+}
+```
+
+`getFormatTime`:
+```cpp
+std::string TimeUtils::getFormatTime(int year, int month, int day, int hour, int minute, int second) {
+    // We should validate? Java's LocalDateTime.of throws if invalid. We'll validate.
+    if (month < 1 || month > 12) throw std::invalid_argument("Month out of range");
+    // etc. We can call a validation function or just construct and check.
+    DateTime dt{year, month, day, hour, minute, second};
+    // Validate day range
+    int maxDay = 31;
+    if (month == 4 || month == 6 || month == 9 || month == 11) maxDay = 30;
+    else if (month == 2) {
+        bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        maxDay = leap ? 29 : 28;
+    }
+    if (day < 1 || day > maxDay) throw std::invalid_argument("Day out of range");
+    if (hour < 0 || hour > 23) throw std::invalid_argument("Hour out of range");
+    if (minute < 0 || minute > 59) throw std::invalid_argument("Minute out of range");
+    if (second < 0 || second > 59) throw std::invalid_argument("Second out of range");
+    return datetimeToString(dt);
+}
+```
+
+Now, we need to put everything in a header and source file? The prompt says "Translate the following Java code to C++." It's typical to provide a single `.cpp` file with the class, or a header and implementation. We can provide the full C++ code as a single file with headers and class definition. We'll include necessary headers.
+
+We'll also need to handle the `LocalDateTime` return type. In Java, `stringToDatetime` returns `LocalDateTime`. In C++, we can return `DateTime`. But the original Java method signature is `public LocalDateTime stringToDatetime(String string)`. The user might expect the same interface. We can declare a `DateTime` struct and use it. The `datetimeToString` takes `LocalDateTime`. We can change that to `DateTime`. The `getMinutes` uses `stringToDatetime` internally. That's fine.
+
+We should also consider the package `org.example`. In C++ we can just use a namespace, or omit. We can put the class in a namespace `org::example` or just leave it global. We'll use `namespace org { namespace example { ... } }` or just `class TimeUtils` at global scope. The prompt doesn't require maintaining the package.
+
+We need to make sure the code compiles with standard C++11/14/17. We'll use C++17 features? `std::snprintf` is C++11. We can use `std::ostringstream` with `std::setfill` and `std::setw` for formatting, but `snprintf` is fine. We'll include `<cstdio>`, `<string>`, `<stdexcept>`, `<limits>`, `<ctime>`.
+
+Thread-safety of `localtime` in constructor: we can use `localtime_safe` as defined.
+
+Let's write the full code:
+
+```cpp
+#include <cstdio>
+#include <string>
+#include <stdexcept>
+#include <limits>
+#include <ctime>
+
+// Thread-safe localtime wrapper
+std::tm localtime_safe(const std::time_t& t) {
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return tm;
+}
+
+struct DateTime {
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+    int second;
+};
+
+// Days since 1970-01-01 in the proleptic Gregorian calendar.
+int days_from_civil(int y, int m, int d) noexcept {
+    y -= m <= 2;
+    int era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = static_cast<unsigned>(y - era * 400);
+    unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + static_cast<int>(doe) - 719468;
+}
+
+// Inverse of days_from_civil
+void civil_from_days(int z, int& y, int& m, int& d) noexcept {
+    z += 719468;
+    int era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned doe = static_cast<unsigned>(z - era * 146097);
+    unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    y = static_cast<int>(yoe) + era * 400;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned mp = (5 * doy + 2) / 153;
+    d = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
+    m = static_cast<int>(mp + (mp < 10 ? 3 : -9));
+    y += (m <= 2);
+}
+
+long long toEpochSeconds(const DateTime& dt) {
+    int days = days_from_civil(dt.year, dt.month, dt.day);
+    return days * 86400LL + dt.hour * 3600LL + dt.minute * 60LL + dt.second;
+}
+
+DateTime fromEpochSeconds(long long secs) {
+    int days = static_cast<int>(secs / 86400);
+    int rem = static_cast<int>(secs % 86400);
+    if (rem < 0) {
+        rem += 86400;
+        days -= 1;
+    }
+    DateTime dt;
+    civil_from_days(days, dt.year, dt.month, dt.day);
+    dt.hour = rem / 3600;
+    rem %= 3600;
+    dt.minute = rem / 60;
+    dt.second = rem % 60;
+    return dt;
+}
+
+class TimeUtils {
+    DateTime datetime;
+public:
+    TimeUtils() {
+        std::time_t now = std::time(nullptr);
+        std::tm tm = localtime_safe(now);
+        datetime.year = tm.tm_year + 1900;
+        datetime.month = tm.tm_mon + 1;
+        datetime.day = tm.tm_mday;
+        datetime.hour = tm.tm_hour;
+        datetime.minute = tm.tm_min;
+        datetime.second = tm.tm_sec;
+    }
+
+    std::string getCurrentTime() const {
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", datetime.hour, datetime.minute, datetime.second);
+        return buf;
+    }
+
+    std::string getCurrentDate() const {
+        char buf[11];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", datetime.year, datetime.month, datetime.day);
+        return buf;
+    }
+
+    std::string addSeconds(int seconds) const {
+        long long total = toEpochSeconds(datetime) + seconds;
+        DateTime new_dt = fromEpochSeconds(total);
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", new_dt.hour, new_dt.minute, new_dt.second);
+        return buf;
+    }
+
+    DateTime stringToDatetime(const std::string& string) const {
+        int year, month, day, hour, minute, second;
+        if (std::sscanf(string.c_str(), "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour, &minute, &second) != 6) {
+            throw std::invalid_argument("Invalid datetime format: " + string);
+        }
+        if (month < 1 || month > 12) throw std::invalid_argument("Month out of range: " + std::to_string(month));
+        if (day < 1 || day > 31) throw std::invalid_argument("Day out of range: " + std::to_string(day));
+        int maxDay = 31;
+        if (month == 4 || month == 6 || month == 9 || month == 11) maxDay = 30;
+        else if (month == 2) {
+            bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            maxDay = leap ? 29 : 28;
+        }
+        if (day > maxDay) throw std::invalid_argument("Day out of range: " + std::to_string(day));
+        if (hour < 0 || hour > 23) throw std::invalid_argument("Hour out of range: " + std::to_string(hour));
+        if (minute < 0 || minute > 59) throw std::invalid_argument("Minute out of range: " + std::to_string(minute));
+        if (second < 0 || second > 59) throw std::invalid_argument("Second out of range: " + std::to_string(second));
+        return DateTime{year, month, day, hour, minute, second};
+    }
+
+    std::string datetimeToString(const DateTime& dt) const {
+        char buf[20];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+            dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
+        return buf;
+    }
+
+    int getMinutes(const std::string& stringTime1, const std::string& stringTime2) const {
+        DateTime time1 = stringToDatetime(stringTime1);
+        DateTime time2 = stringToDatetime(stringTime2);
+        long long secs1 = toEpochSeconds(time1);
+        long long secs2 = toEpochSeconds(time2);
+        long long diff = secs2 - secs1;
+        long long minutes = diff / 60; // truncates towards zero
+        if (minutes < std::numeric_limits<int>::min() || minutes > std::numeric_limits<int>::max()) {
+            throw std::overflow_error("Minutes difference exceeds int range");
+        }
+        return static_cast<int>(minutes);
+    }
+
+    std::string getFormatTime(int year, int month, int day, int hour, int minute, int second) {
+        // Validate
+        if (month < 1 || month > 12) throw std::invalid_argument("Month out of range");
+        int maxDay = 31;
+        if (month == 4 || month == 6 || month == 9 || month == 11) maxDay = 30;
+        else if (month == 2) {
+            bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            maxDay = leap ? 29 : 28;
+        }
+        if (day < 1 || day > maxDay) throw std::invalid_argument("Day out of range");
+        if (hour < 0 || hour > 23) throw std::invalid_argument("Hour out of range");
+        if (minute < 0 || minute > 59) throw std::invalid_argument("Minute out of range");
+        if (second < 0 || second > 59) throw std::invalid_argument("Second out of range");
+        DateTime dt{year, month, day, hour, minute, second};
+        return datetimeToString(dt);
+    }
+};
+```
+
+We need to include `<string>` and `<stdexcept>`. Also `<cstdio>` for `snprintf` and `sscanf`. We used `std::to_string` in exceptions, need `<string>`.
+
+One more thing: In Java, `stringToDatetime` and `datetimeToString` are not `const` because they don't modify member? They are not marked `const` in Java, but we can make them `const` in C++ as they don't modify `datetime`. `getFormatTime` is also `static` in Java? No, it's an instance method, but it doesn't use `datetime`. We can keep it as non-static, but it can be `const` or not. We'll make it `const` except `getFormatTime` doesn't use `this` so we can make it `static`? In Java it's not static. We'll keep it as a non-static method but it can be `const`. We'll make it `const`.
+
+Also note: `std::sscanf` expects `int*` for `%d`. `year` etc. are `int`. That's fine.
+
+In Java, `LocalDateTime.parse` throws `DateTimeParseException` which extends `DateTimeException` (RuntimeException). In C++ we throw `std::invalid_argument` which is a logic error. That's acceptable.
+
+We must ensure that the `DateTime` struct is accessible. We can define it inside the class or outside. We'll keep it outside.
+
+We also need to handle the `ChronoUnit.MINUTES.between` rounding correctly. Our `diff / 60` truncates towards zero. In C++11 and later, integer division truncates towards zero. That matches Java's `long` division truncating towards zero. Good.
+
+Now, let's test edge cases mentally:
+- `addSeconds` with negative seconds: `toEpochSeconds` and `fromEpochSeconds` handle negative seconds correctly.
+- `getMinutes` with stringTime1 after stringTime2: diff negative, division truncates towards zero, result negative.
+- Leap seconds: Java's `LocalDateTime` doesn't support leap seconds (second is 0-59). We restrict to 0-59, same.
+- Year 0 or negative? Java's `LocalDateTime` supports year 0, -1, etc. (proleptic Gregorian). Our `days_from_civil` handles negative years correctly. `sscanf` with `%d` reads negative years. The pattern `yyyy-M-d` in Java: `yyyy` is year, `y` is year-of-era. `yyyy` can be negative? Actually `DateTimeFormatter.ofPattern("yyyy-M-d H:m:s")` with `yyyy` will parse positive years, but `LocalDateTime.parse` accepts negative years with `yyyy`? In Java, `yyyy` pattern parses absolute year, including negative? I think `yyyy` is the year field, which can be negative. `DateTimeFormatter` with `yyyy` can parse negative years if they have a minus sign. So `%d` works. Validation: we don't restrict year range. Java's `LocalDateTime` has year range -999999999 to 999999999. We don't need to enforce that unless we want exact match. We can skip that.
+- `getFormatTime`: we validate ranges. Java's `LocalDateTime.of` throws `DateTimeException` if any field is out of range. We do that.
+
+One potential issue: `days_from_civil` uses `int` for days since 1970. The range of `int` is about +/- 2 billion days, which is about 5.8 million years, plenty. `toEpochSeconds` uses `long long` for seconds. Safe.
+
+Thread-safety: We use `localtime_safe` which is thread-safe. The rest of the class is const and doesn't modify shared state. Good.
+
+We should include `<cstdint>`? Not necessary.
+
+Now, we need to output the code. The user wants the translation. We'll provide the C++ code in a single block.
+
+We can also add a `main` function example? Not needed.
+
+Let's double-check the Java code's `addSeconds` method: it returns `newDatetime.format(formatter)` with pattern "HH:mm:ss". It formats the time part only. Our `addSeconds` does the same.
+
+`getCurrentTime` and `getCurrentDate` format the stored `datetime`. Our code formats the stored `DateTime` member. However, note that in Java, `datetime` is a `LocalDateTime` object captured at construction time. It does not change. Our `datetime` member is also captured at construction time and never modified. So calls to `getCurrentTime` will always return the time at construction. That matches Java.
+
+`stringToDatetime` returns `LocalDateTime`. In our code, we return `DateTime`. The user can use it.
+
+`datetimeToString` takes `LocalDateTime`. We take `DateTime`.
+
+`getFormatTime` is an instance method that doesn't use `datetime`. We keep it as instance method.
+
+Everything seems fine.
+
+Let's write the final answer with the code.
+</think>
+
+=== RAW ANSWER ===
+```cpp
+#include <cstdio>
+#include <string>
+#include <stdexcept>
+#include <limits>
+#include <ctime>
+
+// Thread-safe alternative to std::localtime
+std::tm localtime_safe(const std::time_t& t) {
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return tm;
+}
+
+// Represents a date and time without timezone, equivalent to java.time.LocalDateTime
+struct DateTime {
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+    int second;
+};
+
+// --- Howard Hinnant's calendrical algorithms (public domain) ---
+// Returns days since 1970-01-01 in the proleptic Gregorian calendar.
+int days_from_civil(int y, int m, int d) noexcept {
+    y -= m <= 2;
+    int era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = static_cast<unsigned>(y - era * 400);
+    unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + static_cast<int>(doe) - 719468;
+}
+
+// Inverse of days_from_civil
+void civil_from_days(int z, int& y, int& m, int& d) noexcept {
+    z += 719468;
+    int era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned doe = static_cast<unsigned>(z - era * 146097);
+    unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    y = static_cast<int>(yoe) + era * 400;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned mp = (5 * doy + 2) / 153;
+    d = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
+    m = static_cast<int>(mp + (mp < 10 ? 3 : -9));
+    y += (m <= 2);
+}
+// --- End of calendrical algorithms ---
+
+// Converts a DateTime to total seconds since 1970-01-01 00:00:00 (proleptic Gregorian)
+long long toEpochSeconds(const DateTime& dt) {
+    int days = days_from_civil(dt.year, dt.month, dt.day);
+    return days * 86400LL + dt.hour * 3600LL + dt.minute * 60LL + dt.second;
+}
+
+// Converts total seconds since 1970-01-01 back to a DateTime
+DateTime fromEpochSeconds(long long secs) {
+    int days = static_cast<int>(secs / 86400);
+    int rem = static_cast<int>(secs % 86400);
+    if (rem < 0) {
+        rem += 86400;
+        days -= 1;
+    }
+    DateTime dt;
+    civil_from_days(days, dt.year, dt.month, dt.day);
+    dt.hour = rem / 3600;
+    rem %= 3600;
+    dt.minute = rem / 60;
+    dt.second = rem % 60;
+    return dt;
+}
+
+class TimeUtils {
+    DateTime datetime;   // Captured at construction time, equivalent to LocalDateTime.now()
+
+public:
+    TimeUtils() {
+        std::time_t now = std::time(nullptr);
+        std::tm tm = localtime_safe(now);
+        datetime.year   = tm.tm_year + 1900;
+        datetime.month  = tm.tm_mon + 1;
+        datetime.day    = tm.tm_mday;
+        datetime.hour   = tm.tm_hour;
+        datetime.minute = tm.tm_min;
+        datetime.second = tm.tm_sec;
+    }
+
+    // Returns the stored time in "HH:mm:ss" format
+    std::string getCurrentTime() const {
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+                      datetime.hour, datetime.minute, datetime.second);
+        return buf;
+    }
+
+    // Returns the stored date in "yyyy-MM-dd" format
+    std::string getCurrentDate() const {
+        char buf[11];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
+                      datetime.year, datetime.month, datetime.day);
+        return buf;
+    }
+
+    // Adds seconds to the stored datetime and returns the new time in "HH:mm:ss" format
+    std::string addSeconds(int seconds) const {
+        long long total = toEpochSeconds(datetime) + seconds;
+        DateTime new_dt = fromEpochSeconds(total);
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+                      new_dt.hour, new_dt.minute, new_dt.second);
+        return buf;
+    }
+
+    // Parses a string in "yyyy-M-d H:m:s" format into a DateTime
+    DateTime stringToDatetime(const std::string& string) const {
+        int year, month, day, hour, minute, second;
+        if (std::sscanf(string.c_str(), "%d-%d-%d %d:%d:%d",
+                        &year, &month, &day, &hour, &minute, &second) != 6) {
+            throw std::invalid_argument("Invalid datetime format: " + string);
+        }
+        // Validate ranges (matching java.time.DateTimeException)
+        if (month < 1 || month > 12)
+            throw std::invalid_argument("Month out of range: " + std::to_string(month));
+        if (day < 1 || day > 31)
+            throw std::invalid_argument("Day out of range: " + std::to_string(day));
+        int maxDay = 31;
+        if (month == 4 || month == 6 || month == 9 || month == 11)
+            maxDay = 30;
+        else if (month == 2) {
+            bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            maxDay = leap ? 29 : 28;
+        }
+        if (day > maxDay)
+            throw std::invalid_argument("Day out of range: " + std::to_string(day));
+        if (hour < 0 || hour > 23)
+            throw std::invalid_argument("Hour out of range: " + std::to_string(hour));
+        if (minute < 0 || minute > 59)
+            throw std::invalid_argument("Minute out of range: " + std::to_string(minute));
+        if (second < 0 || second > 59)
+            throw std::invalid_argument("Second out of range: " + std::to_string(second));
+
+        return DateTime{year, month, day, hour, minute, second};
+    }
+
+    // Formats a DateTime into "yyyy-MM-dd HH:mm:ss"
+    std::string datetimeToString(const DateTime& dt) const {
+        char buf[20];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                      dt.year, dt.month, dt.day,
+                      dt.hour, dt.minute, dt.second);
+        return buf;
+    }
+
+    // Returns the difference in whole minutes between two timestamps given as strings
+    int getMinutes(const std::string& stringTime1, const std::string& stringTime2) const {
+        DateTime time1 = stringToDatetime(stringTime1);
+        DateTime time2 = stringToDatetime(stringTime2);
+        long long secs1 = toEpochSeconds(time1);
+        long long secs2 = toEpochSeconds(time2);
+        long long diff = secs2 - secs1;
+        long long minutes = diff / 60;   // truncates toward zero, like ChronoUnit.MINUTES.between
+        if (minutes < std::numeric_limits<int>::min() ||
+            minutes > std::numeric_limits<int>::max()) {
+            throw std::overflow_error("Minutes difference exceeds int range");
+        }
+        return static_cast<int>(minutes);
+    }
+
+    // Constructs a formatted string from given date/time components
+    std::string getFormatTime(int year, int month, int day,
+                              int hour, int minute, int second) const {
+        // Validate ranges (matching java.time.LocalDateTime.of)
+        if (month < 1 || month > 12)
+            throw std::invalid_argument("Month out of range");
+        int maxDay = 31;
+        if (month == 4 || month == 6 || month == 9 || month == 11)
+            maxDay = 30;
+        else if (month == 2) {
+            bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            maxDay = leap ? 29 : 28;
+        }
+        if (day < 1 || day > maxDay)
+            throw std::invalid_argument("Day out of range");
+        if (hour < 0 || hour > 23)
+            throw std::invalid_argument("Hour out of range");
+        if (minute < 0 || minute > 59)
+            throw std::invalid_argument("Minute out of range");
+        if (second < 0 || second > 59)
+            throw std::invalid_argument("Second out of range");
+
+        DateTime dt{year, month, day, hour, minute, second};
+        return datetimeToString(dt);
+    }
+};
+```
+
+=== TRANSLATED CODE (cpp) ===
+#include <cstdio>
+#include <string>
+#include <stdexcept>
+#include <limits>
+#include <ctime>
+
+// Thread-safe alternative to std::localtime
+std::tm localtime_safe(const std::time_t& t) {
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return tm;
+}
+
+// Represents a date and time without timezone, equivalent to java.time.LocalDateTime
+struct DateTime {
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+    int second;
+};
+
+// --- Howard Hinnant's calendrical algorithms (public domain) ---
+// Returns days since 1970-01-01 in the proleptic Gregorian calendar.
+int days_from_civil(int y, int m, int d) noexcept {
+    y -= m <= 2;
+    int era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = static_cast<unsigned>(y - era * 400);
+    unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + static_cast<int>(doe) - 719468;
+}
+
+// Inverse of days_from_civil
+void civil_from_days(int z, int& y, int& m, int& d) noexcept {
+    z += 719468;
+    int era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned doe = static_cast<unsigned>(z - era * 146097);
+    unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    y = static_cast<int>(yoe) + era * 400;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned mp = (5 * doy + 2) / 153;
+    d = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
+    m = static_cast<int>(mp + (mp < 10 ? 3 : -9));
+    y += (m <= 2);
+}
+// --- End of calendrical algorithms ---
+
+// Converts a DateTime to total seconds since 1970-01-01 00:00:00 (proleptic Gregorian)
+long long toEpochSeconds(const DateTime& dt) {
+    int days = days_from_civil(dt.year, dt.month, dt.day);
+    return days * 86400LL + dt.hour * 3600LL + dt.minute * 60LL + dt.second;
+}
+
+// Converts total seconds since 1970-01-01 back to a DateTime
+DateTime fromEpochSeconds(long long secs) {
+    int days = static_cast<int>(secs / 86400);
+    int rem = static_cast<int>(secs % 86400);
+    if (rem < 0) {
+        rem += 86400;
+        days -= 1;
+    }
+    DateTime dt;
+    civil_from_days(days, dt.year, dt.month, dt.day);
+    dt.hour = rem / 3600;
+    rem %= 3600;
+    dt.minute = rem / 60;
+    dt.second = rem % 60;
+    return dt;
+}
+
+class TimeUtils {
+    DateTime datetime;   // Captured at construction time, equivalent to LocalDateTime.now()
+
+public:
+    TimeUtils() {
+        std::time_t now = std::time(nullptr);
+        std::tm tm = localtime_safe(now);
+        datetime.year   = tm.tm_year + 1900;
+        datetime.month  = tm.tm_mon + 1;
+        datetime.day    = tm.tm_mday;
+        datetime.hour   = tm.tm_hour;
+        datetime.minute = tm.tm_min;
+        datetime.second = tm.tm_sec;
+    }
+
+    // Returns the stored time in "HH:mm:ss" format
+    std::string getCurrentTime() const {
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+                      datetime.hour, datetime.minute, datetime.second);
+        return buf;
+    }
+
+    // Returns the stored date in "yyyy-MM-dd" format
+    std::string getCurrentDate() const {
+        char buf[11];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
+                      datetime.year, datetime.month, datetime.day);
+        return buf;
+    }
+
+    // Adds seconds to the stored datetime and returns the new time in "HH:mm:ss" format
+    std::string addSeconds(int seconds) const {
+        long long total = toEpochSeconds(datetime) + seconds;
+        DateTime new_dt = fromEpochSeconds(total);
+        char buf[9];
+        std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+                      new_dt.hour, new_dt.minute, new_dt.second);
+        return buf;
+    }
+
+    // Parses a string in "yyyy-M-d H:m:s" format into a DateTime
+    DateTime stringToDatetime(const std::string& string) const {
+        int year, month, day, hour, minute, second;
+        if (std::sscanf(string.c_str(), "%d-%d-%d %d:%d:%d",
+                        &year, &month, &day, &hour, &minute, &second) != 6) {
+            throw std::invalid_argument("Invalid datetime format: " + string);
+        }
+        // Validate ranges (matching java.time.DateTimeException)
+        if (month < 1 || month > 12)
+            throw std::invalid_argument("Month out of range: " + std::to_string(month));
+        if (day < 1 || day > 31)
+            throw std::invalid_argument("Day out of range: " + std::to_string(day));
+        int maxDay = 31;
+        if (month == 4 || month == 6 || month == 9 || month == 11)
+            maxDay = 30;
+        else if (month == 2) {
+            bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            maxDay = leap ? 29 : 28;
+        }
+        if (day > maxDay)
+            throw std::invalid_argument("Day out of range: " + std::to_string(day));
+        if (hour < 0 || hour > 23)
+            throw std::invalid_argument("Hour out of range: " + std::to_string(hour));
+        if (minute < 0 || minute > 59)
+            throw std::invalid_argument("Minute out of range: " + std::to_string(minute));
+        if (second < 0 || second > 59)
+            throw std::invalid_argument("Second out of range: " + std::to_string(second));
+
+        return DateTime{year, month, day, hour, minute, second};
+    }
+
+    // Formats a DateTime into "yyyy-MM-dd HH:mm:ss"
+    std::string datetimeToString(const DateTime& dt) const {
+        char buf[20];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                      dt.year, dt.month, dt.day,
+                      dt.hour, dt.minute, dt.second);
+        return buf;
+    }
+
+    // Returns the difference in whole minutes between two timestamps given as strings
+    int getMinutes(const std::string& stringTime1, const std::string& stringTime2) const {
+        DateTime time1 = stringToDatetime(stringTime1);
+        DateTime time2 = stringToDatetime(stringTime2);
+        long long secs1 = toEpochSeconds(time1);
+        long long secs2 = toEpochSeconds(time2);
+        long long diff = secs2 - secs1;
+        long long minutes = diff / 60;   // truncates toward zero, like ChronoUnit.MINUTES.between
+        if (minutes < std::numeric_limits<int>::min() ||
+            minutes > std::numeric_limits<int>::max()) {
+            throw std::overflow_error("Minutes difference exceeds int range");
+        }
+        return static_cast<int>(minutes);
+    }
+
+    // Constructs a formatted string from given date/time components
+    std::string getFormatTime(int year, int month, int day,
+                              int hour, int minute, int second) const {
+        // Validate ranges (matching java.time.LocalDateTime.of)
+        if (month < 1 || month > 12)
+            throw std::invalid_argument("Month out of range");
+        int maxDay = 31;
+        if (month == 4 || month == 6 || month == 9 || month == 11)
+            maxDay = 30;
+        else if (month == 2) {
+            bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            maxDay = leap ? 29 : 28;
+        }
+        if (day < 1 || day > maxDay)
+            throw std::invalid_argument("Day out of range");
+        if (hour < 0 || hour > 23)
+            throw std::invalid_argument("Hour out of range");
+        if (minute < 0 || minute > 59)
+            throw std::invalid_argument("Minute out of range");
+        if (second < 0 || second > 59)
+            throw std::invalid_argument("Second out of range");
+
+        DateTime dt{year, month, day, hour, minute, second};
+        return datetimeToString(dt);
+    }
+};

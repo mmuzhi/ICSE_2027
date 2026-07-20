@@ -23,7 +23,7 @@ TASKS = {
     "execution": {
         "results": Path("execution") / "{model}" / "results.jsonl",
         "artifact_dirs": [Path("execution") / "{model}" / "txt_output"],
-        "required_fields": ["cot", "answer", "raw_answer", "raw_answer_full"],
+        "required_fields": ["cot", "raw_answer_full"],
     },
     "debug": {
         "results": Path("debug") / "{model}" / "results.jsonl",
@@ -31,7 +31,7 @@ TASKS = {
             Path("debug") / "{model}" / "txt_output",
             Path("debug") / "{model}" / "code_output",
         ],
-        "required_fields": ["cot", "raw_answer", "fixed_code"],
+        "required_fields": ["cot", "raw_answer"],
     },
     "translation": {
         "results": Path("translation") / "{model}" / "results.jsonl",
@@ -39,7 +39,7 @@ TASKS = {
             Path("translation") / "{model}" / "*" / "txt_output",
             Path("translation") / "{model}" / "*" / "code_output",
         ],
-        "required_fields": ["cot", "raw_answer", "translated_code"],
+        "required_fields": ["cot", "raw_answer"],
     },
 }
 
